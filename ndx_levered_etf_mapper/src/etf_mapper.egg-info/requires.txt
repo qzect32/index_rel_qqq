@@ -1,0 +1,16 @@
+pandas>=2.1
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+pypdf>=4.0
+pyarrow>=15.0
+networkx>=3.2
+python-dotenv>=1.0
+
+[dev]
+jupyterlab>=4.0
+ipykernel>=6.29
+ruff>=0.6
+pytest>=8.0
+openai>=1.0
+openai-agents>=0.0.0
