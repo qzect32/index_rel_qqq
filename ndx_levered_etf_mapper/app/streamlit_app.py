@@ -468,24 +468,23 @@ with tab_overview:
                 st.caption("No provider description available (Yahoo returned nothing for this symbol).")
 
     with colB:
-        st.subheader("Price")
-
-        # TOS-like timeframe presets (best-effort with Yahoo)
-        tos_tf = st.selectbox(
-            "Timeframe",
-            [
-                "1m (1D)",
-                "5m (5D)",
-                "15m (1M)",
-                "30m (1M)",
-                "1h (3M)",
-                "4h (6M)",
-                "1D (1Y)",
-                "1W (5Y)",
-                "1M (max)",
-            ],
-            index=6,
-        )
+        # Timeframe control should live beneath the chart (TOS-like). We'll render it later.
+        tos_tf_options = [
+            "1m (1D)",
+            "5m (5D)",
+            "15m (1M)",
+            "30m (1M)",
+            "1h (3M)",
+            "4h (6M)",
+            "1D (1Y)",
+            "1W (5Y)",
+            "1M (max)",
+        ]
+        tos_tf_default_index = 6
+        # Single source of truth for timeframe: stored in Streamlit session state
+        tos_tf = st.session_state.get("tos_tf", tos_tf_options[tos_tf_default_index])
+        if tos_tf not in tos_tf_options:
+            tos_tf = tos_tf_options[tos_tf_default_index]
 
         # Prefer DB (fast, stable). If missing, pull from Yahoo on-demand.
         universe_parquet = data_dir / "etf_universe.parquet"
@@ -507,6 +506,9 @@ with tab_overview:
         else:
             dfp = pd.DataFrame()
 
+        # Let user choose timeframe *below* the chart; but we still need a value for the initial fetch.
+        # If the UI reruns, Streamlit will preserve the selectbox state.
+
         if dfp.empty:
             with st.spinner("Fetching chart data from Yahoo…"):
                 dfp = _fetch_history(selected, tos_tf)
@@ -524,15 +526,20 @@ with tab_overview:
         except Exception:
             cur_px = None
 
-        if cur_px is not None:
-            st.metric("Current price", f"${cur_px:,.2f}")
+        title_price = f"Price" if cur_px is None else f"Price — ${cur_px:,.2f}"
+        st.subheader(title_price)
 
         st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
 
-        # Show timeframe below chart (TOS-like label)
-        st.caption(f"Timeframe: {tos_tf}")
+        # Timeframe selector *below* the chart.
+        # Changing it triggers a rerun automatically; on rerun we fetch using st.session_state["tos_tf"].
+        st.selectbox(
+            "Timeframe",
+            tos_tf_options,
+            index=tos_tf_options.index(tos_tf),
+            key="tos_tf",
+        )
 
-        # Small status footer
         st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Yahoo (on-demand).")
 
         # Move ETF record under raw prices/source area (collapsed by default)
