@@ -18,7 +18,15 @@ class PolygonUniverseConfig:
 
 
 def _iter_polygon_pages(url: str, params: dict, session: requests.Session) -> Iterator[dict]:
-    """Iterate a Polygon paginated endpoint that returns {results, next_url}."""
+    """Iterate a Polygon paginated endpoint that returns {results, next_url}.
+
+    IMPORTANT: Polygon's next_url does NOT reliably include the apiKey.
+    We always re-attach apiKey on subsequent requests.
+    """
+    api_key = params.get("apiKey")
+    if not api_key:
+        raise RuntimeError("Polygon apiKey missing from request params")
+
     next_url: Optional[str] = url
     next_params: Optional[dict] = params
 
@@ -27,9 +35,10 @@ def _iter_polygon_pages(url: str, params: dict, session: requests.Session) -> It
         r.raise_for_status()
         payload = r.json()
         yield payload
+
         next_url = payload.get("next_url")
-        # Polygon encodes apiKey in next_url sometimes; keep params empty to avoid duplication.
-        next_params = None
+        # next_url may omit apiKey; keep it in params for subsequent requests.
+        next_params = {"apiKey": api_key} if next_url else None
 
 
 def fetch_us_etf_universe_from_polygon(cfg: PolygonUniverseConfig) -> pd.DataFrame:
