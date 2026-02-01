@@ -307,8 +307,7 @@ def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame
 def _net_html(nodes: list[dict], edges: list[dict]) -> str:
     """Render an interactive force graph using pyvis.
 
-    pyvis Network.add_node signature is add_node(n_id, label=..., ...),
-    so we cannot splat a dict with key 'id' into it.
+    Also inject a `network.fit()` call so the graph is centered/fit-to-view by default.
     """
     net = Network(height="520px", width="100%", bgcolor="#0b1220", font_color="#e5e7eb")
     net.barnes_hut(gravity=-24000, central_gravity=0.25, spring_length=190, spring_strength=0.02)
@@ -323,10 +322,18 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
         net.add_node(nid, **attrs)
 
     for e in edges:
-        # pyvis expects 'source' and 'to'
         net.add_edge(e.get("source"), e.get("to"), title=e.get("title"))
 
-    return net.generate_html(notebook=False)
+    html = net.generate_html(notebook=False)
+
+    # pyvis exposes a JS variable named `network` in the generated HTML.
+    fit_js = "\n<script>try { network.fit({animation:true}); } catch(e) {}</script>\n"
+    if "</body>" in html:
+        html = html.replace("</body>", fit_js + "</body>")
+    else:
+        html = html + fit_js
+
+    return html
 
 
 # ---------- UI ----------
@@ -400,29 +407,33 @@ with tab_overview:
             height=420,
         )
 
-        meta = universe[universe["ticker"] == selected].head(1)
-        if not meta.empty:
-            st.markdown("#### ETF record")
-            st.json(meta.iloc[0].dropna().to_dict())
-
         st.markdown("#### Intended usage (heuristic)")
+        meta = universe[universe["ticker"] == selected].head(1)
         nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
         st.write(_infer_intended_usage(nm))
 
-        st.markdown("#### Provider description (Yahoo best-effort)")
+    with colB:
+        # Provider description + definitions live top-right.
+        st.subheader(f"{selected}")
+
         with st.spinner("Loading Yahoo profile…"):
             prof = _yahoo_profile(selected)
-        if prof:
-            # pull the summary out for nicer display
-            summary = prof.pop("longBusinessSummary", None)
-            st.json(prof)
-            if summary:
-                st.write(summary)
-        else:
-            st.caption("No Yahoo profile available.")
 
-    with colB:
-        st.subheader(f"Price chart: {selected}")
+        if prof:
+            summary = prof.get("longBusinessSummary")
+            if summary:
+                st.markdown(summary)
+            with st.expander("Provider fields (JSON)", expanded=False):
+                # remove long blob from JSON view to keep it readable
+                p2 = dict(prof)
+                p2.pop("longBusinessSummary", None)
+                st.json(p2)
+        else:
+            st.caption("No provider description available (Yahoo returned nothing for this symbol).")
+
+        st.divider()
+
+        st.subheader("Price")
 
         # TOS-like timeframe presets (best-effort with Yahoo)
         tos_tf = st.selectbox(
@@ -458,12 +469,10 @@ with tab_overview:
                     prices_db.unlink(missing_ok=True)
                     st.success("Deleted prices.sqlite. Refresh and refetch.")
                 dfp = pd.DataFrame()
-
         else:
             dfp = pd.DataFrame()
 
         if dfp.empty:
-            # Fall back to Yahoo timeframes immediately, even if the DB doesn't have the ticker yet.
             with st.spinner("Fetching chart data from Yahoo…"):
                 dfp = _fetch_history(selected, tos_tf)
 
@@ -477,12 +486,17 @@ with tab_overview:
         st.plotly_chart(_plot_candles(dfp, title=f"{selected} • {tos_tf}"), use_container_width=True)
 
         # Small status footer
-        if used_db:
-            st.caption("Source: local prices.sqlite (daily bars).")
-        else:
-            st.caption("Source: Yahoo (on-demand).")
+        st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Yahoo (on-demand).")
 
-        with st.expander("Raw prices"):
+        # Move ETF record under raw prices/source area (collapsed by default)
+        meta = universe[universe["ticker"] == selected].head(1)
+        with st.expander("ETF record (from universe)", expanded=False):
+            if not meta.empty:
+                st.json(meta.iloc[0].dropna().to_dict())
+            else:
+                st.caption("No ETF record found in the ETF universe table (might be a stock symbol).")
+
+        with st.expander("Raw prices", expanded=False):
             st.dataframe(dfp, use_container_width=True, height=320)
 
 with tab_rel:
