@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from dotenv import load_dotenv
 from pyvis.network import Network
+from streamlit_autorefresh import st_autorefresh
 import yfinance as yf
 
 from etf_mapper.build_universe import refresh_etf_universe
@@ -134,8 +135,77 @@ def _plot_candles(dfp: pd.DataFrame, title: str) -> go.Figure:
         height=360,
         margin=dict(l=20, r=20, t=40, b=20),
         xaxis_rangeslider_visible=False,
+        template="plotly_dark",
     )
     return fig
+
+
+def _fetch_history(ticker: str, tos_style: str) -> pd.DataFrame:
+    """Best-effort TOS-like timeframe presets.
+
+    yfinance supports intervals: 1m,2m,5m,15m,30m,60m,90m,1h,1d,5d,1wk,1mo,3mo.
+    For 4h we resample 1h.
+    """
+    t = yf.Ticker(ticker)
+
+    presets = {
+        "1m (1D)": {"period": "1d", "interval": "1m"},
+        "5m (5D)": {"period": "5d", "interval": "5m"},
+        "15m (1M)": {"period": "1mo", "interval": "15m"},
+        "30m (1M)": {"period": "1mo", "interval": "30m"},
+        "1h (3M)": {"period": "3mo", "interval": "60m"},
+        "4h (6M)": {"period": "6mo", "interval": "60m", "resample": "4h"},
+        "1D (1Y)": {"period": "1y", "interval": "1d"},
+        "1W (5Y)": {"period": "5y", "interval": "1wk"},
+        "1M (max)": {"period": "max", "interval": "1mo"},
+    }
+
+    cfg = presets.get(tos_style, presets["1D (1Y)"])
+
+    df = t.history(period=cfg["period"], interval=cfg["interval"], auto_adjust=False)
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.reset_index()
+    if "Date" in df.columns:
+        df = df.rename(columns={"Date": "date"})
+    elif "Datetime" in df.columns:
+        df = df.rename(columns={"Datetime": "date"})
+
+    df = df.rename(
+        columns={
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Adj Close": "adj_close",
+            "Volume": "volume",
+        }
+    )
+
+    # Optional resample to 4h candles
+    if cfg.get("resample") == "4h":
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"]).set_index("date")
+        ohlc = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+            "adj_close": "last",
+        }
+        df = df.resample("4h").apply(ohlc).dropna(subset=["close"]).reset_index()
+
+    # ensure datetime
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])  # type: ignore
+
+    keep = ["date", "open", "high", "low", "close", "adj_close", "volume"]
+    for c in keep:
+        if c not in df.columns:
+            df[c] = None
+    return df[keep]
 
 
 def _infer_intended_usage(name: str) -> str:
@@ -193,6 +263,43 @@ def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd
     return calls, puts
 
 
+def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame:
+    """Build a Thinkorswim-ish ladder: one row per strike, calls on left, puts on right."""
+    c = calls.copy()
+    p = puts.copy()
+
+    def _pick(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+        cols = {
+            "lastPrice": f"{prefix}_last",
+            "bid": f"{prefix}_bid",
+            "ask": f"{prefix}_ask",
+            "impliedVolatility": f"{prefix}_iv",
+            "openInterest": f"{prefix}_oi",
+            "volume": f"{prefix}_vol",
+            "inTheMoney": f"{prefix}_itm",
+            "contractSymbol": f"{prefix}_sym",
+        }
+        keep = ["strike"] + [c for c in cols.keys() if c in df.columns]
+        out = df[keep].rename(columns=cols)
+        return out
+
+    c2 = _pick(c, "call")
+    p2 = _pick(p, "put")
+
+    ladder = pd.merge(c2, p2, on="strike", how="outer").sort_values("strike")
+
+    # Add selection + qty for both sides
+    for side in ["call", "put"]:
+        sel = f"{side}_select"
+        qty = f"{side}_qty"
+        if sel not in ladder.columns:
+            ladder.insert(0, sel, False)
+        if qty not in ladder.columns:
+            ladder.insert(1, qty, 1)
+
+    return ladder
+
+
 def _net_html(nodes: list[dict], edges: list[dict]) -> str:
     """Render an interactive force graph using pyvis.
 
@@ -230,6 +337,13 @@ universe_provider = st.sidebar.selectbox("Universe provider", ["polygon"], index
 price_provider = st.sidebar.selectbox("Price provider", ["yahoo", "stooq"], index=0)
 price_start = st.sidebar.text_input("Price start", value="2024-01-01")
 price_limit = st.sidebar.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
+
+st.sidebar.markdown("### Live")
+auto_refresh = st.sidebar.toggle("Auto-refresh UI", value=False)
+auto_refresh_s = st.sidebar.slider("Refresh interval (seconds)", 5, 60, 15, 5)
+if auto_refresh:
+    # lightweight refresh loop (useful during market hours)
+    st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
 
 st.sidebar.markdown("### Secrets")
 if not os.getenv("POLYGON_API_KEY"):
@@ -300,86 +414,63 @@ with tab_overview:
     with colB:
         st.subheader(f"Price chart: {selected}")
 
-        universe_parquet = data_dir / "etf_universe.parquet"
-        if not universe_parquet.exists():
-            st.info("Universe parquet missing (should exist after universe fetch). Re-run universe or refresh page.")
-            st.stop()
+        # TOS-like timeframe presets (best-effort with Yahoo)
+        tos_tf = st.selectbox(
+            "Timeframe",
+            [
+                "1m (1D)",
+                "5m (5D)",
+                "15m (1M)",
+                "30m (1M)",
+                "1h (3M)",
+                "4h (6M)",
+                "1D (1Y)",
+                "1W (5Y)",
+                "1M (max)",
+            ],
+            index=6,
+        )
 
+        # Prefer DB (fast, stable). If missing, pull from Yahoo on-demand.
+        universe_parquet = data_dir / "etf_universe.parquet"
         prices_db = data_dir / "prices.sqlite"
-        if not prices_db.exists():
-            st.info("No prices DB yet.")
-            if st.button("Fetch bootstrap prices now", type="primary"):
+
+        dfp: pd.DataFrame
+        used_db = False
+
+        if prices_db.exists():
+            try:
+                dfp = _load_prices(prices_db, selected)
+                used_db = True
+            except Exception as e:
+                st.error(str(e))
+                if st.button("Reset prices DB", type="primary"):
+                    prices_db.unlink(missing_ok=True)
+                    st.success("Deleted prices.sqlite. Refresh and refetch.")
+                dfp = pd.DataFrame()
+
+        else:
+            dfp = pd.DataFrame()
+
+        if dfp.empty:
+            # Fall back to Yahoo timeframes immediately, even if the DB doesn't have the ticker yet.
+            with st.spinner("Fetching chart data from Yahoo…"):
+                dfp = _fetch_history(selected, tos_tf)
+
+        if dfp.empty:
+            st.warning("No price history found (Yahoo may be down or symbol unsupported).")
+            if universe_parquet.exists() and st.button("Fetch bootstrap prices DB now", type="secondary"):
                 _ensure_prices(data_dir, universe_parquet, provider=price_provider, start=price_start, limit=price_limit)
                 st.rerun()
             st.stop()
 
-        try:
-            dfp = _load_prices(prices_db, selected)
-        except Exception as e:
-            st.error(str(e))
-            if st.button("Reset prices DB", type="primary"):
-                prices_db.unlink(missing_ok=True)
-                st.success("Deleted prices.sqlite. Now fetch prices again.")
-            st.stop()
+        st.plotly_chart(_plot_candles(dfp, title=f"{selected} • {tos_tf}"), use_container_width=True)
 
-        if dfp.empty:
-            st.warning("No prices found for this ticker yet.")
-
-            colX, colY = st.columns([0.34, 0.66])
-            with colX:
-                if st.button("Fetch THIS ticker now", type="primary"):
-                    # Fetch on-demand for the selected ticker (no batch assumptions)
-                    res = yf.Ticker(selected).history(start=price_start, end=None, interval="1d", auto_adjust=False)
-                    if res is None or res.empty:
-                        st.error("No data returned from Yahoo for this ticker.")
-                    else:
-                        df = res.reset_index()
-                        if "Date" in df.columns:
-                            df = df.rename(columns={"Date": "date"})
-                        elif "Datetime" in df.columns:
-                            df = df.rename(columns={"Datetime": "date"})
-                        df = df.rename(
-                            columns={
-                                "Open": "open",
-                                "High": "high",
-                                "Low": "low",
-                                "Close": "close",
-                                "Adj Close": "adj_close",
-                                "Volume": "volume",
-                            }
-                        )
-                        df["ticker"] = selected
-                        df["source"] = "yahoo:yfinance"
-                        if pd.api.types.is_datetime64_any_dtype(df["date"]):
-                            df["date"] = df["date"].dt.date.astype(str)
-                        else:
-                            df["date"] = df["date"].astype(str)
-
-                        keep = ["date", "ticker", "open", "high", "low", "close", "adj_close", "volume", "source"]
-                        for c in keep:
-                            if c not in df.columns:
-                                df[c] = None
-
-                        with sqlite3.connect(prices_db) as conn:
-                            # Append to existing DB
-                            df[keep].to_sql("prices_daily", conn, if_exists="append", index=False)
-                    st.rerun()
-
-            with colY:
-                if st.button("Fetch prices batch now", type="secondary"):
-                    prices_db.unlink(missing_ok=True)
-                    _ensure_prices(
-                        data_dir,
-                        universe_parquet,
-                        provider=price_provider,
-                        start=price_start,
-                        limit=price_limit,
-                    )
-                    st.rerun()
-
-            st.stop()
-
-        st.plotly_chart(_plot_candles(dfp, title=f"{selected} OHLC"), use_container_width=True)
+        # Small status footer
+        if used_db:
+            st.caption("Source: local prices.sqlite (daily bars).")
+        else:
+            st.caption("Source: Yahoo (on-demand).")
 
         with st.expander("Raw prices"):
             st.dataframe(dfp, use_container_width=True, height=320)
@@ -409,40 +500,72 @@ with tab_rel:
     edges["src"] = edges["src"].astype(str)
     edges["dst"] = edges["dst"].astype(str)
 
-    # inbound edges to ETF
+    # inbound edges to ETF (underlying -> ETF)
     inbound = edges[edges["dst"].astype(str).str.upper() == selected.upper()]
-    # if none, try outbound (selected underlying)
+    # outbound edges (selected underlying -> ETFs)
     outbound = edges[edges["src"].astype(str).str.upper() == selected.upper()]
 
     if inbound.empty and outbound.empty:
         st.info("No relations found for this ticker in the current graph seed.")
         st.stop()
 
-    center = selected
-    _add_node(center, label=center, group="center", color="#22c55e", size=24)
+    # Allow "click-expand" style exploration via a focus dropdown.
+    # We'll default focus to the sidebar ticker, but you can pivot to any neighbor.
+    candidate_nodes = set([selected])
+    candidate_nodes.update(inbound["src"].astype(str).tolist())
+    candidate_nodes.update(outbound["dst"].astype(str).tolist())
 
-    underlyings = set(inbound["src"].tolist()) if not inbound.empty else set([center])
-    if not inbound.empty:
-        for _, r in inbound.iterrows():
+    focus = st.selectbox("Focus node (expand graph)", sorted(candidate_nodes), index=0)
+
+    center = focus
+    _add_node(center, label=center, group="center", color="#22c55e", size=26)
+
+    # Determine if focus is acting like an ETF or an underlying, and build an ego network.
+    in_f = edges[edges["dst"].astype(str).str.upper() == str(focus).upper()]
+    out_f = edges[edges["src"].astype(str).str.upper() == str(focus).upper()]
+
+    # If focus is an ETF: show its underlyings + sibling ETFs for those underlyings.
+    if not in_f.empty:
+        underlyings = set(in_f["src"].astype(str).tolist())
+        for _, r in in_f.iterrows():
             u = str(r["src"])
             rel = str(r.get("relationship", ""))
             strat = str(r.get("strategy_group", ""))
             _add_node(u, label=u, group="underlying", color="#60a5fa", size=20)
             vis_edges.append({"source": u, "to": center, "title": f"{rel} / {strat}"})
 
-    # Add sibling ETFs for each underlying
-    sib = edges[edges["src"].isin(list(underlyings))].copy()
-    sib = sib[sib["dst"].astype(str).str.upper() != selected.upper()]
-    sib = sib.head(120)
+        sib = edges[edges["src"].isin(list(underlyings))].copy()
+        sib = sib[sib["dst"].astype(str).str.upper() != str(focus).upper()]
+        sib = sib.head(180)
 
-    for _, r in sib.iterrows():
-        u = str(r["src"])
-        e = str(r["dst"])
-        rel = str(r.get("relationship", ""))
-        strat = str(r.get("strategy_group", ""))
-        _add_node(u, label=u, group="underlying", color="#60a5fa", size=20)
-        _add_node(e, label=e, group="etf", color="#f59e0b", size=16)
-        vis_edges.append({"source": u, "to": e, "title": f"{rel} / {strat}"})
+        for _, r in sib.iterrows():
+            u = str(r["src"])
+            e = str(r["dst"])
+            rel = str(r.get("relationship", ""))
+            strat = str(r.get("strategy_group", ""))
+            _add_node(u, label=u, group="underlying", color="#60a5fa", size=20)
+            _add_node(e, label=e, group="etf", color="#f59e0b", size=16)
+            vis_edges.append({"source": u, "to": e, "title": f"{rel} / {strat}"})
+
+    # If focus is an underlying: show ETFs tied to it + (optionally) other underlyings for those ETFs.
+    elif not out_f.empty:
+        etfs = set(out_f["dst"].astype(str).tolist())
+        for _, r in out_f.iterrows():
+            e = str(r["dst"])
+            rel = str(r.get("relationship", ""))
+            strat = str(r.get("strategy_group", ""))
+            _add_node(e, label=e, group="etf", color="#f59e0b", size=18)
+            vis_edges.append({"source": center, "to": e, "title": f"{rel} / {strat}"})
+
+        # pull in other underlyings connected to those ETFs (helps discover structured products)
+        back = edges[edges["dst"].isin(list(etfs))].copy().head(140)
+        for _, r in back.iterrows():
+            u = str(r["src"])
+            e = str(r["dst"])
+            if u.upper() == str(focus).upper():
+                continue
+            _add_node(u, label=u, group="underlying", color="#60a5fa", size=16)
+            vis_edges.append({"source": u, "to": e, "title": str(r.get("relationship", ""))})
 
     html = _net_html(
         nodes=[{"id": v["n_id"], "label": v["label"], "group": v["group"], "color": v["color"], "size": v["size"]} for v in nodes.values()],
@@ -455,7 +578,7 @@ with tab_rel:
 
 with tab_opts:
     st.subheader(f"Options: {selected}")
-    st.caption("Bootstrap via Yahoo (yfinance). For serious options + greeks/history, we’ll switch to Schwab/TOS API later.")
+    st.caption("Bootstrap via Yahoo (yfinance). TOS-like ladder view; will migrate to Schwab/TOS chain later.")
 
     t = yf.Ticker(selected)
     try:
@@ -472,79 +595,89 @@ with tab_opts:
     with st.spinner("Loading options chain…"):
         calls, puts = _yahoo_options_chain(selected, exp)
 
-    st.markdown("#### Calls / Puts")
-    tabC, tabP = st.tabs(["Calls", "Puts"])
-
-    def _editor(df: pd.DataFrame) -> pd.DataFrame:
-        show = df.copy()
-        # Add selection + qty
-        if "select" not in show.columns:
-            show.insert(0, "select", False)
-        if "qty" not in show.columns:
-            show.insert(1, "qty", 1)
-        cols = [
-            "select",
-            "qty",
-            "contractSymbol",
-            "strike",
-            "lastPrice",
-            "bid",
-            "ask",
-            "impliedVolatility",
-            "openInterest",
-            "volume",
-            "inTheMoney",
-        ]
-        cols = [c for c in cols if c in show.columns]
-        return st.data_editor(
-            show[cols],
-            use_container_width=True,
-            height=420,
-            column_config={
-                "qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
-                "impliedVolatility": st.column_config.NumberColumn(format="%.4f"),
-            },
-            disabled=[c for c in cols if c not in ("select", "qty")],
-        )
-
     if "cart" not in st.session_state:
         st.session_state["cart"] = []
 
-    def _add_selected_to_cart(ed: pd.DataFrame):
-        picked = ed[ed["select"] == True]  # noqa: E712
-        if picked.empty:
-            st.warning("Select at least one contract.")
+    ladder = _tos_options_ladder(calls, puts)
+
+    st.markdown("#### Options ladder (calls left, puts right)")
+
+    # Make the ladder more readable
+    display_cols = [
+        "call_select",
+        "call_qty",
+        "call_bid",
+        "call_ask",
+        "call_last",
+        "call_iv",
+        "call_oi",
+        "call_vol",
+        "strike",
+        "put_bid",
+        "put_ask",
+        "put_last",
+        "put_iv",
+        "put_oi",
+        "put_vol",
+        "put_qty",
+        "put_select",
+    ]
+    display_cols = [c for c in display_cols if c in ladder.columns]
+
+    edited = st.data_editor(
+        ladder[display_cols],
+        use_container_width=True,
+        height=520,
+        column_config={
+            "call_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
+            "put_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
+            "call_iv": st.column_config.NumberColumn(format="%.4f"),
+            "put_iv": st.column_config.NumberColumn(format="%.4f"),
+        },
+        disabled=[c for c in display_cols if c not in ("call_select", "call_qty", "put_select", "put_qty")],
+    )
+
+    colA, colB = st.columns([0.35, 0.65])
+
+    def _add_contract(side: str, r: pd.Series):
+        sym = r.get(f"{side}_sym")
+        if not sym:
             return
-        for _, r in picked.iterrows():
-            st.session_state["cart"].append(
-                {
-                    "contractSymbol": r.get("contractSymbol"),
-                    "ticker": selected,
-                    "expiration": exp,
-                    "strike": float(r.get("strike")),
-                    "side": str(r.get("side", "")),
-                    "qty": int(r.get("qty", 1)),
-                    "lastPrice": float(r.get("lastPrice")) if pd.notna(r.get("lastPrice")) else None,
-                    "bid": float(r.get("bid")) if pd.notna(r.get("bid")) else None,
-                    "ask": float(r.get("ask")) if pd.notna(r.get("ask")) else None,
-                }
-            )
+        qty = int(r.get(f"{side}_qty") or 1)
+        bid = r.get(f"{side}_bid")
+        ask = r.get(f"{side}_ask")
+        last = r.get(f"{side}_last")
+        st.session_state["cart"].append(
+            {
+                "contractSymbol": sym,
+                "ticker": selected,
+                "expiration": exp,
+                "strike": float(r.get("strike")),
+                "side": side,
+                "qty": qty,
+                "lastPrice": float(last) if pd.notna(last) else None,
+                "bid": float(bid) if pd.notna(bid) else None,
+                "ask": float(ask) if pd.notna(ask) else None,
+            }
+        )
 
-    with tabC:
-        calls = calls.sort_values(["strike"], ascending=True)
-        calls_ed = _editor(calls)
-        if st.button("Add selected calls to cart", type="primary"):
-            calls_ed["side"] = "call"
-            _add_selected_to_cart(calls_ed)
-            st.success("Added to cart.")
+    with colA:
+        if st.button("Add selected to cart", type="primary"):
+            added = 0
+            for _, r in edited.iterrows():
+                if bool(r.get("call_select")):
+                    _add_contract("call", r)
+                    added += 1
+                if bool(r.get("put_select")):
+                    _add_contract("put", r)
+                    added += 1
+            if added:
+                st.success(f"Added {added} contract(s) to cart.")
+            else:
+                st.warning("Select at least one call/put in the ladder.")
 
-    with tabP:
-        puts = puts.sort_values(["strike"], ascending=True)
-        puts_ed = _editor(puts)
-        if st.button("Add selected puts to cart", type="primary"):
-            puts_ed["side"] = "put"
-            _add_selected_to_cart(puts_ed)
-            st.success("Added to cart.")
+    with colB:
+        st.caption("Tip: pick strikes like TOS — calls on the left, puts on the right. Cart uses ask/last for premium estimate.")
 
 with tab_cart:
     st.subheader("Cart")

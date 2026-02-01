@@ -25,6 +25,7 @@ dependencies = [
   "streamlit>=1.32",
   "plotly>=5.20",
   "pyvis>=0.3.2",
+  "streamlit-autorefresh>=1.0.1",
 ]
 
 
