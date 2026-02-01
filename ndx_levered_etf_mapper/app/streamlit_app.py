@@ -313,10 +313,59 @@ with tab_overview:
 
         if dfp.empty:
             st.warning("No prices found for this ticker yet.")
-            if st.button("Fetch prices batch now", type="primary"):
-                prices_db.unlink(missing_ok=True)
-                _ensure_prices(data_dir, universe_parquet, provider=price_provider, start=price_start, limit=price_limit)
-                st.rerun()
+
+            colX, colY = st.columns([0.34, 0.66])
+            with colX:
+                if st.button("Fetch THIS ticker now", type="primary"):
+                    # Fetch on-demand for the selected ticker (no batch assumptions)
+                    res = yf.Ticker(selected).history(start=price_start, end=None, interval="1d", auto_adjust=False)
+                    if res is None or res.empty:
+                        st.error("No data returned from Yahoo for this ticker.")
+                    else:
+                        df = res.reset_index()
+                        if "Date" in df.columns:
+                            df = df.rename(columns={"Date": "date"})
+                        elif "Datetime" in df.columns:
+                            df = df.rename(columns={"Datetime": "date"})
+                        df = df.rename(
+                            columns={
+                                "Open": "open",
+                                "High": "high",
+                                "Low": "low",
+                                "Close": "close",
+                                "Adj Close": "adj_close",
+                                "Volume": "volume",
+                            }
+                        )
+                        df["ticker"] = selected
+                        df["source"] = "yahoo:yfinance"
+                        if pd.api.types.is_datetime64_any_dtype(df["date"]):
+                            df["date"] = df["date"].dt.date.astype(str)
+                        else:
+                            df["date"] = df["date"].astype(str)
+
+                        keep = ["date", "ticker", "open", "high", "low", "close", "adj_close", "volume", "source"]
+                        for c in keep:
+                            if c not in df.columns:
+                                df[c] = None
+
+                        with sqlite3.connect(prices_db) as conn:
+                            # Append to existing DB
+                            df[keep].to_sql("prices_daily", conn, if_exists="append", index=False)
+                    st.rerun()
+
+            with colY:
+                if st.button("Fetch prices batch now", type="secondary"):
+                    prices_db.unlink(missing_ok=True)
+                    _ensure_prices(
+                        data_dir,
+                        universe_parquet,
+                        provider=price_provider,
+                        start=price_start,
+                        limit=price_limit,
+                    )
+                    st.rerun()
+
             st.stop()
 
         st.plotly_chart(_plot_candles(dfp, title=f"{selected} OHLC"), use_container_width=True)
