@@ -225,6 +225,8 @@ def _infer_intended_usage(name: str) -> str:
 
 
 def _yahoo_profile(ticker: str) -> dict:
+    if not ticker or not str(ticker).strip():
+        return {}
     t = yf.Ticker(ticker)
     info = {}
     try:
@@ -251,6 +253,8 @@ def _yahoo_profile(ticker: str) -> dict:
 
 
 def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not ticker or not str(ticker).strip():
+        return pd.DataFrame(), pd.DataFrame()
     t = yf.Ticker(ticker)
     oc = t.option_chain(expiration)
     calls = oc.calls.copy()
@@ -346,7 +350,9 @@ if auto_refresh:
     st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
 
 st.sidebar.markdown("### Secrets")
-if not os.getenv("POLYGON_API_KEY"):
+poly_present = bool(os.getenv("POLYGON_API_KEY"))
+st.sidebar.write(f"POLYGON_API_KEY: {'set' if poly_present else 'missing'}")
+if not poly_present:
     st.sidebar.warning("POLYGON_API_KEY not detected. Add it to a local .env file.")
 
 # Ensure universe exists (or explain why not)
@@ -365,6 +371,10 @@ with st.sidebar:
     st.markdown("### Explore")
     default_ticker = "QQQ" if "QQQ" in set(universe["ticker"]) else str(universe.iloc[0]["ticker"])
     selected = st.text_input("Ticker", value=default_ticker).upper().strip()
+
+if not selected:
+    st.warning("Enter a ticker symbol (e.g. TSLA, TSLL, QQQ).")
+    st.stop()
 
 q = selected.strip().lower()
 view = universe
@@ -479,6 +489,14 @@ with tab_rel:
     st.subheader("Relationship map")
     st.caption("Current graph = seeded derivative exposures (index + single-stock leveraged/inverse ETFs). Holdings-based map is a future step.")
 
+    colS, colM = st.columns([0.34, 0.66])
+    with colS:
+        max_edges = st.slider("Graph complexity", 20, 300, 120, 10)
+        max_siblings = st.slider("Sibling ETFs", 0, 300, 120, 10)
+        max_backfill = st.slider("Backfill underlyings", 0, 300, 140, 10)
+    with colM:
+        st.caption("Use these sliders to keep the graph compact so you don’t have to pan/zoom as much.")
+
     try:
         rel_db = _ensure_relations(data_dir)
     except Exception as e:
@@ -536,7 +554,7 @@ with tab_rel:
 
         sib = edges[edges["src"].isin(list(underlyings))].copy()
         sib = sib[sib["dst"].astype(str).str.upper() != str(focus).upper()]
-        sib = sib.head(180)
+        sib = sib.head(int(max_siblings))
 
         for _, r in sib.iterrows():
             u = str(r["src"])
@@ -558,7 +576,7 @@ with tab_rel:
             vis_edges.append({"source": center, "to": e, "title": f"{rel} / {strat}"})
 
         # pull in other underlyings connected to those ETFs (helps discover structured products)
-        back = edges[edges["dst"].isin(list(etfs))].copy().head(140)
+        back = edges[edges["dst"].isin(list(etfs))].copy().head(int(max_backfill))
         for _, r in back.iterrows():
             u = str(r["src"])
             e = str(r["dst"])
@@ -624,7 +642,7 @@ with tab_opts:
     ]
     display_cols = [c for c in display_cols if c in ladder.columns]
 
-    edited = st.data_editor(
+    edited_view = st.data_editor(
         ladder[display_cols],
         use_container_width=True,
         height=520,
@@ -635,6 +653,14 @@ with tab_opts:
             "put_iv": st.column_config.NumberColumn(format="%.4f"),
         },
         disabled=[c for c in display_cols if c not in ("call_select", "call_qty", "put_select", "put_qty")],
+    )
+
+    # Merge edited selection/qty back with the hidden contract symbols (call_sym/put_sym)
+    edited = pd.merge(
+        edited_view,
+        ladder[[c for c in ["strike", "call_sym", "put_sym"] if c in ladder.columns]],
+        on="strike",
+        how="left",
     )
 
     colA, colB = st.columns([0.35, 0.65])
