@@ -194,13 +194,26 @@ def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd
 
 
 def _net_html(nodes: list[dict], edges: list[dict]) -> str:
+    """Render an interactive force graph using pyvis.
+
+    pyvis Network.add_node signature is add_node(n_id, label=..., ...),
+    so we cannot splat a dict with key 'id' into it.
+    """
     net = Network(height="520px", width="100%", bgcolor="#0b1220", font_color="#e5e7eb")
     net.barnes_hut(gravity=-24000, central_gravity=0.25, spring_length=190, spring_strength=0.02)
 
     for n in nodes:
-        net.add_node(**n)
+        nid = n.get("id") or n.get("n_id")
+        if nid is None:
+            raise RuntimeError("Graph node is missing id/n_id")
+        attrs = dict(n)
+        attrs.pop("id", None)
+        attrs.pop("n_id", None)
+        net.add_node(nid, **attrs)
+
     for e in edges:
-        net.add_edge(**e)
+        # pyvis expects 'source' and 'to'
+        net.add_edge(e.get("source"), e.get("to"), title=e.get("title"))
 
     return net.generate_html(notebook=False)
 
@@ -232,22 +245,20 @@ except Exception as e:
 
 universe = _load_universe(universe_db)
 
-# Search + selection
+# Single source of truth: one ticker box.
+# We'll use that ticker value both for selection and for filtering the universe table.
 with st.sidebar:
     st.markdown("### Explore")
-    query = st.text_input("Search (ticker or name)", value="QQQ")
+    default_ticker = "QQQ" if "QQQ" in set(universe["ticker"]) else str(universe.iloc[0]["ticker"])
+    selected = st.text_input("Ticker", value=default_ticker).upper().strip()
 
-q = query.strip().lower()
+q = selected.strip().lower()
 view = universe
 if q:
     mask = universe["ticker"].str.lower().str.contains(q) | universe["name"].fillna("").str.lower().str.contains(q)
     view = universe[mask].copy()
 
 st.sidebar.caption(f"Universe rows (filtered): {len(view):,}")
-
-# Pick ticker
-default_ticker = "QQQ" if "QQQ" in set(universe["ticker"]) else str(universe.iloc[0]["ticker"])
-selected = st.sidebar.text_input("Selected ticker", value=default_ticker).upper().strip()
 
 # Top layout
 tab_overview, tab_rel, tab_opts, tab_cart, tab_admin = st.tabs(
