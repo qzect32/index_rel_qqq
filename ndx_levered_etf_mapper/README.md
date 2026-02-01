@@ -42,10 +42,17 @@ Create and activate a virtualenv, then install deps:
 python -m pip install -r requirements.txt
 ```
 
-Build the local universe:
+Build the Nasdaq-100 exposure graph universe:
 
 ```bash
 python -m etf_mapper.cli refresh --out data
+```
+
+Fetch the full US ETF universe (master list of ETF tickers):
+
+```bash
+# requires POLYGON_API_KEY in your environment
+python -m etf_mapper.cli universe --out data --provider polygon
 ```
 
 Explore:
