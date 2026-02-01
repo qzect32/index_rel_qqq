@@ -337,8 +337,6 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 
 
 # ---------- UI ----------
-st.title("ETF Hub")
-st.caption("Universe • Relations • Prices • Options • Cart (Schwab/TOS integration scaffolded)")
 
 data_dir = _data_dir()
 
@@ -391,8 +389,48 @@ if q:
 
 st.sidebar.caption(f"Universe rows (filtered): {len(view):,}")
 
-# Top layout
-tab_overview, tab_rel, tab_opts, tab_cart, tab_admin = st.tabs(
+# Header row: title left, provider description right (uses otherwise-empty space)
+headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
+with headerL:
+    st.markdown("# ETF Hub")
+    st.caption("Universe • Relations • Prices • Options • Cart")
+
+with headerR:
+    # Right-justified, compact description block for the current symbol
+    prof_hdr = _yahoo_profile(selected)
+    summary_hdr = (prof_hdr.get("longBusinessSummary") or "").strip()
+
+    title_bits = []
+    if prof_hdr.get("longName"):
+        title_bits.append(str(prof_hdr.get("longName")))
+    elif prof_hdr.get("shortName"):
+        title_bits.append(str(prof_hdr.get("shortName")))
+
+    # Always show the symbol itself
+    title_bits.append(selected)
+
+    st.markdown(
+        f"<div style='text-align:right; font-size: 1.15rem; font-weight: 600;'>{' — '.join(title_bits)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if summary_hdr:
+        # Keep the header tight; full text available on Overview tab.
+        short = summary_hdr
+        if len(short) > 420:
+            short = short[:420].rsplit(" ", 1)[0] + "…"
+        st.markdown(
+            f"<div style='text-align:right; color: #9ca3af; line-height: 1.25;'>{short}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='text-align:right; color:#9ca3af;'>No provider description available.</div>",
+            unsafe_allow_html=True,
+        )
+
+# Context menus
+(tab_overview, tab_rel, tab_opts, tab_cart, tab_admin) = st.tabs(
     ["Overview", "Relations", "Options", "Cart", "Admin"]
 )
 
@@ -413,25 +451,22 @@ with tab_overview:
         st.write(_infer_intended_usage(nm))
 
     with colB:
-        # Provider description + definitions live top-right.
-        st.subheader(f"{selected}")
-
-        with st.spinner("Loading Yahoo profile…"):
+        # Provider description is shown in the header now; keep full text + JSON here (collapsed)
+        with st.expander("Provider description (full)", expanded=False):
             prof = _yahoo_profile(selected)
+            if prof:
+                summary = prof.get("longBusinessSummary")
+                if summary:
+                    st.write(summary)
+                else:
+                    st.caption("No longBusinessSummary available.")
 
-        if prof:
-            summary = prof.get("longBusinessSummary")
-            if summary:
-                st.markdown(summary)
-            with st.expander("Provider fields (JSON)", expanded=False):
-                # remove long blob from JSON view to keep it readable
-                p2 = dict(prof)
-                p2.pop("longBusinessSummary", None)
-                st.json(p2)
-        else:
-            st.caption("No provider description available (Yahoo returned nothing for this symbol).")
-
-        st.divider()
+                with st.expander("Provider fields (JSON)", expanded=False):
+                    p2 = dict(prof)
+                    p2.pop("longBusinessSummary", None)
+                    st.json(p2)
+            else:
+                st.caption("No provider description available (Yahoo returned nothing for this symbol).")
 
         st.subheader("Price")
 
