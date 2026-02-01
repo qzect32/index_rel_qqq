@@ -5,6 +5,7 @@ import argparse
 from .build import refresh_universe
 from .build_universe import refresh_etf_universe
 from .build_prices import refresh_prices
+from .bootstrap import bootstrap
 
 
 def main(argv=None) -> int:
@@ -30,6 +31,13 @@ def main(argv=None) -> int:
     pr.add_argument("--end", default=None, help="End date YYYY-MM-DD")
     pr.add_argument("--limit", type=int, default=200, help="Max tickers to fetch (for quick runs)")
 
+    b = sub.add_parser("bootstrap", help="Universe + prices in one shot (gets UI running fast)")
+    b.add_argument("--out", default="data", help="Output directory")
+    b.add_argument("--universe-provider", default="polygon", choices=["polygon"], help="Universe provider")
+    b.add_argument("--price-provider", default="yahoo", choices=["yahoo", "stooq"], help="Price provider")
+    b.add_argument("--start", default="2024-01-01", help="Start date YYYY-MM-DD")
+    b.add_argument("--limit", type=int, default=200, help="Max tickers to fetch prices for")
+
     args = p.parse_args(argv)
 
     if args.cmd == "refresh":
@@ -51,6 +59,18 @@ def main(argv=None) -> int:
             provider=args.provider,
             start=args.start,
             end=args.end,
+            limit=args.limit,
+        )
+        for k, v in outputs.items():
+            print(f"{k}: {v}")
+        return 0
+
+    if args.cmd == "bootstrap":
+        outputs = bootstrap(
+            args.out,
+            universe_provider=args.universe_provider,
+            price_provider=args.price_provider,
+            start=args.start,
             limit=args.limit,
         )
         for k, v in outputs.items():

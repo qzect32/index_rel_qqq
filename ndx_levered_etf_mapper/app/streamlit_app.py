@@ -81,9 +81,29 @@ with colR:
         )
         st.stop()
 
-    dfp = _load_prices(prices_db, ticker)
+    try:
+        dfp = _load_prices(prices_db, ticker)
+    except Exception as e:
+        st.error(str(e))
+        colA, colB = st.columns([0.35, 0.65])
+        with colA:
+            if st.button("Reset prices DB", type="primary"):
+                try:
+                    prices_db.unlink(missing_ok=True)
+                    st.success("Deleted prices.sqlite. Now rerun the prices command, then refresh this page.")
+                except Exception as ex:
+                    st.error(f"Failed to delete {prices_db}: {ex}")
+        with colB:
+            st.code(
+                "python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider yahoo --limit 200 --start 2024-01-01",
+                language="bash",
+            )
+        st.stop()
+
     if dfp.empty:
-        st.warning("No prices found for this ticker yet. Fetch it via the prices command (increase --limit or add targeting later).")
+        st.warning(
+            "No prices found for this ticker yet. Fetch it via the prices command (increase --limit or add targeting later)."
+        )
         st.stop()
 
     st.line_chart(dfp.set_index("date")["close"], height=320)

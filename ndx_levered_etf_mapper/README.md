@@ -65,6 +65,13 @@ python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet 
 python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider stooq --limit 200
 ```
 
+One-shot bootstrap (universe + first batch of prices):
+
+```bash
+# requires POLYGON_API_KEY
+python -m etf_mapper.cli bootstrap --out data --universe-provider polygon --price-provider yahoo --start 2024-01-01 --limit 200
+```
+
 Run the UI (Streamlit MVP):
 
 ```bash
