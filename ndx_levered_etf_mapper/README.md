@@ -1,8 +1,29 @@
-# Nasdaq-100 Exposure Graph (ETF Mapper)
+# ETF Hub (ETF Mapper)
 
-Local-first Python project that builds a **relationship graph** from the Nasdaq-100 constituents to ETFs that reference them.
+Local-first Python project that builds a **US ticker universe + relationship graph** and serves it through a lightweight **Streamlit UI**.
 
-Right now the project focuses on **derivative-style exposure** (index + single-stock daily leveraged/inverse products) and is structured to expand into **holdings-based discovery** ("every ETF that holds NVDA/TSLA/etc") next.
+Originally this started as a Nasdaq-100 exposure graph. It now aims to become a general-purpose “hub” to explore **stocks, ETFs, and their relationships**, with bootstrap market data (prices/options) today and broker-grade integrations (Schwab/TOS) later.
+
+## What changed today (high-level)
+
+- Added a **US ETF universe fetch** (Polygon reference tickers) → `data/etf_universe.{parquet,sqlite}`.
+- Added **bootstrap price history** providers (Yahoo / Stooq).
+- Built a **Streamlit UI** with:
+  - search + single “Ticker” source of truth
+  - price chart with **TOS-like timeframe presets**
+  - options chain presented as a **TOS-style ladder** + a functional **cart** with premium estimates
+  - a **relations graph** (interactive/force layout) with focus/expand controls
+  - admin utilities + diagnostics
+- Hardened common failure modes (empty ticker, malformed prices DB, missing provider fields).
+
+## Near-term expectations
+
+- Replace Yahoo/Stooq bootstrap data with **Schwab/TOS** (quotes + full options chains + order placement) when API access is available.
+- Expand “relations” from derivative-style exposures to true **holdings-based discovery** (SEC N-PORT / vendor holdings):
+  - ETF → holdings (equities)
+  - equity → ETFs that hold it
+- Improve graph UX (better centering/fit, click-to-focus, and compact default views).
+
 
 ## What it produces
 
@@ -72,11 +93,15 @@ One-shot bootstrap (universe + first batch of prices):
 python -m etf_mapper.cli bootstrap --out data --universe-provider polygon --price-provider yahoo --start 2024-01-01 --limit 200
 ```
 
-Run the UI (Streamlit MVP):
+Run the UI (Streamlit):
 
 ```bash
-streamlit run app/streamlit_app.py
+python -m streamlit run app/streamlit_app.py
 ```
+
+---
+
+**Partner update (1-liner):** Follow progress in chat — we pushed a working ETF Hub UI (universe + prices + options ladder + relations graph + cart) and will wire Schwab/TOS next.
 
 Explore:
 
