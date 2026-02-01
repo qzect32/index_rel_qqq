@@ -16,6 +16,13 @@ dependencies = [
   "pyarrow>=15.0",
   "networkx>=3.2",
   "python-dotenv>=1.0",
+
+  # Market data bootstrap (free sources; replace with Schwab/TOS later)
+  "yfinance>=0.2.36",
+  "pandas-datareader>=0.10.0",
+
+  # UI (MVP)
+  "streamlit>=1.32",
 ]
 
 [project.optional-dependencies]

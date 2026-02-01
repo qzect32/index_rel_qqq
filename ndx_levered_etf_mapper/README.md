@@ -55,6 +55,22 @@ Fetch the full US ETF universe (master list of ETF tickers):
 python -m etf_mapper.cli universe --out data --provider polygon
 ```
 
+Fetch daily price history (bootstrap providers while you wait for Schwab/TOS):
+
+```bash
+# Yahoo via yfinance (recommended bootstrap)
+python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider yahoo --limit 200
+
+# Stooq via pandas-datareader (alternative; sometimes spotty for ETFs)
+python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider stooq --limit 200
+```
+
+Run the UI (Streamlit MVP):
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
 Explore:
 
 ```bash
