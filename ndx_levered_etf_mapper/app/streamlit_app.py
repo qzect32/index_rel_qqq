@@ -450,12 +450,11 @@ with tab_overview:
         nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
         st.write(_infer_intended_usage(nm))
 
-    with colB:
-        # Provider description is shown in the header now; keep full text + JSON here (collapsed)
+        # Provider description tucked under Intended usage (collapsed)
         with st.expander("Provider description (full)", expanded=False):
             prof = _yahoo_profile(selected)
             if prof:
-                summary = prof.get("longBusinessSummary")
+                summary = (prof.get("longBusinessSummary") or "").strip()
                 if summary:
                     st.write(summary)
                 else:
@@ -468,6 +467,7 @@ with tab_overview:
             else:
                 st.caption("No provider description available (Yahoo returned nothing for this symbol).")
 
+    with colB:
         st.subheader("Price")
 
         # TOS-like timeframe presets (best-effort with Yahoo)
@@ -518,7 +518,19 @@ with tab_overview:
                 st.rerun()
             st.stop()
 
-        st.plotly_chart(_plot_candles(dfp, title=f"{selected} • {tos_tf}"), use_container_width=True)
+        # Current price (best-effort): use last close from the chart dataframe.
+        try:
+            cur_px = float(dfp["close"].dropna().iloc[-1])
+        except Exception:
+            cur_px = None
+
+        if cur_px is not None:
+            st.metric("Current price", f"${cur_px:,.2f}")
+
+        st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
+
+        # Show timeframe below chart (TOS-like label)
+        st.caption(f"Timeframe: {tos_tf}")
 
         # Small status footer
         st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Yahoo (on-demand).")
