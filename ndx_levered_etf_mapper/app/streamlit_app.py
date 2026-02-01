@@ -585,6 +585,9 @@ with tab_rel:
             _add_node(u, label=u, group="underlying", color="#60a5fa", size=16)
             vis_edges.append({"source": u, "to": e, "title": str(r.get("relationship", ""))})
 
+    # Cap edge count to keep the graph readable
+    vis_edges = vis_edges[: int(max_edges)]
+
     html = _net_html(
         nodes=[{"id": v["n_id"], "label": v["label"], "group": v["group"], "color": v["color"], "size": v["size"]} for v in nodes.values()],
         edges=vis_edges,
@@ -736,10 +739,34 @@ with tab_cart:
 with tab_admin:
     st.subheader("Admin / Data pipelines")
 
+    st.markdown("#### Status")
+    univ_db = data_dir / "etf_universe.sqlite"
+    rel_db = data_dir / "universe.sqlite"
+    prices_db = data_dir / "prices.sqlite"
+
+    cols = st.columns(3)
+    cols[0].metric("Universe DB", "present" if univ_db.exists() else "missing")
+    cols[1].metric("Relations DB", "present" if rel_db.exists() else "missing")
+    cols[2].metric("Prices DB", "present" if prices_db.exists() else "missing")
+
+    with st.expander("Quick diagnostics"):
+        try:
+            if univ_db.exists():
+                dfu = _read_sql(str(univ_db), "select count(*) as n from etf_universe")
+                st.write({"etf_universe_rows": int(dfu.iloc[0]["n"])})
+            if rel_db.exists():
+                dfe = _read_sql(str(rel_db), "select count(*) as n from edges")
+                st.write({"edges_rows": int(dfe.iloc[0]["n"])})
+            if prices_db.exists():
+                # count distinct tickers w/ prices
+                dfp = _read_sql(str(prices_db), "select count(distinct ticker) as n from prices_daily")
+                st.write({"priced_tickers": int(dfp.iloc[0]["n"])})
+        except Exception as e:
+            st.error(f"Diagnostics error: {e}")
+
     st.markdown("#### 1) Universe")
     st.code("python -m etf_mapper.cli universe --out data --provider polygon", language="bash")
     if st.button("Rebuild universe now"):
-        # wipe + rebuild
         (data_dir / "etf_universe.sqlite").unlink(missing_ok=True)
         (data_dir / "etf_universe.parquet").unlink(missing_ok=True)
         _ensure_universe(data_dir)
@@ -764,6 +791,10 @@ with tab_admin:
         (data_dir / "edges.parquet").unlink(missing_ok=True)
         _ensure_relations(data_dir)
         st.success("Relations rebuilt.")
+
+    st.markdown("#### Test tickers")
+    st.caption("Use these during troubleshooting to sanity-check options/relations quickly.")
+    st.code("AMZN  TSLA  AAPL  QQQ  TSLL  SPY", language="text")
 
     st.markdown("#### Schwab/TOS")
     st.caption("Integration scaffolded; toggle will appear here later.")
