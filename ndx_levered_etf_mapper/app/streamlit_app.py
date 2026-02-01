@@ -17,8 +17,18 @@ def _load_etf_universe(db_path: Path) -> pd.DataFrame:
 
 def _load_prices(db_path: Path, ticker: str) -> pd.DataFrame:
     with sqlite3.connect(db_path) as conn:
+        # Some early runs may have produced a malformed schema (MultiIndex columns from yfinance).
+        # Prefer the canonical schema, but fall back gracefully.
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(prices_daily)").fetchall()]
+        if "date" not in cols:
+            raise RuntimeError(
+                "prices_daily table is missing a 'date' column. "
+                "Delete data/prices.sqlite and rerun: python -m etf_mapper.cli prices --provider yahoo"
+            )
+
         q = "select date, open, high, low, close, adj_close, volume, source from prices_daily where ticker = ? order by date"
         df = pd.read_sql(q, conn, params=(ticker,))
+
     if df.empty:
         return df
     df["date"] = pd.to_datetime(df["date"], errors="coerce")

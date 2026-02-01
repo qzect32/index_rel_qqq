@@ -16,22 +16,26 @@ class YahooPriceProvider:
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> PriceHistoryResult:
-        df = yf.download(
-            tickers=ticker,
-            start=start,
-            end=end,
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
+        """Fetch daily OHLCV via yfinance.
 
-        if df is None or df.empty:
+        Implementation note:
+          - Use Ticker().history() to avoid MultiIndex columns that can appear with yf.download.
+        """
+        t = str(ticker).upper().strip()
+        hist = yf.Ticker(t).history(start=start, end=end, interval="1d", auto_adjust=False)
+
+        if hist is None or hist.empty:
             return PriceHistoryResult(prices=pd.DataFrame())
 
-        df = df.reset_index().rename(
+        df = hist.reset_index()
+        # yfinance uses 'Date' for daily, 'Datetime' for intraday. Normalize both.
+        if "Date" in df.columns:
+            df = df.rename(columns={"Date": "date"})
+        elif "Datetime" in df.columns:
+            df = df.rename(columns={"Datetime": "date"})
+
+        df = df.rename(
             columns={
-                "Date": "date",
                 "Open": "open",
                 "High": "high",
                 "Low": "low",
@@ -41,13 +45,13 @@ class YahooPriceProvider:
             }
         )
 
-        df["ticker"] = str(ticker).upper().strip()
+        df["ticker"] = t
         df["source"] = "yahoo:yfinance"
 
         # Normalize date to ISO string (safe for sqlite)
-        if pd.api.types.is_datetime64_any_dtype(df["date"]):
+        if "date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["date"]):
             df["date"] = df["date"].dt.date.astype(str)
-        else:
+        elif "date" in df.columns:
             df["date"] = df["date"].astype(str)
 
         keep = ["date", "ticker", "open", "high", "low", "close", "adj_close", "volume", "source"]
