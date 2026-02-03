@@ -288,8 +288,16 @@ def _yahoo_profile(ticker: str) -> dict:
     return out
 
 
+# Common "human" aliases / typos we want to handle gracefully.
+ALIASES = {
+    # People often mean the 20+ Year Treasury ETF
+    "TL": "TLT",
+}
+
+
 def _normalize_ticker(ticker: str) -> str:
-    return str(ticker or "").upper().strip()
+    t = str(ticker or "").upper().strip()
+    return ALIASES.get(t, t)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 10)
@@ -1135,6 +1143,7 @@ with tab_admin:
 
     probe_default = "SPY, IWM, TL, MARA"
     custom_probe = st.text_input("Custom tickers (comma-separated)", value=probe_default)
+    st.caption("Note: 'TL' is treated as an alias for 'TLT' (20+ Year Treasury ETF).")
 
     include_n100 = st.toggle("Include Nasdaq-100 sample (from local parquet)", value=True)
     sample_n = st.slider("Nasdaq-100 sample size", 5, 100, 25, 5)
