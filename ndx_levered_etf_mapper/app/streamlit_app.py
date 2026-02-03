@@ -253,6 +253,7 @@ def _infer_intended_usage(name: str) -> str:
     return ", ".join(hits)
 
 
+@st.cache_data(show_spinner=False, ttl=60 * 30)
 def _yahoo_profile(ticker: str) -> dict:
     if not ticker or not str(ticker).strip():
         return {}
@@ -276,12 +277,28 @@ def _yahoo_profile(ticker: str) -> dict:
         "market",
         "website",
         "longBusinessSummary",
+        # Useful stats (not always present for ETFs)
+        "sharesOutstanding",
+        "floatShares",
+        "heldPercentInstitutions",
     ]
     out = {k: info.get(k) for k in keys if info.get(k) not in (None, "")}
     return out
 
 
-def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def _yahoo_expirations(ticker: str) -> list[str]:
+    if not ticker or not str(ticker).strip():
+        return []
+    t = yf.Ticker(ticker)
+    try:
+        return list(t.options)
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 10)
+def _yahoo_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not ticker or not str(ticker).strip():
         return pd.DataFrame(), pd.DataFrame()
     t = yf.Ticker(ticker)
@@ -294,6 +311,62 @@ def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd
         df["ticker"] = ticker
         df["expiration"] = expiration
     return calls, puts
+
+
+def _estimate_atm_iv(ticker: str) -> Optional[float]:
+    """Best-effort ATM IV estimate from Yahoo options (earliest expiry, nearest strike).
+
+    Returns decimal IV (e.g., 0.22) or None.
+    """
+    expirations = _yahoo_expirations(ticker)
+    if not expirations:
+        return None
+
+    prof = _yahoo_profile(ticker)
+    # fallback spot from yfinance fast info is unreliable in some environments; chart uses close anyway.
+    spot = None
+    try:
+        finfo = getattr(yf.Ticker(ticker), "fast_info", None)
+        if finfo and finfo.get("last_price"):
+            spot = float(finfo.get("last_price"))
+    except Exception:
+        spot = None
+
+    exp = expirations[0]
+    calls, puts = _yahoo_option_chain(ticker, exp)
+    if calls.empty and puts.empty:
+        return None
+
+    # choose strike nearest spot if available; else choose median strike
+    strikes = pd.concat([calls.get("strike", pd.Series(dtype=float)), puts.get("strike", pd.Series(dtype=float))], axis=0)
+    strikes = strikes.dropna()
+    if strikes.empty:
+        return None
+
+    if spot is not None:
+        target_strike = float(strikes.iloc[(strikes - spot).abs().argmin()])
+    else:
+        target_strike = float(strikes.sort_values().iloc[len(strikes) // 2])
+
+    def _iv_near(df: pd.DataFrame) -> Optional[float]:
+        if df.empty or "strike" not in df.columns or "impliedVolatility" not in df.columns:
+            return None
+        x = df.loc[(df["strike"] - target_strike).abs().idxmin()]
+        v = x.get("impliedVolatility")
+        try:
+            return float(v) if pd.notna(v) else None
+        except Exception:
+            return None
+
+    ivs = [v for v in [_iv_near(calls), _iv_near(puts)] if v is not None]
+    if not ivs:
+        return None
+    return float(sum(ivs) / len(ivs))
+
+
+def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # Backwards-compatible wrapper (old name) → cached implementation.
+    return _yahoo_option_chain(ticker, expiration)
 
 
 def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame:
@@ -425,7 +498,7 @@ if q:
     mask = universe["ticker"].str.lower().str.contains(q) | universe["name"].fillna("").str.lower().str.contains(q)
     view = universe[mask].copy()
 
-st.sidebar.caption(f"Universe rows (filtered): {len(view):,}")
+st.sidebar.caption(f"Ticker bank rows (filtered ETFs): {len(view):,}")
 
 # Header row: title left, provider description right (uses otherwise-empty space)
 headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
@@ -471,11 +544,34 @@ with headerR:
 meta = universe[universe["ticker"] == selected].head(1)
 nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
 
-c1, c2, c3, c4 = st.columns([0.16, 0.28, 0.28, 0.28], vertical_alignment="top")
+c1, c2, c3, c4, c5, c6 = st.columns([0.14, 0.22, 0.18, 0.18, 0.14, 0.14], vertical_alignment="top")
 c1.metric("Symbol", selected)
 c2.metric("Category", str(prof_hdr.get("category") or "—"))
 c3.metric("Fund family", str(prof_hdr.get("fundFamily") or "—"))
 c4.metric("Exchange", str(prof_hdr.get("exchange") or "—"))
+
+# Stats (best-effort; placeholders when missing)
+inst = prof_hdr.get("heldPercentInstitutions")
+try:
+    inst_pct = f"{float(inst) * 100.0:,.1f}%" if inst is not None else "—"
+except Exception:
+    inst_pct = "—"
+
+flt = prof_hdr.get("floatShares")
+try:
+    flt_txt = f"{int(flt):,}" if flt is not None else "—"
+except Exception:
+    flt_txt = "—"
+
+iv = _estimate_atm_iv(selected)
+iv_txt = "—" if iv is None else f"{iv * 100.0:,.1f}%"
+
+c5.metric("ATM IV (est)", iv_txt)
+c6.metric("Inst. own", inst_pct)
+
+with st.expander("More stats", expanded=False):
+    st.write({"floatShares": flt_txt, "sharesOutstanding": prof_hdr.get("sharesOutstanding", "—")})
+
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
 # Context menus
@@ -487,7 +583,8 @@ with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
 
     with colA:
-        st.subheader("Universe")
+        st.subheader("Ticker bank")
+        st.caption("Currently populated from the US ETF universe (Polygon). You can still type any symbol above.")
         st.dataframe(
             view[["ticker", "name", "primary_exchange", "active"]].head(250),
             use_container_width=True,
@@ -602,7 +699,10 @@ with tab_overview:
 
 with tab_rel:
     st.subheader("Relationship map")
-    st.caption("Current graph = seeded derivative exposures (index + single-stock leveraged/inverse ETFs). Holdings-based map is a future step.")
+    st.caption(
+        "Current graph = seeded derivative exposures (index + single-stock leveraged/inverse ETFs). "
+        "Many mainstream symbols (e.g., SPY) won't appear until we add holdings-based discovery or seed more index mappings."
+    )
 
     colS, colM = st.columns([0.34, 0.66])
     with colS:
@@ -638,7 +738,57 @@ with tab_rel:
     # outbound edges (selected underlying -> ETFs)
     outbound = edges[edges["src"].astype(str).str.upper() == selected.upper()]
 
+    # Some mainstream symbols (SPY, IVV, VOO, etc.) aren't in the initial seed.
+    # Provide a small synthetic fallback mapping so the UI doesn't feel "broken".
+    SYNTHETIC_INDEX_MAP = {
+        "SPY": ["^GSPC", "SPX"],
+        "IVV": ["^GSPC", "SPX"],
+        "VOO": ["^GSPC", "SPX"],
+        "QQQ": ["^NDX", "NDX"],
+        "IWM": ["^RUT", "RUT"],
+        "DIA": ["^DJI", "DJI"],
+    }
+    SYNTHETIC_ETF_FOR_INDEX = {
+        "^GSPC": ["SPY", "IVV", "VOO"],
+        "SPX": ["SPY", "IVV", "VOO"],
+        "^NDX": ["QQQ"],
+        "NDX": ["QQQ"],
+        "^RUT": ["IWM"],
+        "RUT": ["IWM"],
+        "^DJI": ["DIA"],
+        "DJI": ["DIA"],
+    }
+
     if inbound.empty and outbound.empty:
+        fx = str(selected).upper().strip()
+        synth_nodes: dict[str, dict] = {}
+        synth_edges: list[dict] = []
+
+        def _add_synth_node(i: str, group: str, color: str, size: int):
+            if i not in synth_nodes:
+                synth_nodes[i] = {"n_id": i, "label": i, "group": group, "color": color, "size": size}
+
+        _add_synth_node(fx, group="center", color="#22c55e", size=26)
+
+        if fx in SYNTHETIC_INDEX_MAP:
+            for idx in SYNTHETIC_INDEX_MAP[fx]:
+                _add_synth_node(idx, group="index", color="#93c5fd", size=18)
+                synth_edges.append({"source": idx, "to": fx, "title": "synthetic: index tracking"})
+
+        if fx in SYNTHETIC_ETF_FOR_INDEX:
+            for etf in SYNTHETIC_ETF_FOR_INDEX[fx]:
+                _add_synth_node(etf, group="etf", color="#f59e0b", size=18)
+                synth_edges.append({"source": fx, "to": etf, "title": "synthetic: tradable proxy"})
+
+        if synth_edges:
+            st.info("No relations found in the current seed. Showing a small synthetic index/ETF mapping fallback.")
+            html = _net_html(
+                nodes=[{"id": v["n_id"], "label": v["label"], "group": v["group"], "color": v["color"], "size": v["size"]} for v in synth_nodes.values()],
+                edges=synth_edges,
+            )
+            st.components.v1.html(html, height=420, scrolling=True)
+            st.stop()
+
         st.info("No relations found for this ticker in the current graph seed.")
         st.stop()
 
@@ -716,20 +866,28 @@ with tab_opts:
     st.subheader(f"Options: {selected}")
     st.caption("Bootstrap via Yahoo (yfinance). TOS-like ladder view; will migrate to Schwab/TOS chain later.")
 
-    t = yf.Ticker(selected)
-    try:
-        expirations = list(t.options)
-    except Exception:
-        expirations = []
+    # Make failures obvious: Yahoo is sometimes flaky / rate-limited.
+    with st.spinner("Checking options expirations…"):
+        expirations = _yahoo_expirations(selected)
 
     if not expirations:
-        st.info("No options expirations found (or Yahoo unavailable) for this symbol.")
+        st.warning("No options expirations returned. This can mean: no options, Yahoo outage, or rate-limit.")
+        if st.button("Retry options lookup", type="secondary"):
+            st.cache_data.clear()
+            st.rerun()
         st.stop()
 
     exp = st.selectbox("Expiration", expirations, index=0)
 
     with st.spinner("Loading options chain…"):
-        calls, puts = _yahoo_options_chain(selected, exp)
+        try:
+            calls, puts = _yahoo_option_chain(selected, exp)
+        except Exception as e:
+            st.error(f"Options chain load failed: {e}")
+            if st.button("Retry chain load", type="secondary"):
+                st.cache_data.clear()
+                st.rerun()
+            st.stop()
 
     if "cart" not in st.session_state:
         st.session_state["cart"] = []
