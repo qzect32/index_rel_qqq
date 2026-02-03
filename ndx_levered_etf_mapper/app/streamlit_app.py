@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import sqlite3
-from typing import Optional
+from typing import Optional, Iterable
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -286,31 +286,134 @@ def _yahoo_profile(ticker: str) -> dict:
     return out
 
 
+def _normalize_ticker(ticker: str) -> str:
+    return str(ticker or "").upper().strip()
+
+
 @st.cache_data(show_spinner=False, ttl=60 * 10)
 def _yahoo_expirations(ticker: str) -> list[str]:
-    if not ticker or not str(ticker).strip():
+    tkr = _normalize_ticker(ticker)
+    if not tkr:
         return []
-    t = yf.Ticker(ticker)
+    t = yf.Ticker(tkr)
     try:
-        return list(t.options)
+        exps = list(t.options)
     except Exception:
-        return []
+        exps = []
+
+    # Sometimes Yahoo returns an empty list transiently (rate limit / hiccup)
+    return [str(x) for x in exps if x]
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 10)
 def _yahoo_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not ticker or not str(ticker).strip():
+    tkr = _normalize_ticker(ticker)
+    if not tkr:
         return pd.DataFrame(), pd.DataFrame()
-    t = yf.Ticker(ticker)
-    oc = t.option_chain(expiration)
+    t = yf.Ticker(tkr)
+    oc = t.option_chain(str(expiration))
     calls = oc.calls.copy()
     puts = oc.puts.copy()
     # normalize
     for df, side in [(calls, "call"), (puts, "put")]:
         df["side"] = side
-        df["ticker"] = ticker
-        df["expiration"] = expiration
+        df["ticker"] = tkr
+        df["expiration"] = str(expiration)
     return calls, puts
+
+
+def _options_probe(ticker: str, retries: int = 2) -> dict:
+    """Probe Yahoo options availability with retries/backoff.
+
+    Returns a dict safe to drop into a dataframe.
+    """
+    import time
+
+    tkr = _normalize_ticker(ticker)
+    out: dict = {
+        "ticker": tkr,
+        "has_expirations": False,
+        "n_expirations": 0,
+        "first_exp": None,
+        "has_chain": False,
+        "calls": 0,
+        "puts": 0,
+        "error": None,
+    }
+
+    if not tkr:
+        out["error"] = "empty ticker"
+        return out
+
+    last_err = None
+    for i in range(retries + 1):
+        try:
+            exps = _yahoo_expirations(tkr)
+            out["n_expirations"] = len(exps)
+            out["has_expirations"] = len(exps) > 0
+            out["first_exp"] = exps[0] if exps else None
+
+            if not exps:
+                return out
+
+            calls, puts = _yahoo_option_chain(tkr, exps[0])
+            out["calls"] = int(len(calls))
+            out["puts"] = int(len(puts))
+            out["has_chain"] = out["calls"] > 0 or out["puts"] > 0
+            return out
+        except Exception as e:
+            last_err = str(e)
+            out["error"] = last_err
+            # backoff (small)
+            time.sleep(0.4 + 0.6 * i)
+
+            # Clear caches on retry to avoid pinning a transient empty response
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+
+    out["error"] = last_err
+    return out
+
+
+def _qqq_constituents_from_local(data_dir: Path) -> list[str]:
+    """Best-effort: load Nasdaq-100 constituents from our refresh pipeline outputs."""
+    candidates: list[str] = []
+    # preferred: equities.parquet (written by refresh)
+    p = data_dir / "equities.parquet"
+    if p.exists():
+        try:
+            df = pd.read_parquet(p)
+            for col in ["ticker", "symbol", "Ticker", "Symbol"]:
+                if col in df.columns:
+                    candidates = df[col].dropna().astype(str).tolist()
+                    break
+        except Exception:
+            candidates = []
+
+    # fallback: legacy parquet
+    p2 = data_dir / "nasdaq100_constituents.parquet"
+    if (not candidates) and p2.exists():
+        try:
+            df = pd.read_parquet(p2)
+            for col in ["ticker", "symbol", "Ticker", "Symbol"]:
+                if col in df.columns:
+                    candidates = df[col].dropna().astype(str).tolist()
+                    break
+        except Exception:
+            candidates = []
+
+    # normalize + uniq
+    out = sorted({ _normalize_ticker(x) for x in candidates if _normalize_ticker(x) })
+    return out
+
+
+def _build_probe_list(data_dir: Path) -> list[str]:
+    base = set(_qqq_constituents_from_local(data_dir))
+    # Always include these (explicit request)
+    base.update(["QQQ", "SPY", "IWM", "TLT", "TL"])
+    return sorted(base)
 
 
 def _estimate_atm_iv(ticker: str) -> Optional[float]:
@@ -1011,6 +1114,41 @@ with tab_cart:
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
+
+    st.markdown("#### Options troubleshooting")
+    st.caption(
+        "Yahoo options can fail transiently (rate-limits/outages). Use this to probe expirations/chains across a basket. "
+        "For Nasdaq-100, run `refresh` first so equities.parquet exists."
+    )
+
+    probe_default = "SPY, QQQ, IWM, TLT"
+    custom_probe = st.text_input("Custom tickers (comma-separated)", value=probe_default)
+    include_n100 = st.toggle("Include Nasdaq-100 constituents (from local parquet)", value=True)
+    probe_retries = st.slider("Retries per ticker", 0, 4, 2, 1)
+
+    if st.button("Run options probe", type="primary"):
+        # Build list
+        tickers = set([_normalize_ticker(x) for x in (custom_probe or "").split(",") if _normalize_ticker(x)])
+        if include_n100:
+            tickers.update(_build_probe_list(data_dir))
+        tickers = {t for t in tickers if t}
+        tick_list = sorted(tickers)
+
+        st.write({"tickers_to_probe": len(tick_list)})
+
+        prog = st.progress(0)
+        rows = []
+        for i, tkr in enumerate(tick_list, start=1):
+            rows.append(_options_probe(tkr, retries=int(probe_retries)))
+            prog.progress(int(i / max(1, len(tick_list)) * 100))
+
+        df = pd.DataFrame(rows).sort_values(["has_chain", "has_expirations", "ticker"], ascending=[True, True, True])
+        st.dataframe(df, use_container_width=True, height=420)
+
+        bad = df[(~df["has_expirations"]) | (~df["has_chain"])].copy()
+        if not bad.empty:
+            st.warning("Some tickers did not return expirations and/or a chain. This is often Yahoo flakiness; retry later.")
+            st.dataframe(bad[["ticker", "has_expirations", "n_expirations", "first_exp", "has_chain", "calls", "puts", "error"]], use_container_width=True)
 
     st.markdown("#### Status")
     univ_db = data_dir / "etf_universe.sqlite"
