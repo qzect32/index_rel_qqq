@@ -24,9 +24,38 @@ st.set_page_config(page_title="ETF Hub", layout="wide")
 # Load local .env automatically (kept out of git)
 load_dotenv()
 
+# Small styling pass to make the UI feel tighter / more "app-like".
+st.markdown(
+    """
+<style>
+  /* Reduce top whitespace */
+  .block-container { padding-top: 1.0rem; padding-bottom: 2.0rem; }
+
+  /* Make Streamlit metrics look like cards */
+  div[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.03);
+    padding: 0.75rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  /* Slightly tighter tabs */
+  .stTabs [data-baseweb="tab"] { font-size: 0.95rem; padding: 0.35rem 0.75rem; }
+
+  /* Dataframe header contrast */
+  div[data-testid="stDataFrame"] div[role="columnheader"] {
+    background: rgba(255,255,255,0.04);
+  }
+</style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def _data_dir() -> Path:
-    return Path(st.sidebar.text_input("Data directory", value="data")).resolve()
+    # Stored in session_state so it doesn't "jump" on reruns.
+    d = st.session_state.get("data_dir", "data")
+    return Path(d).resolve()
 
 
 def _db_path(name: str) -> Path:
@@ -338,34 +367,44 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 
 # ---------- UI ----------
 
+# -------- Sidebar (streamlined) --------
+# Keep the sidebar focused on exploration; move operational controls behind an expander.
+with st.sidebar:
+    st.markdown("### Explore")
+
+    # Advanced settings (collapsed by default)
+    with st.expander("Advanced", expanded=False):
+        st.text_input("Data directory", value=st.session_state.get("data_dir", "data"), key="data_dir")
+
+        universe_provider = st.selectbox("Universe provider", ["polygon"], index=0)
+        price_provider = st.selectbox("Price provider", ["yahoo", "stooq"], index=0)
+        price_start = st.text_input("Price start", value="2024-01-01")
+        price_limit = st.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
+
+    with st.expander("Live", expanded=False):
+        auto_refresh = st.toggle("Auto-refresh UI", value=False)
+        auto_refresh_s = st.slider("Refresh interval (seconds)", 5, 60, 15, 5)
+        if auto_refresh:
+            # lightweight refresh loop (useful during market hours)
+            st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
+
+    with st.expander("Secrets", expanded=False):
+        poly_present = bool(os.getenv("POLYGON_API_KEY"))
+        st.write(f"POLYGON_API_KEY: {'set' if poly_present else 'missing'}")
+        if not poly_present:
+            st.warning("POLYGON_API_KEY not detected. Add it to a local .env file.")
+
+# Need data_dir after sidebar inputs are bound
 data_dir = _data_dir()
-
-# Sidebar controls
-st.sidebar.markdown("### Data ops")
-universe_provider = st.sidebar.selectbox("Universe provider", ["polygon"], index=0)
-price_provider = st.sidebar.selectbox("Price provider", ["yahoo", "stooq"], index=0)
-price_start = st.sidebar.text_input("Price start", value="2024-01-01")
-price_limit = st.sidebar.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
-
-st.sidebar.markdown("### Live")
-auto_refresh = st.sidebar.toggle("Auto-refresh UI", value=False)
-auto_refresh_s = st.sidebar.slider("Refresh interval (seconds)", 5, 60, 15, 5)
-if auto_refresh:
-    # lightweight refresh loop (useful during market hours)
-    st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
-
-st.sidebar.markdown("### Secrets")
-poly_present = bool(os.getenv("POLYGON_API_KEY"))
-st.sidebar.write(f"POLYGON_API_KEY: {'set' if poly_present else 'missing'}")
-if not poly_present:
-    st.sidebar.warning("POLYGON_API_KEY not detected. Add it to a local .env file.")
 
 # Ensure universe exists (or explain why not)
 try:
     universe_db = _ensure_universe(data_dir)
 except Exception as e:
     st.error(str(e))
-    st.info("Create a file named .env next to ndx_levered_etf_mapper/pyproject.toml with POLYGON_API_KEY=... (do not commit it).")
+    st.info(
+        "Create a file named .env next to ndx_levered_etf_mapper/pyproject.toml with POLYGON_API_KEY=... (do not commit it)."
+    )
     st.stop()
 
 universe = _load_universe(universe_db)
@@ -373,7 +412,6 @@ universe = _load_universe(universe_db)
 # Single source of truth: one ticker box.
 # We'll use that ticker value both for selection and for filtering the universe table.
 with st.sidebar:
-    st.markdown("### Explore")
     default_ticker = "QQQ" if "QQQ" in set(universe["ticker"]) else str(universe.iloc[0]["ticker"])
     selected = st.text_input("Ticker", value=default_ticker).upper().strip()
 
@@ -429,6 +467,17 @@ with headerR:
             unsafe_allow_html=True,
         )
 
+# Quick facts row
+meta = universe[universe["ticker"] == selected].head(1)
+nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
+
+c1, c2, c3, c4 = st.columns([0.16, 0.28, 0.28, 0.28], vertical_alignment="top")
+c1.metric("Symbol", selected)
+c2.metric("Category", str(prof_hdr.get("category") or "—"))
+c3.metric("Fund family", str(prof_hdr.get("fundFamily") or "—"))
+c4.metric("Exchange", str(prof_hdr.get("exchange") or "—"))
+st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
+
 # Context menus
 (tab_overview, tab_rel, tab_opts, tab_cart, tab_admin) = st.tabs(
     ["Overview", "Relations", "Options", "Cart", "Admin"]
@@ -446,8 +495,6 @@ with tab_overview:
         )
 
         st.markdown("#### Intended usage (heuristic)")
-        meta = universe[universe["ticker"] == selected].head(1)
-        nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
         st.write(_infer_intended_usage(nm))
 
         # Provider description tucked under Intended usage (collapsed)
