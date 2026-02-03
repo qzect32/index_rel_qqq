@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import sqlite3
+import json
+from datetime import datetime
 from typing import Optional, Iterable
 
 import pandas as pd
@@ -409,11 +411,21 @@ def _qqq_constituents_from_local(data_dir: Path) -> list[str]:
     return out
 
 
-def _build_probe_list(data_dir: Path) -> list[str]:
-    base = set(_qqq_constituents_from_local(data_dir))
+def _build_probe_list(data_dir: Path, sample_n: int = 25, include: Optional[Iterable[str]] = None) -> list[str]:
+    # Deterministic sample from local Nasdaq-100 list (sorted then first N)
+    ndx = _qqq_constituents_from_local(data_dir)
+    ndx_sample = ndx[: max(0, int(sample_n))]
+
+    base = set(ndx_sample)
+
     # Always include these (explicit request)
-    base.update(["QQQ", "SPY", "IWM", "TLT", "TL"])
-    return sorted(base)
+    base.update(["SPY", "IWM", "TL", "TLT", "MARA"])
+
+    if include:
+        for x in include:
+            base.add(_normalize_ticker(str(x)))
+
+    return sorted({t for t in base if t})
 
 
 def _estimate_atm_iv(ticker: str) -> Optional[float]:
@@ -1121,20 +1133,39 @@ with tab_admin:
         "For Nasdaq-100, run `refresh` first so equities.parquet exists."
     )
 
-    probe_default = "SPY, QQQ, IWM, TLT"
+    probe_default = "SPY, IWM, TL, MARA"
     custom_probe = st.text_input("Custom tickers (comma-separated)", value=probe_default)
-    include_n100 = st.toggle("Include Nasdaq-100 constituents (from local parquet)", value=True)
+
+    include_n100 = st.toggle("Include Nasdaq-100 sample (from local parquet)", value=True)
+    sample_n = st.slider("Nasdaq-100 sample size", 5, 100, 25, 5)
+
     probe_retries = st.slider("Retries per ticker", 0, 4, 2, 1)
+
+    def _save_probe_logs(df: pd.DataFrame) -> tuple[Path, Path]:
+        out_dir = data_dir / "logs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = out_dir / f"options_probe_{stamp}.csv"
+        jsonl_path = out_dir / f"options_probe_{stamp}.jsonl"
+
+        df.to_csv(csv_path, index=False)
+        with jsonl_path.open("w", encoding="utf-8") as f:
+            for _, r in df.iterrows():
+                # convert to plain python types for JSON
+                obj = {k: (None if pd.isna(v) else v) for k, v in r.to_dict().items()}
+                f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+
+        return jsonl_path, csv_path
 
     if st.button("Run options probe", type="primary"):
         # Build list
-        tickers = set([_normalize_ticker(x) for x in (custom_probe or "").split(",") if _normalize_ticker(x)])
+        custom_list = [_normalize_ticker(x) for x in (custom_probe or "").split(",") if _normalize_ticker(x)]
+        tickers = set(custom_list)
         if include_n100:
-            tickers.update(_build_probe_list(data_dir))
-        tickers = {t for t in tickers if t}
-        tick_list = sorted(tickers)
+            tickers.update(_build_probe_list(data_dir, sample_n=int(sample_n)))
+        tick_list = sorted({t for t in tickers if t})
 
-        st.write({"tickers_to_probe": len(tick_list)})
+        st.write({"tickers_to_probe": len(tick_list), "sample_n": int(sample_n) if include_n100 else 0})
 
         prog = st.progress(0)
         rows = []
@@ -1142,7 +1173,14 @@ with tab_admin:
             rows.append(_options_probe(tkr, retries=int(probe_retries)))
             prog.progress(int(i / max(1, len(tick_list)) * 100))
 
-        df = pd.DataFrame(rows).sort_values(["has_chain", "has_expirations", "ticker"], ascending=[True, True, True])
+        df = pd.DataFrame(rows)
+        # Add timestamp for per-row traversal
+        df.insert(0, "ts", datetime.now().isoformat())
+        df = df.sort_values(["has_chain", "has_expirations", "ticker"], ascending=[True, True, True])
+
+        jsonl_path, csv_path = _save_probe_logs(df)
+        st.success(f"Wrote logs: {jsonl_path} and {csv_path}")
+
         st.dataframe(df, use_container_width=True, height=420)
 
         bad = df[(~df["has_expirations"]) | (~df["has_chain"])].copy()
