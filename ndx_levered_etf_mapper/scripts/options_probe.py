@@ -30,17 +30,8 @@ import pandas as pd
 import yfinance as yf
 
 
-# Common "human" aliases / typos we want to handle gracefully.
-# (Keep small + explicit; log that we normalized.)
-ALIASES = {
-    # People often mean the 20+ Year Treasury ETF
-    "TL": "TLT",
-}
-
-
 def _normalize_ticker(ticker: str) -> str:
-    t = str(ticker or "").upper().strip()
-    return ALIASES.get(t, t)
+    return str(ticker or "").upper().strip()
 
 
 def _qqq_constituents_from_local(data_dir: Path) -> list[str]:
@@ -78,7 +69,6 @@ def _options_probe_one(ticker: str, retries: int = 2) -> dict:
         "ts": datetime.utcnow().isoformat() + "Z",
         "ticker": tkr,
         "ticker_input": raw,
-        "ticker_normalized": (tkr != raw),
         "has_expirations": False,
         "n_expirations": 0,
         "first_exp": None,
