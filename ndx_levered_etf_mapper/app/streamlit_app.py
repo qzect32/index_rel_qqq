@@ -292,19 +292,30 @@ def _normalize_ticker(ticker: str) -> str:
     return str(ticker or "").upper().strip()
 
 
+def _looks_rate_limited(err: str) -> bool:
+    e = (err or "").lower()
+    return any(x in e for x in ["429", "too many", "rate limit", "ratelimit", "throttle", "temporarily blocked"])
+
+
 @st.cache_data(show_spinner=False, ttl=60 * 10)
 def _yahoo_expirations(ticker: str) -> list[str]:
+    # Kept for compatibility; silent failure -> empty list.
+    exps, _ = _yahoo_expirations_dbg(ticker)
+    return exps
+
+
+def _yahoo_expirations_dbg(ticker: str) -> tuple[list[str], Optional[str]]:
+    """Like _yahoo_expirations but returns an error string when Yahoo/yfinance throws."""
     tkr = _normalize_ticker(ticker)
     if not tkr:
-        return []
+        return [], "empty ticker"
     t = yf.Ticker(tkr)
     try:
         exps = list(t.options)
-    except Exception:
-        exps = []
-
-    # Sometimes Yahoo returns an empty list transiently (rate limit / hiccup)
-    return [str(x) for x in exps if x]
+        exps = [str(x) for x in exps if x]
+        return exps, None
+    except Exception as e:
+        return [], str(e)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 10)
@@ -983,13 +994,24 @@ with tab_opts:
 
     # Make failures obvious: Yahoo is sometimes flaky / rate-limited.
     with st.spinner("Checking options expirations…"):
-        expirations = _yahoo_expirations(selected)
+        expirations, exp_err = _yahoo_expirations_dbg(selected)
 
     if not expirations:
-        st.warning("No options expirations returned. This can mean: no options, Yahoo outage, or rate-limit.")
-        if st.button("Retry options lookup", type="secondary"):
-            st.cache_data.clear()
-            st.rerun()
+        if exp_err and _looks_rate_limited(exp_err):
+            st.warning("Yahoo appears rate-limited right now (429 / throttling). Try again in a minute.")
+        else:
+            st.warning("No options expirations returned. This can mean: no options, Yahoo outage, or rate-limit.")
+
+        with st.expander("Diagnostics", expanded=False):
+            st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, it's almost certainly Yahoo flakiness."})
+
+        colr1, colr2 = st.columns([0.35, 0.65])
+        with colr1:
+            if st.button("Retry options lookup", type="secondary"):
+                st.cache_data.clear()
+                st.rerun()
+        with colr2:
+            st.caption("Tip: the Admin → Options troubleshooting probe can confirm whether Yahoo is working across a basket.")
         st.stop()
 
     exp = st.selectbox("Expiration", expirations, index=0)
@@ -1126,6 +1148,25 @@ with tab_cart:
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
+
+    st.markdown("#### Schwab / TOS (coming soon)")
+    st.caption("Scaffolded in code; disabled until your Schwab Developer Portal access is restored.")
+    st.info(
+        "When you're ready, we'll add OAuth connect + token storage and swap Yahoo market data for Schwab quotes/options. "
+        "For now this is just a placeholder so the UI has a stable home for the integration."
+    )
+
+    st.markdown("**What we’ll need from Schwab Dev Portal**")
+    st.write(
+        [
+            "Trader API app Client ID",
+            "(Possibly) Client Secret",
+            "Redirect URI (we'll use a local callback)",
+            "Approved access / entitlements",
+        ]
+    )
+
+    st.divider()
 
     st.markdown("#### Options troubleshooting")
     st.caption(
