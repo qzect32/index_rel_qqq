@@ -187,6 +187,10 @@ class SchwabAPI:
     def account_numbers(self) -> Any:
         return self._get("/trader/v1/accounts/accountNumbers")
 
+    def account_details(self, account_hash: str, *, fields: str = "positions") -> Any:
+        # Typical endpoint: /trader/v1/accounts/{accountHash}?fields=positions
+        return self._get(f"/trader/v1/accounts/{account_hash}", params={"fields": fields})
+
     def place_order(self, account_hash: str, order: dict[str, Any]) -> Any:
         # WARNING: this can place real orders if your app is entitled. Keep UI guarded.
         return self._post(f"/trader/v1/accounts/{account_hash}/orders", json_body=order)
