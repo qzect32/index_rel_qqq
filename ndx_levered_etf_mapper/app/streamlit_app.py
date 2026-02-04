@@ -15,6 +15,7 @@ from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
 
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
+from etf_mapper.config import load_schwab_secrets
 
 # Schwab API removed (replaced with Schwab Market Data)
 
@@ -68,20 +69,16 @@ def _db_path(name: str) -> Path:
 
 
 def _schwab_api() -> SchwabAPI | None:
-    client_id = os.getenv("SCHWAB_CLIENT_ID", "")
-    client_secret = os.getenv("SCHWAB_CLIENT_SECRET", "")
-    redirect_uri = os.getenv("SCHWAB_REDIRECT_URI", "")
-    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(_db_path("schwab_tokens.json")))
-
-    if not (client_id and client_secret and redirect_uri):
+    secrets = load_schwab_secrets(_data_dir())
+    if secrets is None:
         return None
 
     return SchwabAPI(
         SchwabConfig(
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            token_path=token_path,
+            client_id=secrets.client_id,
+            client_secret=secrets.client_secret,
+            redirect_uri=secrets.redirect_uri,
+            token_path=secrets.token_path,
         )
     )
 
@@ -1251,10 +1248,12 @@ with tab_admin:
     st.markdown("#### Schwab OAuth")
 
     api = _schwab_api()
-    client_id_set = bool(os.getenv("SCHWAB_CLIENT_ID"))
-    client_secret_set = bool(os.getenv("SCHWAB_CLIENT_SECRET"))
-    redirect_set = bool(os.getenv("SCHWAB_REDIRECT_URI"))
-    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(_db_path("schwab_tokens.json")))
+    secrets = load_schwab_secrets(_data_dir())
+    client_id_set = bool(secrets and secrets.client_id)
+    client_secret_set = bool(secrets and secrets.client_secret)
+    redirect_set = bool(secrets and secrets.redirect_uri)
+    token_path = (secrets.token_path if secrets else str(_db_path("schwab_tokens.json")))
+    secrets_path = str((_data_dir() / "schwab_secrets.local.json").resolve())
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("SCHWAB_CLIENT_ID", "set" if client_id_set else "missing")
@@ -1264,8 +1263,30 @@ with tab_admin:
 
     if api is None:
         st.warning(
-            "Schwab OAuth env vars are not configured. Add SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET, SCHWAB_REDIRECT_URI to your local .env."
+            "Schwab is not configured yet. Create a local secrets file (gitignored) and restart the app."
         )
+        st.code(
+            secrets_path,
+            language="text",
+        )
+        st.caption("Example file contents:")
+        st.code(
+            """{
+  \"SCHWAB_CLIENT_ID\": \"...\",
+  \"SCHWAB_CLIENT_SECRET\": \"...\",
+  \"SCHWAB_REDIRECT_URI\": \"http://127.0.0.1:8501\",
+  \"SCHWAB_TOKEN_PATH\": \"data/schwab_tokens.json\",
+  \"SCHWAB_OAUTH_SCOPE\": \"readonly\"
+}""",
+            language="json",
+        )
+
+        if st.button("Create empty secrets file", type="secondary"):
+            p = Path(secrets_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if not p.exists():
+                p.write_text("{}\n", encoding="utf-8")
+            st.success(f"Wrote: {p}")
     else:
         st.caption(
             "Authorize once, then the app will refresh tokens automatically. Paste the full redirect URL (or just the code) below."
@@ -1279,7 +1300,8 @@ with tab_admin:
             state = secrets.token_urlsafe(16)
             st.session_state["schwab_oauth_state"] = state
 
-        auth_url = api.build_authorize_url(state=state, scope=os.getenv("SCHWAB_OAUTH_SCOPE", "readonly"))
+        scope = (secrets.oauth_scope if secrets else "readonly")
+        auth_url = api.build_authorize_url(state=state, scope=scope)
         st.code(auth_url, language="text")
 
         oauth_in = st.text_input("Paste redirect URL (or code)", value=st.session_state.get("schwab_oauth_in", ""))

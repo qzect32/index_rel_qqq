@@ -2,6 +2,11 @@ data/
 *.parquet
 *.sqlite
 *.gexf
+
+# Local secrets/config (keep out of git)
+*.local.json
+.env
+
 __pycache__/
 .ipynb_checkpoints/
 *.zip
