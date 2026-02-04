@@ -894,11 +894,13 @@ with tab_overview:
             st.session_state["spade"]["history"] = None
 
         if dfp.empty:
-            st.warning("No price history found (Schwab may be down or symbol unsupported).")
+            st.warning("No price history found (Schwab may be down, tokens missing, or symbol unsupported).")
+            st.caption("This does not block the rest of the app. Use Admin → Schwab OAuth to connect.")
             if universe_parquet.exists() and st.button("Fetch bootstrap prices DB now", type="secondary"):
                 _ensure_prices(data_dir, universe_parquet, provider=price_provider, start=price_start, limit=price_limit)
                 st.rerun()
-            st.stop()
+            # IMPORTANT: don't st.stop() here; it prevents other tabs (Admin) from rendering.
+            dfp = pd.DataFrame()
 
         # Current price (best-effort): use last close from the chart dataframe.
         try:
@@ -909,7 +911,8 @@ with tab_overview:
         title_price = f"Price" if cur_px is None else f"Price — ${cur_px:,.2f}"
         st.subheader(title_price)
 
-        st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
+        if not dfp.empty:
+            st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
 
         # Spade status (history)
         sp = st.session_state.get("spade", {}).get("history")
@@ -1123,10 +1126,10 @@ with tab_opts:
         if exp_err and _looks_rate_limited(exp_err):
             st.warning("Schwab appears rate-limited right now (429 / throttling). Try again in a minute.")
         else:
-            st.warning("No options expirations returned. This can mean: no options, Schwab outage, or rate-limit.")
+            st.warning("No options expirations returned. This can mean: no options, Schwab outage, tokens missing, or rate-limit.")
 
         with st.expander("Diagnostics", expanded=False):
-            st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, it's almost certainly Schwab flakiness."})
+            st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, confirm OAuth tokens in Admin."})
 
         colr1, colr2 = st.columns([0.35, 0.65])
         with colr1:
@@ -1134,11 +1137,15 @@ with tab_opts:
                 st.cache_data.clear()
                 st.rerun()
         with colr2:
-            st.caption("Tip: the Admin → Options troubleshooting probe can confirm whether Schwab is working across a basket.")
-        st.stop()
+            st.caption("Tip: Admin → Schwab OAuth should be completed before expecting options.")
+        # IMPORTANT: don't st.stop(); allow other tabs (Admin) to render.
+        expirations = []
 
     # TOS-like: pick expiration; strikes are shown around ATM by default.
-    exp = st.selectbox("Expiration", expirations, index=0)
+    if expirations:
+        exp = st.selectbox("Expiration", expirations, index=0)
+    else:
+        exp = None
 
     # Strike window (around ATM)
     strike_window = st.selectbox(
@@ -1148,15 +1155,18 @@ with tab_opts:
         help="Shows N strikes above and below ATM (approx).",
     )
 
-    with st.spinner("Loading options chain…"):
-        try:
-            calls, puts = _schwab_option_chain(selected, exp)
-        except Exception as e:
-            st.error(f"Options chain load failed: {e}")
-            if st.button("Retry chain load", type="secondary"):
-                st.cache_data.clear()
-                st.rerun()
-            st.stop()
+    calls, puts = pd.DataFrame(), pd.DataFrame()
+    if exp:
+        with st.spinner("Loading options chain…"):
+            try:
+                calls, puts = _schwab_option_chain(selected, exp)
+            except Exception as e:
+                st.error(f"Options chain load failed: {e}")
+                if st.button("Retry chain load", type="secondary"):
+                    st.cache_data.clear()
+                    st.rerun()
+                # IMPORTANT: don't stop entire app.
+                calls, puts = pd.DataFrame(), pd.DataFrame()
 
     # Spade checks: option chain
     try:
@@ -1328,7 +1338,7 @@ with tab_cart:
     legs = st.session_state.get("builder_legs", [])
     if not legs:
         st.info("No legs yet. Add option contracts from the Options tab.")
-        st.stop()
+        legs = []
 
     df = pd.DataFrame(legs)
     if "action" not in df.columns:

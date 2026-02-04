@@ -10,6 +10,7 @@ import os
 
 from .marketdata import SchwabPriceProvider
 from .schwab import SchwabConfig
+from .config import load_schwab_secrets
 
 
 PriceProviderName = Literal["schwab"]
@@ -67,23 +68,26 @@ def refresh_prices(
     if provider != "schwab":
         raise ValueError(f"Unknown provider: {provider}")
 
-    # Pull Schwab OAuth config from environment. Keep secrets out of code/git.
-    client_id = os.getenv("SCHWAB_CLIENT_ID", "")
-    client_secret = os.getenv("SCHWAB_CLIENT_SECRET", "")
-    redirect_uri = os.getenv("SCHWAB_REDIRECT_URI", "")
-    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(Path(out_dir) / "schwab_tokens.json"))
-
-    if not (client_id and client_secret and redirect_uri):
-        raise RuntimeError(
-            "Missing Schwab OAuth config. Set SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET, SCHWAB_REDIRECT_URI in your environment/.env"
-        )
+    # Pull Schwab OAuth config from local secrets file first, env fallback.
+    secrets = load_schwab_secrets(Path(out_dir))
+    if secrets is None:
+        # env fallback for legacy
+        client_id = os.getenv("SCHWAB_CLIENT_ID", "")
+        client_secret = os.getenv("SCHWAB_CLIENT_SECRET", "")
+        redirect_uri = os.getenv("SCHWAB_REDIRECT_URI", "")
+        token_path = os.getenv("SCHWAB_TOKEN_PATH", str(Path(out_dir) / "schwab_tokens.json"))
+        if not (client_id and client_secret and redirect_uri):
+            raise RuntimeError(
+                "Missing Schwab OAuth config. Add data/schwab_secrets.local.json (recommended) or set SCHWAB_CLIENT_ID/SCHWAB_CLIENT_SECRET/SCHWAB_REDIRECT_URI."
+            )
+        secrets = type("S", (), {"client_id": client_id, "client_secret": client_secret, "redirect_uri": redirect_uri, "token_path": token_path})
 
     p = SchwabPriceProvider(
         SchwabConfig(
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            token_path=token_path,
+            client_id=secrets.client_id,
+            client_secret=secrets.client_secret,
+            redirect_uri=secrets.redirect_uri,
+            token_path=secrets.token_path,
         )
     )
 
