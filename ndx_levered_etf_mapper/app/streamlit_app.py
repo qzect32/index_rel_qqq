@@ -1646,15 +1646,16 @@ with tab_admin:
             }
         )
 
-        import secrets
+        import secrets as py_secrets
         import urllib.parse
 
         state = st.session_state.get("schwab_oauth_state")
         if not state:
-            state = secrets.token_urlsafe(16)
+            state = py_secrets.token_urlsafe(16)
             st.session_state["schwab_oauth_state"] = state
 
-        scope = (secrets.oauth_scope if secrets else "readonly")
+        # Use configured scope from loaded Schwab secrets (not the stdlib secrets module)
+        scope = (load_schwab_secrets(_data_dir()).oauth_scope if load_schwab_secrets(_data_dir()) else "readonly")
         auth_url = api.build_authorize_url(state=state, scope=scope)
         st.code(auth_url, language="text")
 
