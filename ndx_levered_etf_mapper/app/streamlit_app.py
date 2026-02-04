@@ -10,12 +10,15 @@ from typing import Optional, Iterable
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+from ladder_styles import style_ladder_with_changes
 from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
 
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
 from etf_mapper.config import load_schwab_secrets
+from etf_mapper.spade_checks import check_option_chain, check_price_history, summarize
 
 # Schwab API removed (replaced with Schwab Market Data)
 
@@ -815,6 +818,9 @@ st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
 
+    # Spade checks summary (updates with live fetches)
+    st.session_state.setdefault("spade", {})
+
     with colA:
         st.subheader("Ticker bank")
         st.caption("Currently populated from the US ETF universe (Polygon). You can still type any symbol above.")
@@ -879,6 +885,13 @@ with tab_overview:
             with st.spinner("Fetching chart data from Schwab…"):
                 dfp = _fetch_history(selected, tos_tf)
 
+        # Spade checks: price history
+        try:
+            checks = check_price_history(dfp)
+            st.session_state["spade"]["history"] = summarize(checks)
+        except Exception:
+            st.session_state["spade"]["history"] = None
+
         if dfp.empty:
             st.warning("No price history found (Schwab may be down or symbol unsupported).")
             if universe_parquet.exists() and st.button("Fetch bootstrap prices DB now", type="secondary"):
@@ -896,6 +909,19 @@ with tab_overview:
         st.subheader(title_price)
 
         st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
+
+        # Spade status (history)
+        sp = st.session_state.get("spade", {}).get("history")
+        if sp and isinstance(sp, dict):
+            msg = f"Spade checks: {sp.get('status')} (warn={sp.get('warn')}, fail={sp.get('fail')})"
+            if sp.get("status") == "FAIL":
+                st.error(msg)
+            elif sp.get("status") == "WARN":
+                st.warning(msg)
+            else:
+                st.caption(msg)
+            with st.expander("Spade details (price history)", expanded=False):
+                st.json(sp)
 
         # Timeframe selector *below* the chart.
         # Changing it triggers a rerun automatically; on rerun we fetch using st.session_state["tos_tf"].
@@ -1131,6 +1157,23 @@ with tab_opts:
                 st.rerun()
             st.stop()
 
+    # Spade checks: option chain
+    try:
+        sp_checks = check_option_chain(calls, puts)
+        sp_sum = summarize(sp_checks)
+        st.session_state["spade"]["chain"] = sp_sum
+        if sp_sum.get("status") == "FAIL":
+            st.error(f"Spade checks: FAIL (options chain) — see details below")
+        elif sp_sum.get("status") == "WARN":
+            st.warning(f"Spade checks: WARN (options chain) — see details below")
+        else:
+            st.caption("Spade checks: OK (options chain)")
+
+        with st.expander("Spade details (options chain)", expanded=False):
+            st.json(sp_sum)
+    except Exception:
+        st.session_state["spade"]["chain"] = None
+
     # Position Builder legs (backwards compatible with older key name)
     if "builder_legs" not in st.session_state:
         st.session_state["builder_legs"] = st.session_state.get("cart", [])
@@ -1144,6 +1187,24 @@ with tab_opts:
         spot = float(prof.get("lastPrice") or prof.get("mark"))
     except Exception:
         spot = None
+
+    # Ex-dividend warning (best-effort)
+    try:
+        api = _schwab_api()
+        if api is not None:
+            div = api.dividends(_normalize_ticker(selected))
+            exd = (div.ex_dividend_date or "").strip()
+            if exd:
+                # Warn if expiration is on/after ex-div date (especially relevant if you might be short calls)
+                try:
+                    exp_dt = pd.Timestamp(str(exp)).date()
+                    exd_dt = pd.Timestamp(exd).date()
+                    if exp_dt >= exd_dt:
+                        st.warning(f"Ex-dividend warning: ex-div date {exd} is on/before selected expiration {exp}. Early assignment risk can increase for short ITM calls.")
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     if spot is not None and (strike_window or "").upper() != "ALL" and "strike" in ladder.columns and not ladder.empty:
         try:
@@ -1184,6 +1245,10 @@ with tab_opts:
     ]
     display_cols = [c for c in display_cols if c in ladder.columns]
 
+    # Keep previous ladder snapshot for change highlighting (live-ish)
+    prev_ladder = st.session_state.get("prev_ladder")
+    st.session_state["prev_ladder"] = ladder[[c for c in ladder.columns if c in display_cols]].copy()
+
     edited_view = st.data_editor(
         ladder[display_cols],
         use_container_width=True,
@@ -1196,6 +1261,14 @@ with tab_opts:
         },
         disabled=[c for c in display_cols if c not in ("call_select", "call_qty", "put_select", "put_qty")],
     )
+
+    # Read-only styled view (call/put shading + change intensity)
+    with st.expander("Ladder (styled / live changes)", expanded=False):
+        try:
+            st.dataframe(style_ladder_with_changes(ladder[display_cols], prev_ladder), use_container_width=True, height=520)
+            st.caption("Change highlighting is best-effort (compares current snapshot to previous refresh).")
+        except Exception as e:
+            st.caption(f"Styled ladder unavailable: {e}")
 
     # Merge edited selection/qty back with the hidden contract symbols (call_sym/put_sym)
     edited = pd.merge(
@@ -1309,6 +1382,12 @@ with tab_cart:
     except Exception:
         spot = None
 
+    # Scenario controls (time + underlying move) for quick intuition
+    with st.expander("Scenario (time + underlying move)", expanded=False):
+        days_fwd = st.slider("Days forward", 0, 30, 0, 1)
+        move = st.slider("Underlying move ($)", -200.0, 200.0, 0.0, 1.0)
+        st.caption("Greeks-based estimate is best-effort. Use for intuition, not guarantees.")
+
     if spot is None:
         st.warning("Spot price unavailable; payoff graph needs lastPrice/mark.")
     else:
@@ -1347,7 +1426,67 @@ with tab_cart:
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="PnL @ exp"))
+
+        # Scenario overlay (greeks-based approximation)
+        try:
+            s1 = s0 + float(move)
+        except Exception:
+            s1 = s0
+
+        if int(days_fwd) > 0:
+            # Use theta/delta when present; otherwise skip.
+            def _est_price(r, s: float) -> float:
+                px0 = float(r.get("est_px") or 0.0)
+                d = r.get("delta")
+                th = r.get("theta")
+                try:
+                    d = float(d) if d is not None else None
+                except Exception:
+                    d = None
+                try:
+                    th = float(th) if th is not None else None
+                except Exception:
+                    th = None
+
+                px = px0
+                if d is not None:
+                    px += d * (s - s0)
+                # theta is commonly quoted per day; assume per day
+                if th is not None:
+                    px += th * float(days_fwd)
+                return float(max(px, 0.0))
+
+            def _pnl_leg_scenario(r, s: float) -> float:
+                side = str(r.get("side") or "").lower()
+                k = float(r.get("strike") or 0.0)
+                qty = int(r.get("qty") or 1)
+                sign = 1 if str(r.get("action") or "BUY").upper() == "BUY" else -1
+                px = _est_price(r, s)
+
+                if side == "call":
+                    intrinsic = max(s - k, 0.0)
+                elif side == "put":
+                    intrinsic = max(k - s, 0.0)
+                else:
+                    intrinsic = 0.0
+
+                if sign == 1:
+                    pnl = (intrinsic - px) * 100.0 * qty
+                else:
+                    pnl = (px - intrinsic) * 100.0 * qty
+                return float(pnl)
+
+            ys2 = []
+            for s in xs:
+                total = 0.0
+                for _, r in edited.iterrows():
+                    total += _pnl_leg_scenario(r, float(s))
+                ys2.append(total)
+
+            fig.add_trace(go.Scatter(x=xs, y=ys2, mode="lines", name=f"PnL est (+{days_fwd}d)", line=dict(dash="dash")))
+
         fig.add_vline(x=s0, line_width=1, line_dash="dot", line_color="#94a3b8")
+        fig.add_vline(x=s1, line_width=1, line_dash="dot", line_color="#22c55e")
         fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
 

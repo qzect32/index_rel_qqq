@@ -9,6 +9,7 @@ from typing import Any, Optional
 import requests
 
 from .tokens import OAuthTokenSet, TokenStore
+from .dividends import DividendInfo, extract_ex_dividend
 
 
 DEFAULT_BASE_URL = os.getenv("SCHWAB_API_BASE_URL", "https://api.schwabapi.com")
@@ -155,6 +156,28 @@ class SchwabAPI:
                 "contractType": contract_type,
             },
         )
+
+    def dividends(self, symbol: str) -> DividendInfo:
+        """Best-effort dividend metadata.
+
+        Schwab has multiple market data endpoints; schemas vary. We try an instruments endpoint if available.
+        If this fails, we return an empty DividendInfo.
+        """
+        try:
+            js = self._get(
+                "/marketdata/v1/instruments",
+                params={"symbol": symbol, "projection": "fundamental"},
+            )
+        except Exception:
+            return DividendInfo()
+
+        # Try keyed-by-symbol shape
+        if isinstance(js, dict):
+            rec = js.get(symbol) or js.get(symbol.upper())
+            if isinstance(rec, dict):
+                return extract_ex_dividend(rec)
+            return extract_ex_dividend(js)
+        return DividendInfo()
 
     # ---------- Trader (orders/accounts) ----------
     def account_numbers(self) -> Any:
