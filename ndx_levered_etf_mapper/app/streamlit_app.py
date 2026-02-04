@@ -1213,20 +1213,55 @@ with tab_dash:
         else:
             st.plotly_chart(_plot_candles(dfp, title=f"{selected} — {tf}"), use_container_width=True)
 
-    # ---- Alerts + headlines tile ----
+    # ---- Countdown + alerts + headlines tile ----
     with dR:
+        st.markdown("### Countdown")
+
+        # Countdown to margin-trading restart (Payne's discipline timer)
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("America/New_York")
+        target = datetime(2026, 3, 14, 9, 30, 0, tzinfo=tz)
+        now_dt = datetime.now(tz)
+        delta = target - now_dt
+
+        live_countdown = st.toggle("Live seconds", value=False, help="Off by default to keep things fast.")
+        if live_countdown:
+            st_autorefresh(interval=1000, key="countdown_1s")
+
+        if delta.total_seconds() <= 0:
+            st.success("It’s Mar 14 @ 9:30 — margin discipline timer is done.")
+        else:
+            s = int(delta.total_seconds())
+            days = s // 86400
+            s -= days * 86400
+            hrs = s // 3600
+            s -= hrs * 3600
+            mins = s // 60
+            secs = s - mins * 60
+
+            st.markdown(
+                f"<div class='price-card'><div class='muted'>Margin trading restarts</div>"
+                f"<div class='price-big neon-gold'>{days}d {hrs:02d}h {mins:02d}m {secs:02d}s</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Target: 2026-03-14 09:30 America/New_York")
+
         st.markdown("### Alerts")
+        st.caption(
+            "Target state: create/read *Schwab-native* (TOS/Schwab mobile) alerts via Schwab API so Schwab handles SMS/push. "
+            "I can’t confirm the alerts endpoints until we’re in your Schwab developer account docs."
+        )
 
-        st.session_state.setdefault("alerts", [])
-
-        with st.expander("Create alert", expanded=False):
+        with st.expander("Local alerts (temporary placeholder)", expanded=False):
+            st.session_state.setdefault("alerts", [])
             a_sym = st.text_input("Symbol", value=selected, key="alert_sym")
             a_op = st.selectbox("Condition", [">=", "<=", ">", "<", "=="], index=0, key="alert_op")
             a_px = st.number_input("Trigger price", min_value=0.0, value=0.0, step=0.5, key="alert_px")
             a_exp_min = st.slider("Expires in (minutes)", 5, 24 * 60, 60, 5, key="alert_exp")
-            a_sound = st.toggle("Sound", value=True, key="alert_sound")
 
-            if st.button("Add alert"):
+            if st.button("Add local alert"):
                 exp_at = pd.Timestamp.now() + pd.Timedelta(minutes=int(a_exp_min))
                 st.session_state["alerts"].append(
                     {
@@ -1234,93 +1269,15 @@ with tab_dash:
                         "op": a_op,
                         "price": float(a_px),
                         "expires_at": exp_at.isoformat(),
-                        "sound": bool(a_sound),
                         "armed": True,
                     }
                 )
-                st.success("Alert added.")
+                st.success("Local alert added (UI only).")
 
-        # Evaluate alerts (Schwab-only quote polling; runs on reruns/autorefresh)
-        now = pd.Timestamp.now()
-        active = []
-        fired = []
-        for al in list(st.session_state.get("alerts", [])):
-            try:
-                exp = pd.Timestamp(al.get("expires_at"))
-            except Exception:
-                exp = now
-
-            if not al.get("armed"):
-                continue
-            if exp < now:
-                continue
-
-            sym = str(al.get("symbol") or "").upper().strip()
-            qx = _schwab_quote(sym)
-            pxv = qx.get("mark") or qx.get("last")
-            try:
-                pxv = float(pxv)
-            except Exception:
-                pxv = None
-
-            ok = False
-            if pxv is not None:
-                trg = float(al.get("price") or 0.0)
-                op = str(al.get("op"))
-                if op == ">=":
-                    ok = pxv >= trg
-                elif op == "<=":
-                    ok = pxv <= trg
-                elif op == ">":
-                    ok = pxv > trg
-                elif op == "<":
-                    ok = pxv < trg
-                elif op == "==":
-                    ok = abs(pxv - trg) < 1e-9
-
-            if ok:
-                al["armed"] = False
-                fired.append((al, pxv))
-            else:
-                active.append((al, pxv))
-
-        if fired:
-            for al, pxv in fired:
-                st.error(f"ALERT: {al['symbol']} {al['op']} {al['price']} (px={pxv})")
-                try:
-                    st.toast(f"ALERT: {al['symbol']} hit {al['op']} {al['price']}")
-                except Exception:
-                    pass
-                if al.get("sound"):
-                    # simple beep (browser)
-                    st.markdown(
-                        """
-<audio autoplay>
-  <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=" type="audio/wav">
-</audio>
-""",
-                        unsafe_allow_html=True,
-                    )
-
-        st.markdown("#### Active")
-        if not active:
-            st.caption("No active alerts.")
-        else:
-            for al, pxv in active[:12]:
-                st.write(
-                    {
-                        "symbol": al.get("symbol"),
-                        "cond": f"{al.get('op')} {al.get('price')}",
-                        "px": pxv,
-                        "expires_at": al.get("expires_at"),
-                    }
-                )
-
-        with st.expander("Manage alerts", expanded=False):
-            if st.button("Clear all alerts"):
+            st.json(st.session_state.get("alerts", []))
+            if st.button("Clear local alerts"):
                 st.session_state["alerts"] = []
                 st.rerun()
-            st.json(st.session_state.get("alerts", []))
 
         st.markdown("### Headlines")
         st.caption("Placeholder for now (fastest path). Paste headlines you care about; later we’ll wire a feed.")
