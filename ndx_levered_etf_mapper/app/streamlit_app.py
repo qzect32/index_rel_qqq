@@ -1155,13 +1155,38 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_admin) = st.tabs(
-    ["Dashboard", "Overview", "Relations", "Options", "Position Builder", "Casino Lab", "Exposure", "Admin"]
+(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_admin) = st.tabs(
+    [
+        "Dashboard",
+        "Scanner",
+        "Halts",
+        "Signals",
+        "Overview",
+        "Relations",
+        "Options",
+        "Position Builder",
+        "Casino Lab",
+        "Exposure",
+        "Admin",
+    ]
 )
 
 with tab_dash:
     st.subheader("Dashboard")
-    st.caption("Tiles: watchlist • selected chart • alerts • headlines. Schwab-only.")
+    st.caption("Tiles: watchlist • selected chart • countdown • alerts • headlines. Schwab-only.")
+
+
+def _parse_symbols(s: str) -> list[str]:
+    raw = str(s or "")
+    # allow commas, spaces, newlines
+    parts = [p.strip().upper() for p in raw.replace("\n", ",").replace(" ", ",").split(",")]
+    out = []
+    for p in parts:
+        if not p:
+            continue
+        if p not in out:
+            out.append(p)
+    return out
 
     # ---- Watchlist tile ----
     dL, dM, dR = st.columns([0.36, 0.40, 0.24], gap="large")
@@ -1283,6 +1308,230 @@ with tab_dash:
         st.caption("Placeholder for now (fastest path). Paste headlines you care about; later we’ll wire a feed.")
         st.session_state.setdefault("headlines", "")
         st.text_area("Headlines", key="headlines", height=180)
+
+with tab_scanner:
+    st.subheader("Scanner")
+    st.caption("Broad scan scaffold. Quotes/candles come from Schwab. News/halts feeds are placeholders for now.")
+
+    # Universe selection
+    base = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+
+    with st.expander("Universe", expanded=True):
+        st.caption(
+            "Start fast. Add symbols here. Later we can auto-source 'most active' and themed universes. "
+            "Keep it under ~200 symbols if you want it to stay snappy."
+        )
+        preset = st.selectbox(
+            "Preset",
+            [
+                "Watchlist",
+                "Core liquid (starter)",
+                "Semis / AI-ish (starter)",
+                "Energy / Oil & Gas (starter)",
+                "Custom (paste)",
+            ],
+            index=0,
+        )
+
+        core_liquid = _parse_symbols("SPY,QQQ,IWM,DIA,TQQQ,SQQQ,TLT,GLD,SLV,USO,XLF,XLK,XLE,XLI,XLY,XLP")
+        semis = _parse_symbols("NVDA,AMD,INTC,TSM,AVGO,QCOM,AMAT,LRCX,SMH,SOXL,SOXS")
+        energy = _parse_symbols("XLE,CVX,XOM,OXY,SLB,HAL,BKR,UNG,BOIL,KOLD")
+
+        custom = st.text_area("Custom symbols", value="", height=120, placeholder="TSLA, AAPL, /ES, ...")
+
+        if preset == "Watchlist":
+            uni = base
+        elif preset == "Core liquid (starter)":
+            uni = core_liquid
+        elif preset == "Semis / AI-ish (starter)":
+            uni = semis
+        elif preset == "Energy / Oil & Gas (starter)":
+            uni = energy
+        else:
+            uni = _parse_symbols(custom)
+
+        max_n = st.slider("Max symbols to scan", 5, 300, min(80, max(5, len(uni) or 80)), 5)
+        uni = uni[: int(max_n)]
+
+    # Scan
+    with st.spinner(f"Scanning {len(uni)} symbols via Schwab quotes…"):
+        rows = []
+        for s in uni:
+            q = _schwab_quote(s)
+            rec = q.get("raw") if isinstance(q.get("raw"), dict) else {}
+            px = q.get("mark") or q.get("last")
+            vol = q.get("volume")
+            chg = q.get("netChange")
+            chgp = q.get("netPct")
+
+            rows.append(
+                {
+                    "symbol": s,
+                    "px": px,
+                    "volume": vol,
+                    "chg": chg,
+                    "chg_%": chgp,
+                    "assetType": rec.get("assetType"),
+                    "exchange": rec.get("exchangeName"),
+                }
+            )
+
+        sdf = pd.DataFrame(rows)
+        for c in ["px", "volume", "chg", "chg_%"]:
+            if c in sdf.columns:
+                sdf[c] = pd.to_numeric(sdf[c], errors="coerce")
+        if "px" in sdf.columns and "volume" in sdf.columns:
+            sdf["dollar_vol"] = sdf["px"].fillna(0.0) * sdf["volume"].fillna(0.0)
+
+    st.markdown("### Rankings")
+    metric = st.selectbox(
+        "Rank by",
+        ["dollar_vol", "volume", "chg_%", "abs_chg_%"],
+        index=0,
+        help="abs_chg_% is a volatility-ish proxy for what’s popping today.",
+    )
+    if metric == "abs_chg_%":
+        sdf["abs_chg_%"] = sdf["chg_%"].abs()
+
+    sdf2 = sdf.dropna(subset=["symbol"]).copy()
+    if metric in sdf2.columns:
+        sdf2 = sdf2.sort_values(metric, ascending=False)
+
+    topk = st.slider("Show top", 5, 50, 15, 5)
+    st.dataframe(sdf2.head(int(topk)), use_container_width=True, hide_index=True, height=360)
+
+    focus = str(sdf2.head(1).iloc[0]["symbol"]) if not sdf2.empty else selected
+
+    st.markdown("### Focus")
+    fL, fR = st.columns([0.62, 0.38], gap="large")
+    with fL:
+        st.caption(f"Most in-focus (top by {metric}): {focus}")
+        tf = st.selectbox("Focus timeframe", ["1m (4H)", "1m (3D)"], index=0, key="scanner_tf")
+        dfp = _fetch_history(focus, tf)
+        if dfp.empty:
+            st.warning("No 1m candles for focus symbol.")
+        else:
+            st.plotly_chart(_plot_candles(dfp, title=f"{focus} — {tf}"), use_container_width=True)
+
+    with fR:
+        st.markdown("#### Why is it moving? (placeholder)")
+        st.caption("Paste a headline or catalyst here for now. Later we’ll wire a news source.")
+        note = st.text_area("Catalyst", value="", height=160, key="scanner_catalyst")
+        st.markdown("#### Related headlines (manual)")
+        st.session_state.setdefault("scanner_headlines", "")
+        st.text_area("Headlines", key="scanner_headlines", height=220, placeholder="Paste bullet headlines here…")
+
+with tab_halts:
+    st.subheader("Trading halts")
+    st.caption(
+        "Scaffold. Eventually this will ingest Nasdaq/NYSE halt lists. For now: paste the halt feed text/CSV and we’ll parse it."
+    )
+
+    sample = "symbol,market,reason,halt_time,resume_time\n" ""  # empty by default
+    raw = st.text_area(
+        "Paste halts CSV (columns like: symbol, market, reason, halt_time, resume_time)",
+        value="",
+        height=220,
+        placeholder="Example: TICKER,NASDAQ,T1,09:45:01,10:15:00",
+    )
+
+    if raw.strip():
+        try:
+            import io
+
+            hdf = pd.read_csv(io.StringIO(raw))
+            st.dataframe(hdf, use_container_width=True, height=420)
+        except Exception as e:
+            st.error(f"Could not parse CSV: {e}")
+            st.caption("Tip: make sure the first line is a header row.")
+    else:
+        st.info("No halts pasted yet.")
+
+    st.markdown("### Notes (scaffold)")
+    st.write(
+        "- Next: add a one-click fetch from Nasdaq Trader / NYSE when you decide you're okay with pulling public sources.\n"
+        "- We'll classify halt reason codes and highlight resumptions."
+    )
+
+with tab_signals:
+    st.subheader("Signals")
+    st.caption("Macro/news scaffolding. No external feeds wired yet — paste or type what you care about.")
+
+    sL, sR = st.columns([0.55, 0.45], gap="large")
+
+    with sL:
+        st.markdown("### Fed / macro calendar (manual)")
+        st.caption("Paste upcoming Fed events / speakers / CPI / NFP. We'll make it prettier later.")
+        st.session_state.setdefault("macro_events", "")
+        st.text_area("Events", key="macro_events", height=260, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+
+        st.markdown("### Themes (scaffold)")
+        theme = st.selectbox(
+            "Theme universe (starter)",
+            [
+                "None",
+                "Halal / Islamic ETFs (starter)",
+                "Oil / Gas (starter)",
+                "Metals (starter)",
+            ],
+            index=0,
+        )
+        if theme != "None":
+            if theme.startswith("Halal"):
+                syms = _parse_symbols("HLAL,SPUS,SPSK")
+            elif theme.startswith("Oil"):
+                syms = _parse_symbols("XLE,CVX,XOM,OXY,USO,UNG")
+            else:
+                syms = _parse_symbols("GLD,SLV,COPX,PPLT,PALL")
+
+            st.caption(f"Theme symbols: {', '.join(syms)}")
+            trows = []
+            for s in syms:
+                q = _schwab_quote(s)
+                px = q.get("mark") or q.get("last")
+                trows.append({"symbol": s, "px": px, "chg_%": q.get("netPct")})
+            tdf = pd.DataFrame(trows)
+            for c in ["px", "chg_%"]:
+                if c in tdf.columns:
+                    tdf[c] = pd.to_numeric(tdf[c], errors="coerce")
+            st.dataframe(tdf, use_container_width=True, hide_index=True, height=200)
+
+    with sR:
+        st.markdown("### News board (manual)")
+        st.caption("Paste headlines. We’ll auto-detect tickers (basic).")
+        raw_news = st.text_area("Headlines", value="", height=260, placeholder="- TSLA jumps on delivery beat…")
+
+        import re
+
+        tickers = []
+        if raw_news.strip():
+            # detect $TSLA or TSLA (2-5 caps) — intentionally simple
+            tickers = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", raw_news.upper())
+            flat = []
+            for a, b in tickers:
+                t = a or b
+                if t and t not in flat:
+                    flat.append(t)
+            tickers = flat[:25]
+
+        if tickers:
+            st.markdown("#### Detected tickers")
+            st.write(tickers)
+
+            qrows = []
+            for t in tickers[:10]:
+                q = _schwab_quote(t)
+                qrows.append({"symbol": t, "px": q.get("mark") or q.get("last"), "chg_%": q.get("netPct")})
+            qdf = pd.DataFrame(qrows)
+            for c in ["px", "chg_%"]:
+                if c in qdf.columns:
+                    qdf[c] = pd.to_numeric(qdf[c], errors="coerce")
+            st.dataframe(qdf, use_container_width=True, hide_index=True, height=240)
+
+        st.markdown("### Oil / Metals intel (placeholder)")
+        st.caption("Later: wire tanker flows, inventory reports, mines, etc. For now: notes.")
+        st.session_state.setdefault("intel_notes", "")
+        st.text_area("Notes", key="intel_notes", height=210)
 
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
