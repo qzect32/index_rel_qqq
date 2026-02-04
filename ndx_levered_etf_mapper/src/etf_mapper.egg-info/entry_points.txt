@@ -1,2 +1,0 @@
-[console_scripts]
-etf-mapper = etf_mapper.cli:main
