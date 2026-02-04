@@ -13,6 +13,7 @@ import streamlit as st
 
 from ladder_styles import style_ladder_with_changes
 from local_oauth import CallbackServerState, ensure_localhost_cert, start_https_callback_server, stop_callback_server
+from schwab_diagnostics import safe_snip
 from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
@@ -23,7 +24,8 @@ from etf_mapper.spade_checks import check_option_chain, check_price_history, sum
 
 # Schwab API removed (replaced with Schwab Market Data)
 
-from etf_mapper.build_universe import refresh_etf_universe
+# Polygon universe builder kept in codebase but not required by Schwab-only UI.
+# from etf_mapper.build_universe import refresh_etf_universe
 from etf_mapper.build_prices import refresh_prices
 from etf_mapper.build import refresh_universe as refresh_relations
 
@@ -98,21 +100,17 @@ def _table_cols(db_path: Path, table: str) -> list[str]:
         return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
-def _ensure_universe(data_dir: Path) -> Path:
+def _ensure_universe(data_dir: Path) -> Path | None:
+    """Universe is optional in Schwab-only mode.
+
+    We keep the builder code around, but the UI must not require Polygon or a universe DB.
+    """
     db = data_dir / "etf_universe.sqlite"
     if db.exists():
         return db
 
-    api_key = os.getenv("POLYGON_API_KEY", "")
-    if not api_key:
-        raise RuntimeError(
-            "Missing etf_universe.sqlite and POLYGON_API_KEY not set. "
-            "Add POLYGON_API_KEY to a local .env file or environment variable."
-        )
-
-    with st.spinner("Fetching US ETF universe (Polygon)…"):
-        refresh_etf_universe(data_dir, provider="polygon")
-    return db
+    # Schwab-only mode: do not hard-stop the app.
+    return None
 
 
 def _ensure_relations(data_dir: Path) -> Path:
@@ -717,7 +715,7 @@ with st.sidebar:
     with st.expander("Advanced", expanded=False):
         st.text_input("Data directory", value=st.session_state.get("data_dir", "data"), key="data_dir")
 
-        universe_provider = st.selectbox("Universe provider", ["polygon"], index=0)
+        # Schwab-only mode: hide universe provider.
         price_provider = st.selectbox("Price provider", ["schwab"], index=0)
         price_start = st.text_input("Price start", value="2024-01-01")
         price_limit = st.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
@@ -730,49 +728,41 @@ with st.sidebar:
             st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
 
     with st.expander("Secrets", expanded=False):
-        poly_present = bool(os.getenv("POLYGON_API_KEY"))
-        st.write(f"POLYGON_API_KEY: {'set' if poly_present else 'missing'}")
-        if not poly_present:
-            st.warning("POLYGON_API_KEY not detected. Add it to a local .env file.")
+        # Schwab-only UI: polygon is not required.
+        secrets = load_schwab_secrets(_data_dir())
+        st.write(
+            {
+                "schwab_secrets_file": str((_data_dir() / "schwab_secrets.local.json").resolve()),
+                "schwab_configured": bool(secrets),
+                "schwab_tokens_present": (_data_dir() / "schwab_tokens.json").exists(),
+            }
+        )
 
 # Need data_dir after sidebar inputs are bound
 data_dir = _data_dir()
 
-# Ensure universe exists (or explain why not)
-try:
-    universe_db = _ensure_universe(data_dir)
-except Exception as e:
-    st.error(str(e))
-    st.info(
-        "Create a file named .env next to ndx_levered_etf_mapper/pyproject.toml with POLYGON_API_KEY=... (do not commit it)."
-    )
-    st.stop()
-
-universe = _load_universe(universe_db)
+# Universe is optional (Schwab-only UI).
+universe_db = _ensure_universe(data_dir)
+if universe_db is not None:
+    universe = _load_universe(universe_db)
+else:
+    universe = pd.DataFrame(columns=["ticker", "name", "primary_exchange", "active"])
 
 # Single source of truth: one ticker box.
-# We'll use that ticker value both for selection and for filtering the universe table.
 with st.sidebar:
-    default_ticker = "QQQ" if "QQQ" in set(universe["ticker"]) else str(universe.iloc[0]["ticker"])
-    selected = st.text_input("Ticker", value=default_ticker).upper().strip()
+    selected = st.text_input("Ticker", value="QQQ").upper().strip()
 
 if not selected:
     st.warning("Enter a ticker symbol (e.g. TSLA, TSLL, QQQ).")
     st.stop()
 
-q = selected.strip().lower()
-view = universe
-if q:
-    mask = universe["ticker"].str.lower().str.contains(q) | universe["name"].fillna("").str.lower().str.contains(q)
-    view = universe[mask].copy()
-
-st.sidebar.caption(f"Ticker bank rows (filtered ETFs): {len(view):,}")
+# No universe table filtering in Schwab-only mode.
 
 # Header row: title left, provider description right (uses otherwise-empty space)
 headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
 with headerL:
     st.markdown("# ETF Hub")
-    st.caption("Universe • Relations • Prices • Options • Cart")
+    st.caption("Schwab • Relations • Prices • Options • Position Builder")
 
 with headerR:
     # Right-justified, compact description block for the current symbol
@@ -808,37 +798,23 @@ with headerR:
             unsafe_allow_html=True,
         )
 
-# Quick facts row
-meta = universe[universe["ticker"] == selected].head(1)
-nm = str(meta.iloc[0]["name"]) if not meta.empty else selected
+# Quick facts row (Schwab quotes are lightweight; universe metadata may be absent)
+nm = selected
 
 c1, c2, c3, c4, c5, c6 = st.columns([0.14, 0.22, 0.18, 0.18, 0.14, 0.14], vertical_alignment="top")
 c1.metric("Symbol", selected)
-c2.metric("Category", str(prof_hdr.get("category") or "—"))
-c3.metric("Fund family", str(prof_hdr.get("fundFamily") or "—"))
-c4.metric("Exchange", str(prof_hdr.get("exchange") or "—"))
-
-# Stats (best-effort; placeholders when missing)
-inst = prof_hdr.get("heldPercentInstitutions")
-try:
-    inst_pct = f"{float(inst) * 100.0:,.1f}%" if inst is not None else "—"
-except Exception:
-    inst_pct = "—"
-
-flt = prof_hdr.get("floatShares")
-try:
-    flt_txt = f"{int(flt):,}" if flt is not None else "—"
-except Exception:
-    flt_txt = "—"
+c2.metric("Asset type", str(prof_hdr.get("assetType") or "—"))
+c3.metric("Exchange", str(prof_hdr.get("exchangeName") or prof_hdr.get("exchange") or "—"))
+c4.metric("Last", str(prof_hdr.get("lastPrice") or prof_hdr.get("mark") or "—"))
 
 iv = _estimate_atm_iv(selected)
 iv_txt = "—" if iv is None else f"{iv * 100.0:,.1f}%"
 
 c5.metric("ATM IV (est)", iv_txt)
-c6.metric("Inst. own", inst_pct)
+c6.metric("Volume", str(prof_hdr.get("totalVolume") or "—"))
 
 with st.expander("More stats", expanded=False):
-    st.write({"floatShares": flt_txt, "sharesOutstanding": prof_hdr.get("sharesOutstanding", "—")})
+    st.json(dict(prof_hdr) if prof_hdr else {})
 
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
@@ -854,13 +830,8 @@ with tab_overview:
     st.session_state.setdefault("spade", {})
 
     with colA:
-        st.subheader("Ticker bank")
-        st.caption("Currently populated from the US ETF universe (Polygon). You can still type any symbol above.")
-        st.dataframe(
-            view[["ticker", "name", "primary_exchange", "active"]].head(250),
-            use_container_width=True,
-            height=420,
-        )
+        st.subheader("Symbol")
+        st.caption("Schwab-only mode: type any symbol (e.g., SPY, QQQ, /ES).")
 
         st.markdown("#### Intended usage (heuristic)")
         st.write(_infer_intended_usage(nm))
@@ -1147,11 +1118,15 @@ with tab_rel:
 
 with tab_opts:
     st.subheader(f"Options: {selected}")
-    st.caption("Bootstrap via Schwab (Schwab API). TOS-like ladder view; will migrate to Schwab/TOS chain later.")
+    if str(selected).startswith("/"):
+        st.info("Futures symbols like /ES often require a different options symbol convention. Schwab equity options chain endpoint may not return options for futures roots.")
+    st.caption("Schwab options chain (equity-style) with TOS-like ladder layout.")
 
     # Make failures obvious: Schwab is sometimes flaky / rate-limited.
-    with st.spinner("Checking options expirations…"):
-        expirations, exp_err = _schwab_expirations_dbg(selected)
+    expirations, exp_err = [], None
+    if not str(selected).startswith("/"):
+        with st.spinner("Checking options expirations…"):
+            expirations, exp_err = _schwab_expirations_dbg(selected)
 
     if not expirations:
         if exp_err and _looks_rate_limited(exp_err):
@@ -1711,6 +1686,39 @@ with tab_admin:
 
     st.divider()
 
+    st.markdown("#### Schwab diagnostics")
+    st.caption("Use this to debug symbol support (e.g., SPY vs /ES).")
+
+    diag_sym = st.text_input("Diagnostic symbol", value=selected)
+    col_d1, col_d2 = st.columns(2)
+
+    with col_d1:
+        if st.button("Test quotes"):
+            try:
+                js = api.quotes([_normalize_ticker(diag_sym)])
+                st.code(safe_snip(js), language="json")
+            except Exception as e:
+                st.error(str(e))
+
+    with col_d2:
+        if st.button("Test 1m/3D price history"):
+            try:
+                js = api.price_history(
+                    _normalize_ticker(diag_sym),
+                    period_type="day",
+                    period=3,
+                    frequency_type="minute",
+                    frequency=1,
+                    need_extended_hours_data=True,
+                )
+                candles = js.get("candles") if isinstance(js, dict) else None
+                st.write({"candles": 0 if not candles else len(candles), "keys": list(js.keys()) if isinstance(js, dict) else type(js).__name__})
+                st.code(safe_snip(js), language="json")
+            except Exception as e:
+                st.error(str(e))
+
+    st.divider()
+
     st.markdown("#### Options troubleshooting")
     st.caption(
         "Schwab options can fail transiently (rate-limits/outages). Use this to probe expirations/chains across a basket. "
@@ -1797,14 +1805,8 @@ with tab_admin:
         except Exception as e:
             st.error(f"Diagnostics error: {e}")
 
-    st.markdown("#### 1) Universe")
-    st.code("python -m etf_mapper.cli universe --out data --provider polygon", language="bash")
-    if st.button("Rebuild universe now"):
-        (data_dir / "etf_universe.sqlite").unlink(missing_ok=True)
-        (data_dir / "etf_universe.parquet").unlink(missing_ok=True)
-        _ensure_universe(data_dir)
-        st.success("Universe rebuilt.")
-        st.rerun()
+    st.markdown("#### 1) Universe (disabled)")
+    st.caption("Polygon/universe fetch is disabled in Schwab-only mode. Use manual symbols.")
 
     st.markdown("#### 2) Prices")
     st.code(
