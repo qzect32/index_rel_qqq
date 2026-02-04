@@ -132,8 +132,63 @@ Guiding rule:
 
 ---
 
-## 2) Implementation notes / decisions to make later
+## 2) Nice-to-haves (feature wishlist)
+
+These are not required for “tomorrow’s API wiring” but are high ROI once the core endpoints are stable.
+
+### Scanner / Dashboard
+- [ ] **Composite scanner presets** (save/load named scanners)
+  - [ ] Persist scanner configs to `data/scanners/*.json`
+  - [ ] Quick-switch dropdown ("Momentum", "Vol", "Fed Day", "Earnings", "Semis", "Energy", etc.)
+- [ ] **Gappers / Range / Volatility tiles**
+  - [ ] Top gappers (pre/after-hours if supported)
+  - [ ] Largest 1m range expansion (today)
+  - [ ] Vol spike detector (realized vol vs trailing)
+- [ ] **Circuit breaker proximity** (LULD bands / halt risk) once we have the data
+- [ ] **Watchlist tape** improvements
+  - [ ] Colorize by % change
+  - [ ] Flash on threshold crossings
+
+### Exposure / Risk
+- [ ] **Exposure by category**
+  - [ ] By sector
+  - [ ] By asset class (equity/ETF/options/futures)
+  - [ ] Leveraged vs unleveraged buckets
+- [ ] **Concentration warnings**
+  - [ ] "Top 1", "Top 3", "Top 5" concentration
+  - [ ] Account-level vs total portfolio
+- [ ] **Scenario overlays**
+  - [ ] "If TSLA -5%" → approximate impact on portfolio MV and day P/L
+  - [ ] Event-mode stress templates (Fed day / CPI day)
+
+### Options / Greeks
+- [ ] **Greeks panel**
+  - [ ] Delta/Gamma/Theta/Vega totals per underlying
+  - [ ] Expiration ladder summaries
+- [ ] **PnL surface** (price × time) for multi-leg positions
+- [ ] **Assignment/exercise risk flags** for short legs near ITM
+
+### Planning / Journaling
+- [ ] **Weekly plan board**
+  - [ ] Earnings week planner (import/paste calendar)
+  - [ ] Fed week planner (auto countdowns per event)
+- [ ] **Trade journal / post-mortems**
+  - [ ] One-click snapshot of chart + exposure + notes saved locally
+  - [ ] Export to markdown/PDF
+
+### UX / Ops
+- [ ] **Session persistence**
+  - [ ] Persist dashboard layout preferences
+  - [ ] Persist pinned symbols per tab
+- [ ] **Performance instrumentation**
+  - [ ] Display per-tile latency (quotes/candles/options)
+  - [ ] Simple request budget (calls/min) counters
+
+---
+
+## 3) Implementation notes / decisions to make later
 
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
 - Whether we want to support live order placement (currently intentionally NOT wired)
+- Whether this becomes a personal cockpit only vs a sharable product (impacts secrets handling + multi-user)
