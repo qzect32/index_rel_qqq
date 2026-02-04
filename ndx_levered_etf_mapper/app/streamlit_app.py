@@ -13,7 +13,10 @@ import streamlit as st
 from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
-import yfinance as yf
+
+from etf_mapper.schwab import SchwabAPI, SchwabConfig
+
+# Schwab API removed (replaced with Schwab Market Data)
 
 from etf_mapper.build_universe import refresh_etf_universe
 from etf_mapper.build_prices import refresh_prices
@@ -62,6 +65,25 @@ def _data_dir() -> Path:
 
 def _db_path(name: str) -> Path:
     return _data_dir() / name
+
+
+def _schwab_api() -> SchwabAPI | None:
+    client_id = os.getenv("SCHWAB_CLIENT_ID", "")
+    client_secret = os.getenv("SCHWAB_CLIENT_SECRET", "")
+    redirect_uri = os.getenv("SCHWAB_REDIRECT_URI", "")
+    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(_db_path("schwab_tokens.json")))
+
+    if not (client_id and client_secret and redirect_uri):
+        return None
+
+    return SchwabAPI(
+        SchwabConfig(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            token_path=token_path,
+        )
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -172,71 +194,67 @@ def _plot_candles(dfp: pd.DataFrame, title: str) -> go.Figure:
 
 
 def _fetch_history(ticker: str, tos_style: str) -> pd.DataFrame:
-    """Best-effort TOS-like timeframe presets.
+    """Live intraday candles via Schwab Market Data.
 
-    yfinance supports intervals: 1m,2m,5m,15m,30m,60m,90m,1h,1d,5d,1wk,1mo,3mo.
-    For 4h we resample 1h.
+    Scope is intentionally reduced to 1-minute bars:
+      - 1m over 3D
+      - 1m over ~4H (today)
+
+    The UI still calls this "TOS-like" but the source is Schwab.
     """
-    t = yf.Ticker(ticker)
-
-    presets = {
-        "1m (1D)": {"period": "1d", "interval": "1m"},
-        "5m (5D)": {"period": "5d", "interval": "5m"},
-        "15m (1M)": {"period": "1mo", "interval": "15m"},
-        "30m (1M)": {"period": "1mo", "interval": "30m"},
-        "1h (3M)": {"period": "3mo", "interval": "60m"},
-        "4h (6M)": {"period": "6mo", "interval": "60m", "resample": "4h"},
-        "1D (1Y)": {"period": "1y", "interval": "1d"},
-        "1W (5Y)": {"period": "5y", "interval": "1wk"},
-        "1M (max)": {"period": "max", "interval": "1mo"},
-    }
-
-    cfg = presets.get(tos_style, presets["1D (1Y)"])
-
-    df = t.history(period=cfg["period"], interval=cfg["interval"], auto_adjust=False)
-    if df is None or df.empty:
+    api = _schwab_api()
+    if api is None:
         return pd.DataFrame()
 
-    df = df.reset_index()
-    if "Date" in df.columns:
-        df = df.rename(columns={"Date": "date"})
-    elif "Datetime" in df.columns:
-        df = df.rename(columns={"Datetime": "date"})
+    ticker = _normalize_ticker(ticker)
+    if not ticker:
+        return pd.DataFrame()
 
-    df = df.rename(
-        columns={
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Adj Close": "adj_close",
-            "Volume": "volume",
-        }
-    )
+    presets = {
+        "1m (3D)": {"periodType": "day", "period": 3, "frequencyType": "minute", "frequency": 1},
+        "1m (4H)": {"periodType": "day", "period": 1, "frequencyType": "minute", "frequency": 1, "clip_hours": 4},
+    }
 
-    # Optional resample to 4h candles
-    if cfg.get("resample") == "4h":
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date"]).set_index("date")
-        ohlc = {
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-            "adj_close": "last",
-        }
-        df = df.resample("4h").apply(ohlc).dropna(subset=["close"]).reset_index()
+    cfg = presets.get(tos_style, presets["1m (3D)"])
 
-    # ensure datetime
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"])  # type: ignore
+    try:
+        js = api.price_history(
+            ticker,
+            period_type=cfg["periodType"],
+            period=int(cfg["period"]),
+            frequency_type=cfg["frequencyType"],
+            frequency=int(cfg["frequency"]),
+            need_extended_hours_data=True,
+        )
+    except Exception:
+        return pd.DataFrame()
 
-    keep = ["date", "open", "high", "low", "close", "adj_close", "volume"]
+    candles = js.get("candles") or []
+    if not candles:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(candles)
+    if "datetime" in df.columns:
+        df["date"] = pd.to_datetime(df["datetime"], unit="ms", utc=True).dt.tz_convert(None)
+    else:
+        df["date"] = pd.NaT
+
+    df = df.rename(columns={"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"})
+    keep = ["date", "open", "high", "low", "close", "volume"]
     for c in keep:
         if c not in df.columns:
             df[c] = None
-    return df[keep]
+
+    df["adj_close"] = df.get("close")
+    df = df.dropna(subset=["date"])  # type: ignore
+
+    # Optional clip to last N hours for the 4H view.
+    clip_hours = cfg.get("clip_hours")
+    if clip_hours:
+        cutoff = pd.Timestamp.now() - pd.Timedelta(hours=int(clip_hours))
+        df = df[df["date"] >= cutoff]
+
+    return df[["date", "open", "high", "low", "close", "adj_close", "volume"]]
 
 
 def _infer_intended_usage(name: str) -> str:
@@ -255,36 +273,50 @@ def _infer_intended_usage(name: str) -> str:
     return ", ".join(hits)
 
 
-@st.cache_data(show_spinner=False, ttl=60 * 30)
-def _yahoo_profile(ticker: str) -> dict:
-    if not ticker or not str(ticker).strip():
+@st.cache_data(show_spinner=False, ttl=60 * 5)
+def _schwab_profile(ticker: str) -> dict:
+    """Lightweight symbol/quote metadata via Schwab quotes endpoint."""
+    tkr = _normalize_ticker(ticker)
+    if not tkr:
         return {}
-    t = yf.Ticker(ticker)
-    info = {}
-    try:
-        info = t.get_info() or {}
-    except Exception:
-        info = {}
 
-    # Keep it stable & readable
+    api = _schwab_api()
+    if api is None:
+        return {}
+
+    try:
+        js = api.quotes([tkr])
+    except Exception:
+        return {}
+
+    # Schwab returns a dict keyed by symbol in some variants; be defensive.
+    if isinstance(js, dict):
+        rec = js.get(tkr) or js.get(tkr.upper()) or js.get("quotes", {}).get(tkr) or js
+    else:
+        rec = {}
+
+    if not isinstance(rec, dict):
+        return {}
+
+    # Try a few common fields; keep as JSON-ish so UI can render it.
     keys = [
-        "longName",
-        "shortName",
+        "symbol",
+        "description",
+        "assetType",
+        "exchangeName",
         "quoteType",
-        "fundFamily",
-        "category",
-        "legalType",
-        "currency",
-        "exchange",
-        "market",
-        "website",
-        "longBusinessSummary",
-        # Useful stats (not always present for ETFs)
-        "sharesOutstanding",
-        "floatShares",
-        "heldPercentInstitutions",
+        "cusip",
+        "lastPrice",
+        "mark",
+        "openPrice",
+        "highPrice",
+        "lowPrice",
+        "closePrice",
+        "netChange",
+        "netPercentChangeInDouble",
+        "totalVolume",
     ]
-    out = {k: info.get(k) for k in keys if info.get(k) not in (None, "")}
+    out = {k: rec.get(k) for k in keys if rec.get(k) not in (None, "")}
     return out
 
 
@@ -298,45 +330,123 @@ def _looks_rate_limited(err: str) -> bool:
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 10)
-def _yahoo_expirations(ticker: str) -> list[str]:
+def _schwab_expirations(ticker: str) -> list[str]:
     # Kept for compatibility; silent failure -> empty list.
-    exps, _ = _yahoo_expirations_dbg(ticker)
+    exps, _ = _schwab_expirations_dbg(ticker)
     return exps
 
 
-def _yahoo_expirations_dbg(ticker: str) -> tuple[list[str], Optional[str]]:
-    """Like _yahoo_expirations but returns an error string when Yahoo/yfinance throws."""
+def _schwab_expirations_dbg(ticker: str) -> tuple[list[str], Optional[str]]:
+    """Return option expiration dates discovered from Schwab option chain."""
     tkr = _normalize_ticker(ticker)
     if not tkr:
         return [], "empty ticker"
-    t = yf.Ticker(tkr)
+
+    api = _schwab_api()
+    if api is None:
+        return [], "Schwab OAuth not configured"
+
     try:
-        exps = list(t.options)
-        exps = [str(x) for x in exps if x]
-        return exps, None
+        js = api.option_chain(tkr, contract_type="ALL")
     except Exception as e:
         return [], str(e)
 
+    exps: set[str] = set()
+    for k in ["callExpDateMap", "putExpDateMap"]:
+        m = js.get(k) if isinstance(js, dict) else None
+        if isinstance(m, dict):
+            for exp_key in m.keys():
+                # exp_key often looks like '2026-02-20:17' (date:dte)
+                d = str(exp_key).split(":")[0]
+                if d:
+                    exps.add(d)
 
-@st.cache_data(show_spinner=False, ttl=60 * 10)
-def _yahoo_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    out = sorted(exps)
+    return out, None
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 1)
+def _schwab_option_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch one expiration's calls/puts from Schwab option chain response."""
     tkr = _normalize_ticker(ticker)
-    if not tkr:
+    exp = str(expiration or "").strip()
+    if not (tkr and exp):
         return pd.DataFrame(), pd.DataFrame()
-    t = yf.Ticker(tkr)
-    oc = t.option_chain(str(expiration))
-    calls = oc.calls.copy()
-    puts = oc.puts.copy()
-    # normalize
-    for df, side in [(calls, "call"), (puts, "put")]:
-        df["side"] = side
-        df["ticker"] = tkr
-        df["expiration"] = str(expiration)
+
+    api = _schwab_api()
+    if api is None:
+        return pd.DataFrame(), pd.DataFrame()
+
+    try:
+        js = api.option_chain(tkr, contract_type="ALL")
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
+
+    def _flatten(side_key: str, side: str) -> pd.DataFrame:
+        m = js.get(side_key)
+        if not isinstance(m, dict):
+            return pd.DataFrame()
+
+        rows: list[dict] = []
+        for exp_key, strikes in m.items():
+            exp_date = str(exp_key).split(":")[0]
+            if exp_date != exp:
+                continue
+            if not isinstance(strikes, dict):
+                continue
+            for strike_key, contracts in strikes.items():
+                if not isinstance(contracts, list) or not contracts:
+                    continue
+                for c in contracts:
+                    if not isinstance(c, dict):
+                        continue
+                    row = dict(c)
+                    row["strike"] = float(row.get("strikePrice") or strike_key or 0)
+                    row["side"] = side
+                    row["ticker"] = tkr
+                    row["expiration"] = exp_date
+                    rows.append(row)
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+
+        # Normalize a few commonly-used columns so the ladder logic keeps working.
+        ren = {
+            "bid": "bid",
+            "ask": "ask",
+            "last": "lastPrice",
+            "mark": "mark",
+            "totalVolume": "volume",
+            "openInterest": "openInterest",
+            "volatility": "impliedVolatility",
+            "delta": "delta",
+            "gamma": "gamma",
+            "theta": "theta",
+            "vega": "vega",
+            "rho": "rho",
+            "inTheMoney": "inTheMoney",
+            "description": "description",
+            "symbol": "symbol",
+        }
+        for out_col, in_col in ren.items():
+            if in_col in df.columns and out_col not in df.columns:
+                df[out_col] = df[in_col]
+
+        # Keep a minimal stable surface
+        if "impliedVolatility" in df.columns and "impliedVolatility" not in df.columns:
+            df["impliedVolatility"] = df.get("volatility")
+
+        return df
+
+    calls = _flatten("callExpDateMap", "call")
+    puts = _flatten("putExpDateMap", "put")
     return calls, puts
 
 
 def _options_probe(ticker: str, retries: int = 2) -> dict:
-    """Probe Yahoo options availability with retries/backoff.
+    """Probe Schwab options availability with retries/backoff.
 
     Returns a dict safe to drop into a dataframe.
     """
@@ -361,7 +471,7 @@ def _options_probe(ticker: str, retries: int = 2) -> dict:
     last_err = None
     for i in range(retries + 1):
         try:
-            exps = _yahoo_expirations(tkr)
+            exps = _schwab_expirations(tkr)
             out["n_expirations"] = len(exps)
             out["has_expirations"] = len(exps) > 0
             out["first_exp"] = exps[0] if exps else None
@@ -369,7 +479,7 @@ def _options_probe(ticker: str, retries: int = 2) -> dict:
             if not exps:
                 return out
 
-            calls, puts = _yahoo_option_chain(tkr, exps[0])
+            calls, puts = _schwab_option_chain(tkr, exps[0])
             out["calls"] = int(len(calls))
             out["puts"] = int(len(puts))
             out["has_chain"] = out["calls"] > 0 or out["puts"] > 0
@@ -440,26 +550,26 @@ def _build_probe_list(data_dir: Path, sample_n: int = 25, include: Optional[Iter
 
 
 def _estimate_atm_iv(ticker: str) -> Optional[float]:
-    """Best-effort ATM IV estimate from Yahoo options (earliest expiry, nearest strike).
+    """Best-effort ATM IV estimate from Schwab options (earliest expiry, nearest strike).
 
     Returns decimal IV (e.g., 0.22) or None.
     """
-    expirations = _yahoo_expirations(ticker)
+    expirations = _schwab_expirations(ticker)
     if not expirations:
         return None
 
-    prof = _yahoo_profile(ticker)
-    # fallback spot from yfinance fast info is unreliable in some environments; chart uses close anyway.
+    prof = _schwab_profile(ticker)
     spot = None
     try:
-        finfo = getattr(yf.Ticker(ticker), "fast_info", None)
-        if finfo and finfo.get("last_price"):
-            spot = float(finfo.get("last_price"))
+        if prof.get("lastPrice") is not None:
+            spot = float(prof.get("lastPrice"))
+        elif prof.get("mark") is not None:
+            spot = float(prof.get("mark"))
     except Exception:
         spot = None
 
     exp = expirations[0]
-    calls, puts = _yahoo_option_chain(ticker, exp)
+    calls, puts = _schwab_option_chain(ticker, exp)
     if calls.empty and puts.empty:
         return None
 
@@ -490,9 +600,9 @@ def _estimate_atm_iv(ticker: str) -> Optional[float]:
     return float(sum(ivs) / len(ivs))
 
 
-def _yahoo_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _schwab_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     # Backwards-compatible wrapper (old name) → cached implementation.
-    return _yahoo_option_chain(ticker, expiration)
+    return _schwab_option_chain(ticker, expiration)
 
 
 def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame:
@@ -576,7 +686,7 @@ with st.sidebar:
         st.text_input("Data directory", value=st.session_state.get("data_dir", "data"), key="data_dir")
 
         universe_provider = st.selectbox("Universe provider", ["polygon"], index=0)
-        price_provider = st.selectbox("Price provider", ["yahoo", "stooq"], index=0)
+        price_provider = st.selectbox("Price provider", ["schwab"], index=0)
         price_start = st.text_input("Price start", value="2024-01-01")
         price_limit = st.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
 
@@ -634,7 +744,7 @@ with headerL:
 
 with headerR:
     # Right-justified, compact description block for the current symbol
-    prof_hdr = _yahoo_profile(selected)
+    prof_hdr = _schwab_profile(selected)
     summary_hdr = (prof_hdr.get("longBusinessSummary") or "").strip()
 
     title_bits = []
@@ -722,41 +832,30 @@ with tab_overview:
 
         # Provider description tucked under Intended usage (collapsed)
         with st.expander("Provider description (full)", expanded=False):
-            prof = _yahoo_profile(selected)
+            prof = _schwab_profile(selected)
             if prof:
-                summary = (prof.get("longBusinessSummary") or "").strip()
-                if summary:
-                    st.write(summary)
-                else:
-                    st.caption("No longBusinessSummary available.")
+                desc = (prof.get("description") or "").strip()
+                if desc:
+                    st.write(desc)
 
                 with st.expander("Provider fields (JSON)", expanded=False):
-                    p2 = dict(prof)
-                    p2.pop("longBusinessSummary", None)
-                    st.json(p2)
+                    st.json(dict(prof))
             else:
-                st.caption("No provider description available (Yahoo returned nothing for this symbol).")
+                st.caption("No provider description available (Schwab returned nothing for this symbol).")
 
     with colB:
         # Timeframe control should live beneath the chart (TOS-like). We'll render it later.
         tos_tf_options = [
-            "1m (1D)",
-            "5m (5D)",
-            "15m (1M)",
-            "30m (1M)",
-            "1h (3M)",
-            "4h (6M)",
-            "1D (1Y)",
-            "1W (5Y)",
-            "1M (max)",
+            "1m (3D)",
+            "1m (4H)",
         ]
-        tos_tf_default_index = 6
+        tos_tf_default_index = 0
         # Single source of truth for timeframe: stored in Streamlit session state
         tos_tf = st.session_state.get("tos_tf", tos_tf_options[tos_tf_default_index])
         if tos_tf not in tos_tf_options:
             tos_tf = tos_tf_options[tos_tf_default_index]
 
-        # Prefer DB (fast, stable). If missing, pull from Yahoo on-demand.
+        # Prefer DB (fast, stable). If missing, pull from Schwab on-demand.
         universe_parquet = data_dir / "etf_universe.parquet"
         prices_db = data_dir / "prices.sqlite"
 
@@ -780,11 +879,11 @@ with tab_overview:
         # If the UI reruns, Streamlit will preserve the selectbox state.
 
         if dfp.empty:
-            with st.spinner("Fetching chart data from Yahoo…"):
+            with st.spinner("Fetching chart data from Schwab…"):
                 dfp = _fetch_history(selected, tos_tf)
 
         if dfp.empty:
-            st.warning("No price history found (Yahoo may be down or symbol unsupported).")
+            st.warning("No price history found (Schwab may be down or symbol unsupported).")
             if universe_parquet.exists() and st.button("Fetch bootstrap prices DB now", type="secondary"):
                 _ensure_prices(data_dir, universe_parquet, provider=price_provider, start=price_start, limit=price_limit)
                 st.rerun()
@@ -810,7 +909,7 @@ with tab_overview:
             key="tos_tf",
         )
 
-        st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Yahoo (on-demand).")
+        st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Schwab (on-demand).")
 
         # Move ETF record under raw prices/source area (collapsed by default)
         meta = universe[universe["ticker"] == selected].head(1)
@@ -990,20 +1089,20 @@ with tab_rel:
 
 with tab_opts:
     st.subheader(f"Options: {selected}")
-    st.caption("Bootstrap via Yahoo (yfinance). TOS-like ladder view; will migrate to Schwab/TOS chain later.")
+    st.caption("Bootstrap via Schwab (Schwab API). TOS-like ladder view; will migrate to Schwab/TOS chain later.")
 
-    # Make failures obvious: Yahoo is sometimes flaky / rate-limited.
+    # Make failures obvious: Schwab is sometimes flaky / rate-limited.
     with st.spinner("Checking options expirations…"):
-        expirations, exp_err = _yahoo_expirations_dbg(selected)
+        expirations, exp_err = _schwab_expirations_dbg(selected)
 
     if not expirations:
         if exp_err and _looks_rate_limited(exp_err):
-            st.warning("Yahoo appears rate-limited right now (429 / throttling). Try again in a minute.")
+            st.warning("Schwab appears rate-limited right now (429 / throttling). Try again in a minute.")
         else:
-            st.warning("No options expirations returned. This can mean: no options, Yahoo outage, or rate-limit.")
+            st.warning("No options expirations returned. This can mean: no options, Schwab outage, or rate-limit.")
 
         with st.expander("Diagnostics", expanded=False):
-            st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, it's almost certainly Yahoo flakiness."})
+            st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, it's almost certainly Schwab flakiness."})
 
         colr1, colr2 = st.columns([0.35, 0.65])
         with colr1:
@@ -1011,14 +1110,14 @@ with tab_opts:
                 st.cache_data.clear()
                 st.rerun()
         with colr2:
-            st.caption("Tip: the Admin → Options troubleshooting probe can confirm whether Yahoo is working across a basket.")
+            st.caption("Tip: the Admin → Options troubleshooting probe can confirm whether Schwab is working across a basket.")
         st.stop()
 
     exp = st.selectbox("Expiration", expirations, index=0)
 
     with st.spinner("Loading options chain…"):
         try:
-            calls, puts = _yahoo_option_chain(selected, exp)
+            calls, puts = _schwab_option_chain(selected, exp)
         except Exception as e:
             st.error(f"Options chain load failed: {e}")
             if st.button("Retry chain load", type="secondary"):
@@ -1149,28 +1248,81 @@ with tab_cart:
 with tab_admin:
     st.subheader("Admin / Data pipelines")
 
-    st.markdown("#### Schwab / TOS (coming soon)")
-    st.caption("Scaffolded in code; disabled until your Schwab Developer Portal access is restored.")
-    st.info(
-        "When you're ready, we'll add OAuth connect + token storage and swap Yahoo market data for Schwab quotes/options. "
-        "For now this is just a placeholder so the UI has a stable home for the integration."
-    )
+    st.markdown("#### Schwab OAuth")
 
-    st.markdown("**What we’ll need from Schwab Dev Portal**")
-    st.write(
-        [
-            "Trader API app Client ID",
-            "(Possibly) Client Secret",
-            "Redirect URI (we'll use a local callback)",
-            "Approved access / entitlements",
-        ]
-    )
+    api = _schwab_api()
+    client_id_set = bool(os.getenv("SCHWAB_CLIENT_ID"))
+    client_secret_set = bool(os.getenv("SCHWAB_CLIENT_SECRET"))
+    redirect_set = bool(os.getenv("SCHWAB_REDIRECT_URI"))
+    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(_db_path("schwab_tokens.json")))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("SCHWAB_CLIENT_ID", "set" if client_id_set else "missing")
+    c2.metric("SCHWAB_CLIENT_SECRET", "set" if client_secret_set else "missing")
+    c3.metric("SCHWAB_REDIRECT_URI", "set" if redirect_set else "missing")
+    c4.metric("Token file", "present" if Path(token_path).exists() else "missing")
+
+    if api is None:
+        st.warning(
+            "Schwab OAuth env vars are not configured. Add SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET, SCHWAB_REDIRECT_URI to your local .env."
+        )
+    else:
+        st.caption(
+            "Authorize once, then the app will refresh tokens automatically. Paste the full redirect URL (or just the code) below."
+        )
+
+        import secrets
+        import urllib.parse
+
+        state = st.session_state.get("schwab_oauth_state")
+        if not state:
+            state = secrets.token_urlsafe(16)
+            st.session_state["schwab_oauth_state"] = state
+
+        auth_url = api.build_authorize_url(state=state, scope=os.getenv("SCHWAB_OAUTH_SCOPE", "readonly"))
+        st.code(auth_url, language="text")
+
+        oauth_in = st.text_input("Paste redirect URL (or code)", value=st.session_state.get("schwab_oauth_in", ""))
+        st.session_state["schwab_oauth_in"] = oauth_in
+
+        def _extract_code(x: str) -> str | None:
+            x = (x or "").strip()
+            if not x:
+                return None
+            if x.startswith("http"):
+                try:
+                    q = urllib.parse.urlparse(x).query
+                    params = urllib.parse.parse_qs(q)
+                    code = params.get("code", [None])[0]
+                    return code
+                except Exception:
+                    return None
+            return x
+
+        if st.button("Exchange code for tokens", type="primary"):
+            code = _extract_code(oauth_in)
+            if not code:
+                st.error("Could not extract code.")
+            else:
+                try:
+                    api.exchange_code(code)
+                    st.success("Saved Schwab tokens.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Token exchange failed: {e}")
+
+        if st.button("Refresh access token now"):
+            try:
+                api.refresh_access_token()
+                st.success("Refreshed token.")
+            except Exception as e:
+                st.error(f"Refresh failed: {e}")
 
     st.divider()
 
     st.markdown("#### Options troubleshooting")
     st.caption(
-        "Yahoo options can fail transiently (rate-limits/outages). Use this to probe expirations/chains across a basket. "
+        "Schwab options can fail transiently (rate-limits/outages). Use this to probe expirations/chains across a basket. "
         "For Nasdaq-100, run `refresh` first so equities.parquet exists."
     )
 
@@ -1226,7 +1378,7 @@ with tab_admin:
 
         bad = df[(~df["has_expirations"]) | (~df["has_chain"])].copy()
         if not bad.empty:
-            st.warning("Some tickers did not return expirations and/or a chain. This is often Yahoo flakiness; retry later.")
+            st.warning("Some tickers did not return expirations and/or a chain. This is often Schwab flakiness; retry later.")
             st.dataframe(bad[["ticker", "has_expirations", "n_expirations", "first_exp", "has_chain", "calls", "puts", "error"]], use_container_width=True)
 
     st.markdown("#### Status")
@@ -1265,7 +1417,7 @@ with tab_admin:
 
     st.markdown("#### 2) Prices")
     st.code(
-        "python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider yahoo --limit 200 --start 2024-01-01",
+        "python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider schwab --limit 200 --start 2024-01-01",
         language="bash",
     )
     if st.button("Reset prices DB"):
@@ -1286,5 +1438,5 @@ with tab_admin:
     st.caption("Use these during troubleshooting to sanity-check options/relations quickly.")
     st.code("AMZN  TSLA  AAPL  QQQ  TSLL  SPY", language="text")
 
-    st.markdown("#### Schwab/TOS")
-    st.caption("Integration scaffolded; toggle will appear here later.")
+    st.markdown("#### Orders (optional)")
+    st.caption("Order placement endpoints exist in the client, but the UI does not submit live orders yet.")

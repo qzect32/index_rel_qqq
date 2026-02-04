@@ -10,7 +10,7 @@ from .build_prices import refresh_prices
 def bootstrap(
     out_dir: str | Path,
     universe_provider: str = "polygon",
-    price_provider: str = "yahoo",
+    price_provider: str = "schwab",
     start: Optional[str] = "2024-01-01",
     limit: int = 200,
 ) -> dict[str, Path]:

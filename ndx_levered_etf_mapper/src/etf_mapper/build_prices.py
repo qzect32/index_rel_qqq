@@ -6,10 +6,13 @@ from typing import Iterable, Optional, Literal
 
 import pandas as pd
 
-from .marketdata import YahooPriceProvider, StooqPriceProvider
+import os
+
+from .marketdata import SchwabPriceProvider
+from .schwab import SchwabConfig
 
 
-PriceProviderName = Literal["yahoo", "stooq"]
+PriceProviderName = Literal["schwab"]
 
 
 def _load_tickers_from_universe(universe_path: str | Path) -> list[str]:
@@ -39,7 +42,7 @@ def _load_tickers_from_universe(universe_path: str | Path) -> list[str]:
 def refresh_prices(
     out_dir: str | Path,
     universe_path: str | Path,
-    provider: PriceProviderName = "yahoo",
+    provider: PriceProviderName = "schwab",
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: int = 200,
@@ -47,8 +50,8 @@ def refresh_prices(
     """Fetch daily price history for a slice of the ETF universe.
 
     Notes:
-      - This is a bootstrap step while you wait for Schwab/TOS.
-      - Free sources can be flaky; the pipeline is designed to be rerun.
+      - Uses Schwab Market Data price history (OAuth required).
+      - Designed to be rerun; failures are recorded.
 
     Outputs:
       - prices.sqlite (table: prices_daily)
@@ -61,12 +64,28 @@ def refresh_prices(
     if limit:
         tickers = tickers[: int(limit)]
 
-    if provider == "yahoo":
-        p = YahooPriceProvider()
-    elif provider == "stooq":
-        p = StooqPriceProvider()
-    else:
+    if provider != "schwab":
         raise ValueError(f"Unknown provider: {provider}")
+
+    # Pull Schwab OAuth config from environment. Keep secrets out of code/git.
+    client_id = os.getenv("SCHWAB_CLIENT_ID", "")
+    client_secret = os.getenv("SCHWAB_CLIENT_SECRET", "")
+    redirect_uri = os.getenv("SCHWAB_REDIRECT_URI", "")
+    token_path = os.getenv("SCHWAB_TOKEN_PATH", str(Path(out_dir) / "schwab_tokens.json"))
+
+    if not (client_id and client_secret and redirect_uri):
+        raise RuntimeError(
+            "Missing Schwab OAuth config. Set SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET, SCHWAB_REDIRECT_URI in your environment/.env"
+        )
+
+    p = SchwabPriceProvider(
+        SchwabConfig(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            token_path=token_path,
+        )
+    )
 
     all_rows: list[pd.DataFrame] = []
     failures: list[str] = []

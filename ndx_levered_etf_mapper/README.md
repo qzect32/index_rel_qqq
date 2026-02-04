@@ -7,7 +7,7 @@ Originally this started as a Nasdaq-100 exposure graph. It now aims to become a 
 ## What changed today (high-level)
 
 - Added a **US ETF universe fetch** (Polygon reference tickers) → `data/etf_universe.{parquet,sqlite}`.
-- Added **bootstrap price history** providers (Yahoo / Stooq).
+- Switched price history + live chart data to **Schwab Market Data** (OAuth).
 - Built a **Streamlit UI** with:
   - search + single “Ticker” source of truth
   - price chart with **TOS-like timeframe presets**
@@ -18,7 +18,7 @@ Originally this started as a Nasdaq-100 exposure graph. It now aims to become a 
 
 ## Near-term expectations
 
-- Replace Yahoo/Stooq bootstrap data with **Schwab/TOS** (quotes + full options chains + order placement) when API access is available.
+- Schwab Developer Portal integration is now the primary market data source (quotes + option chains + 1m candles). Order placement remains optional/guarded.
 - Expand “relations” from derivative-style exposures to true **holdings-based discovery** (SEC N-PORT / vendor holdings):
   - ETF → holdings (equities)
   - equity → ETFs that hold it
@@ -76,21 +76,17 @@ Fetch the full US ETF universe (master list of ETF tickers):
 python -m etf_mapper.cli universe --out data --provider polygon
 ```
 
-Fetch daily price history (bootstrap providers while you wait for Schwab/TOS):
+Fetch daily price history via Schwab (OAuth required):
 
 ```bash
-# Yahoo via yfinance (recommended bootstrap)
-python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider yahoo --limit 200
-
-# Stooq via pandas-datareader (alternative; sometimes spotty for ETFs)
-python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider stooq --limit 200
+python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider schwab --limit 200 --start 2024-01-01
 ```
 
 One-shot bootstrap (universe + first batch of prices):
 
 ```bash
-# requires POLYGON_API_KEY
-python -m etf_mapper.cli bootstrap --out data --universe-provider polygon --price-provider yahoo --start 2024-01-01 --limit 200
+# requires POLYGON_API_KEY + Schwab OAuth env vars
+python -m etf_mapper.cli bootstrap --out data --universe-provider polygon --price-provider schwab --start 2024-01-01 --limit 200
 ```
 
 Run the UI (Streamlit):

@@ -26,7 +26,7 @@ def main(argv=None) -> int:
         default="data/etf_universe.parquet",
         help="Path to etf_universe.parquet (or CSV with ticker column)",
     )
-    pr.add_argument("--provider", default="yahoo", choices=["yahoo", "stooq"], help="Price provider")
+    pr.add_argument("--provider", default="schwab", choices=["schwab"], help="Price provider")
     pr.add_argument("--start", default=None, help="Start date YYYY-MM-DD")
     pr.add_argument("--end", default=None, help="End date YYYY-MM-DD")
     pr.add_argument("--limit", type=int, default=200, help="Max tickers to fetch (for quick runs)")
@@ -34,7 +34,7 @@ def main(argv=None) -> int:
     b = sub.add_parser("bootstrap", help="Universe + prices in one shot (gets UI running fast)")
     b.add_argument("--out", default="data", help="Output directory")
     b.add_argument("--universe-provider", default="polygon", choices=["polygon"], help="Universe provider")
-    b.add_argument("--price-provider", default="yahoo", choices=["yahoo", "stooq"], help="Price provider")
+    b.add_argument("--price-provider", default="schwab", choices=["schwab"], help="Price provider")
     b.add_argument("--start", default="2024-01-01", help="Start date YYYY-MM-DD")
     b.add_argument("--limit", type=int, default=200, help="Max tickers to fetch prices for")
 

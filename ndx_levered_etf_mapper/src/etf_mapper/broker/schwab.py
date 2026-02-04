@@ -7,7 +7,7 @@ This is intentionally non-functional until Schwab Developer Portal credentials a
 Design goals:
 - Keep secrets out of git.
 - Provide a stable interface that the Streamlit UI can call.
-- Make it easy to swap Yahoo bootstrap market data for Schwab quotes/options.
+- Provide broker-grade quotes/options/orders via Schwab Developer Portal.
 
 Planned capabilities (incremental):
 1) OAuth connect + token persistence
