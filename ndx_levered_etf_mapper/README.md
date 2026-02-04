@@ -15,10 +15,14 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Enforced **Schwab-only** outbound (Polygon removed)
 - Live quote + **1m candles** with visible data-age indicators
 - New **Dashboard** tab (watchlist + selected chart tiles)
+- New **Scanner** tab (universe scan + Top 5 strip + focus rotation + Heat score + Hot List)
+- New **Halts** tab (paste/parse scaffold)
+- New **Signals** tab (macro/news/theme scaffolds)
 - New **Casino Lab** tab (Bayes module + toy backtests)
 - New **Exposure** tab (accounts/positions, donut chart, redacted snapshot)
 - Added sidebar calculator + watchlist tape
 - Added margin discipline **countdown** (currently hard-coded for owner)
+- Added `TODO.md` to track pending work, especially items requiring additional APIs/providers
 
 ---
 
