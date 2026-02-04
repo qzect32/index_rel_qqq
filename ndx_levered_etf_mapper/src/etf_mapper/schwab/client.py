@@ -68,7 +68,8 @@ class SchwabAPI:
             "Content-Type": "application/x-www-form-urlencoded",
         }
         r = requests.post(self.cfg.token_url, data=data, headers=headers, timeout=30)
-        r.raise_for_status()
+        if not r.ok:
+            raise RuntimeError(f"Token exchange failed: {r.status_code} {r.reason} :: {r.text}")
         return self.tokens.save_from_token_response(r.json())
 
     def refresh_access_token(self) -> OAuthTokenSet:
@@ -84,7 +85,8 @@ class SchwabAPI:
             "Content-Type": "application/x-www-form-urlencoded",
         }
         r = requests.post(self.cfg.token_url, data=data, headers=headers, timeout=30)
-        r.raise_for_status()
+        if not r.ok:
+            raise RuntimeError(f"Token refresh failed: {r.status_code} {r.reason} :: {r.text}")
         return self.tokens.save_from_token_response(r.json())
 
     def get_access_token(self) -> str:
