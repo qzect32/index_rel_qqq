@@ -14,6 +14,8 @@ import streamlit as st
 from ladder_styles import style_ladder_with_changes
 from local_oauth import CallbackServerState, ensure_localhost_cert, start_https_callback_server, stop_callback_server
 from schwab_diagnostics import safe_snip
+from flight_recorder import FlightRecorder, make_session_id
+from debug_bundle import create_debug_bundle
 from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
@@ -32,6 +34,12 @@ from etf_mapper.build import refresh_universe as refresh_relations
 
 # ---------- App boot ----------
 st.set_page_config(page_title="ETF Hub", layout="wide")
+
+# Flight recorder (local logs)
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = make_session_id()
+if "rec" not in st.session_state:
+    st.session_state["rec"] = FlightRecorder(_data_dir(), session_id=st.session_state["session_id"])
 
 # Load local .env automatically (kept out of git)
 load_dotenv()
@@ -1517,6 +1525,16 @@ with tab_cart:
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
+
+    # Debug bundle
+    with st.expander("Support / Debug bundle", expanded=False):
+        st.caption("Creates a sanitized zip with recent logs (no secrets/tokens).")
+        if st.button("Create debug bundle"):
+            try:
+                bundle = create_debug_bundle(_data_dir())
+                st.success(f"Wrote: {bundle}")
+            except Exception as e:
+                st.error(str(e))
 
     st.markdown("#### Schwab OAuth")
 
