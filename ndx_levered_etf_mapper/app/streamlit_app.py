@@ -842,7 +842,6 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 # Keep the sidebar focused on exploration; move operational controls behind an expander.
 with st.sidebar:
     st.markdown("### Explore")
-    casino_mode = st.toggle("Casino mode", value=True)
 
     # Advanced settings (collapsed by default)
     with st.expander("Advanced", expanded=False):
@@ -895,10 +894,7 @@ if not selected:
 headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
 with headerL:
     st.markdown("# ETF Hub")
-    if casino_mode:
-        st.caption("Schwab-only • Live tape • 1m candles • Options ladder")
-    else:
-        st.caption("Schwab • Relations • Prices • Options • Position Builder")
+    st.caption("Schwab-only • Live quotes • 1m candles • Options ladder")
 
 with headerR:
     # Right-justified, compact description block for the current symbol
@@ -937,56 +933,6 @@ with headerR:
 # Quick facts row (Schwab quotes are lightweight; universe metadata may be absent)
 nm = selected
 
-# Casino tape + quick facts
-if casino_mode:
-    q_tape = _schwab_quote(selected)
-    last = q_tape.get("last")
-    mark = q_tape.get("mark")
-    net = q_tape.get("netChange")
-    netp = q_tape.get("netPct")
-
-    def _fmt(x, nd=2):
-        try:
-            if x is None or x == "":
-                return "—"
-            return f"{float(x):,.{nd}f}"
-        except Exception:
-            return str(x)
-
-    px_txt = _fmt(mark) if mark not in (None, "") else _fmt(last)
-    net_txt = "—"
-    try:
-        if net not in (None, ""):
-            net_txt = f"{float(net):+.2f}"
-    except Exception:
-        net_txt = str(net)
-
-    netp_txt = "—"
-    try:
-        if netp not in (None, ""):
-            netp_txt = f"{float(netp):+.2f}%"
-    except Exception:
-        netp_txt = str(netp)
-
-    st.markdown(
-        f"""
-<div class='ticker-tape'>
-  <span class='marquee'>
-    <span class='neon-gold'>LIVE TAPE</span>  •  
-    <span class='neon-blue'>{selected}</span>  
-    <span class='neon-green'>${px_txt}</span>  
-    <span class='muted'>({net_txt} / {netp_txt})</span>
-    &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
-    <span class='muted'>Asset</span>: {str(prof_hdr.get('assetType') or '—')}  
-    <span class='muted'>Exch</span>: {str(prof_hdr.get('exchangeName') or prof_hdr.get('exchange') or '—')}
-    &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
-    <span class='muted'>Tip:</span> turn off Casino mode in the sidebar if you want it calmer.
-  </span>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
 c1, c2, c3, c4, c5, c6 = st.columns([0.14, 0.22, 0.18, 0.18, 0.14, 0.14], vertical_alignment="top")
 c1.metric("Symbol", selected)
 c2.metric("Asset type", str(prof_hdr.get("assetType") or "—"))
@@ -1004,9 +950,137 @@ with st.expander("More stats", expanded=False):
 
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
+
+def _beta_binomial_up_prob(prices_1m: pd.DataFrame, lookback_bars: int = 240) -> dict:
+    """Toy Bayesian read: probability next bar is up.
+
+    Uses Beta-Binomial on sign(close_t - close_{t-1}) over last N bars.
+    Prior is Beta(1,1) (uniform).
+
+    Returns dict with posterior parameters and a 90% credible interval.
+    """
+    df = prices_1m.copy()
+    if df.empty or "close" not in df.columns:
+        return {}
+
+    df = df.dropna(subset=["close"]).tail(int(lookback_bars) + 1)
+    if len(df) < 10:
+        return {}
+
+    d = df["close"].astype(float).diff().dropna()
+    ups = int((d > 0).sum())
+    downs = int((d <= 0).sum())
+
+    a0, b0 = 1.0, 1.0
+    a1 = a0 + ups
+    b1 = b0 + downs
+
+    # mean = a/(a+b); approximate interval via quantiles if scipy exists, else normal approx
+    mean = a1 / (a1 + b1)
+
+    ci = None
+    try:
+        from scipy.stats import beta  # type: ignore
+
+        lo = float(beta.ppf(0.05, a1, b1))
+        hi = float(beta.ppf(0.95, a1, b1))
+        ci = (lo, hi)
+    except Exception:
+        # normal approx to beta
+        var = (a1 * b1) / (((a1 + b1) ** 2) * (a1 + b1 + 1.0))
+        sd = float(var ** 0.5)
+        lo = max(0.0, mean - 1.645 * sd)
+        hi = min(1.0, mean + 1.645 * sd)
+        ci = (float(lo), float(hi))
+
+    return {
+        "lookback_bars": int(lookback_bars),
+        "ups": ups,
+        "downs": downs,
+        "posterior_a": float(a1),
+        "posterior_b": float(b1),
+        "p_up_mean": float(mean),
+        "p_up_ci90": [float(ci[0]), float(ci[1])],
+    }
+
+
+def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0, slippage_bps: float = 0.0) -> pd.DataFrame:
+    """Very small backtest harness (single-position, long/flat) on 1m closes.
+
+    Strategies (toy):
+      - mean_reversion: buy when close below SMA by k*std, exit at SMA
+      - breakout: buy when close breaks N-bar high, exit on N-bar low
+
+    Returns a dataframe with equity curve columns.
+    """
+    df = prices_1m.copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.dropna(subset=["date", "close"]).copy()
+    df = df.sort_values("date")
+    df["close"] = df["close"].astype(float)
+
+    # returns
+    df["ret"] = df["close"].pct_change().fillna(0.0)
+
+    pos = pd.Series(0.0, index=df.index)
+
+    if strategy == "mean_reversion":
+        n = 60
+        k = 1.25
+        sma = df["close"].rolling(n).mean()
+        sd = df["close"].rolling(n).std()
+        z = (df["close"] - sma) / sd
+        entry = z < -k
+        exit_ = df["close"] >= sma
+
+        in_pos = False
+        for i in range(len(df)):
+            if not in_pos and bool(entry.iloc[i]) and pd.notna(sma.iloc[i]) and pd.notna(sd.iloc[i]) and sd.iloc[i] != 0:
+                in_pos = True
+            elif in_pos and bool(exit_.iloc[i]):
+                in_pos = False
+            pos.iloc[i] = 1.0 if in_pos else 0.0
+
+    elif strategy == "breakout":
+        n = 45
+        hh = df["close"].rolling(n).max().shift(1)
+        ll = df["close"].rolling(n).min().shift(1)
+        entry = df["close"] > hh
+        exit_ = df["close"] < ll
+
+        in_pos = False
+        for i in range(len(df)):
+            if not in_pos and bool(entry.iloc[i]) and pd.notna(hh.iloc[i]):
+                in_pos = True
+            elif in_pos and bool(exit_.iloc[i]) and pd.notna(ll.iloc[i]):
+                in_pos = False
+            pos.iloc[i] = 1.0 if in_pos else 0.0
+
+    else:
+        return pd.DataFrame()
+
+    # apply costs on position changes
+    df["pos"] = pos
+    df["pos_chg"] = df["pos"].diff().abs().fillna(0.0)
+
+    cost = (fee_bps + slippage_bps) / 10000.0
+    df["cost"] = df["pos_chg"] * cost
+
+    # strategy return: position held from previous bar close to current close
+    df["strat_ret"] = df["pos"].shift(1).fillna(0.0) * df["ret"] - df["cost"]
+    df["equity"] = (1.0 + df["strat_ret"]).cumprod()
+
+    # drawdown
+    df["equity_peak"] = df["equity"].cummax()
+    df["drawdown"] = df["equity"] / df["equity_peak"] - 1.0
+
+    return df
+
 # Context menus
-(tab_overview, tab_rel, tab_opts, tab_cart, tab_admin) = st.tabs(
-    ["Overview", "Relations", "Options", "Position Builder", "Admin"]
+(tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_admin) = st.tabs(
+    ["Overview", "Relations", "Options", "Position Builder", "Casino Lab", "Admin"]
 )
 
 with tab_overview:
@@ -1146,6 +1220,137 @@ with tab_overview:
 
         with st.expander("Raw prices", expanded=False):
             st.dataframe(dfp, use_container_width=True, height=320)
+
+with tab_casino:
+    st.subheader("Casino Lab")
+    st.caption("Quant playground. Toy models for exploration only — not trading advice. Data source is Schwab.")
+
+    casino_on = st.toggle("Casino visuals", value=True)
+    q_tape = _schwab_quote(selected)
+
+    if casino_on:
+        last = q_tape.get("last")
+        mark = q_tape.get("mark")
+        net = q_tape.get("netChange")
+        netp = q_tape.get("netPct")
+
+        def _fmt(x, nd=2):
+            try:
+                if x is None or x == "":
+                    return "—"
+                return f"{float(x):,.{nd}f}"
+            except Exception:
+                return str(x)
+
+        px_txt = _fmt(mark) if mark not in (None, "") else _fmt(last)
+        net_txt = "—"
+        try:
+            if net not in (None, ""):
+                net_txt = f"{float(net):+.2f}"
+        except Exception:
+            net_txt = str(net)
+
+        netp_txt = "—"
+        try:
+            if netp not in (None, ""):
+                netp_txt = f"{float(netp):+.2f}%"
+        except Exception:
+            netp_txt = str(netp)
+
+        st.markdown(
+            f"""
+<div class='ticker-tape'>
+  <span class='marquee'>
+    <span class='neon-gold'>LIVE TAPE</span>  •  
+    <span class='neon-blue'>{selected}</span>  
+    <span class='neon-green'>${px_txt}</span>  
+    <span class='muted'>({net_txt} / {netp_txt})</span>
+    &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
+    <span class='muted'>Bayes + Backtests + Toys</span>
+  </span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("### Modules")
+    mod = st.selectbox(
+        "Pick a module",
+        [
+            "Bayes: Next 1m bar up probability",
+            "Backtest: Mean reversion (toy)",
+            "Backtest: Breakout (toy)",
+        ],
+        index=0,
+    )
+
+    st.markdown("#### Data")
+    st.caption("Uses the same 1m candles as the Overview chart. Adjust timeframe there, or we can add separate controls.")
+    prices_1m = _fetch_history(selected, st.session_state.get("tos_tf", "1m (3D)"))
+
+    if prices_1m.empty:
+        st.warning("No 1m candles available for this symbol right now.")
+    else:
+        st.caption(f"Bars loaded: {len(prices_1m):,} (last={pd.to_datetime(prices_1m['date'].max())})")
+
+    if mod.startswith("Bayes"):
+        st.markdown("### Bayesian quick read")
+        st.caption("Beta-Binomial on up/down bars. This is intentionally simple and fast.")
+        lookback = st.slider("Lookback bars", 30, 780, 240, 30)
+        res = _beta_binomial_up_prob(prices_1m, lookback_bars=int(lookback))
+        if not res:
+            st.warning("Not enough data to compute.")
+        else:
+            cA, cB, cC = st.columns(3)
+            cA.metric("P(up) mean", f"{res['p_up_mean']*100:.1f}%")
+            cB.metric("CI90 low", f"{res['p_up_ci90'][0]*100:.1f}%")
+            cC.metric("CI90 high", f"{res['p_up_ci90'][1]*100:.1f}%")
+            with st.expander("Details", expanded=False):
+                st.json(res)
+
+            st.markdown("#### What I need from you (to make this real)")
+            st.write(
+                "- Which horizon matters: next 1m, next 5m, next hour?\n"
+                "- Do you care about direction only, or magnitude too?\n"
+                "- Do you want priors based on regime (trend/vol), or keep it dumb-simple?"
+            )
+
+    if mod.startswith("Backtest"):
+        st.markdown("### Backtest sandbox")
+        st.caption("Single-position long/flat toy backtests on 1m closes.")
+        fee = st.number_input("Fees (bps per entry/exit)", min_value=0.0, max_value=50.0, value=0.0, step=0.5)
+        slip = st.number_input("Slippage (bps per entry/exit)", min_value=0.0, max_value=50.0, value=0.0, step=0.5)
+
+        strat = "mean_reversion" if "Mean reversion" in mod else "breakout"
+        bt = _backtest_1m(prices_1m, strat, fee_bps=float(fee), slippage_bps=float(slip))
+        if bt.empty:
+            st.warning("Backtest could not run (not enough bars).")
+        else:
+            # KPIs
+            total = float(bt["equity"].iloc[-1] - 1.0)
+            dd = float(bt["drawdown"].min())
+            trades = int((bt["pos_chg"] > 0).sum() / 2)  # entry+exit pairs
+
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Total return", f"{total*100:+.2f}%")
+            k2.metric("Max drawdown", f"{dd*100:.2f}%")
+            k3.metric("Trades (approx)", f"{trades}")
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=bt["date"], y=bt["equity"], name="equity", line=dict(color="#33ffcc")))
+            fig.update_layout(height=280, margin=dict(l=10, r=10, t=25, b=10), template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
+
+            with st.expander("Equity + signals (raw)", expanded=False):
+                st.dataframe(bt[["date", "close", "pos", "strat_ret", "equity", "drawdown"]].tail(400), use_container_width=True, height=320)
+
+            st.markdown("#### What I need from you (to build your real backtester)")
+            st.write(
+                "- Are we backtesting equities/ETFs only, or options too?\n"
+                "- What’s your typical entry trigger (breakout, VWAP reclaim, ORB, gamma levels, etc.)?\n"
+                "- Risk model: fixed stop, ATR stop, time stop, max loss/day?\n"
+                "- Execution: market, limit at mid, bid/ask model?"
+            )
 
 with tab_rel:
     st.subheader("Relationship map")
