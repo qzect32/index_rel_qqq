@@ -607,11 +607,40 @@ def _schwab_options_chain(ticker: str, expiration: str) -> tuple[pd.DataFrame, p
 
 
 def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame:
-    """Build a Thinkorswim-ish ladder: one row per strike, calls on left, puts on right."""
-    c = calls.copy()
-    p = puts.copy()
+    """Build a Thinkorswim-ish ladder: one row per strike, calls on left, puts on right.
+
+    Must be tolerant of empty/partial data (e.g., before Schwab OAuth is completed).
+    """
+    c = calls.copy() if isinstance(calls, pd.DataFrame) else pd.DataFrame()
+    p = puts.copy() if isinstance(puts, pd.DataFrame) else pd.DataFrame()
+
+    # If neither side has a strike column, return an empty ladder with the UI-expected columns.
+    if (c.empty or "strike" not in c.columns) and (p.empty or "strike" not in p.columns):
+        base_cols = [
+            "call_select",
+            "call_qty",
+            "call_bid",
+            "call_ask",
+            "call_last",
+            "call_iv",
+            "call_oi",
+            "call_vol",
+            "strike",
+            "put_bid",
+            "put_ask",
+            "put_last",
+            "put_iv",
+            "put_oi",
+            "put_vol",
+            "put_qty",
+            "put_select",
+        ]
+        return pd.DataFrame(columns=base_cols)
 
     def _pick(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
+        if df is None or df.empty or "strike" not in df.columns:
+            return pd.DataFrame(columns=["strike"])
+
         cols = {
             "lastPrice": f"{prefix}_last",
             "bid": f"{prefix}_bid",
@@ -622,14 +651,16 @@ def _tos_options_ladder(calls: pd.DataFrame, puts: pd.DataFrame) -> pd.DataFrame
             "inTheMoney": f"{prefix}_itm",
             "contractSymbol": f"{prefix}_sym",
         }
-        keep = ["strike"] + [c for c in cols.keys() if c in df.columns]
+        keep = ["strike"] + [k for k in cols.keys() if k in df.columns]
         out = df[keep].rename(columns=cols)
         return out
 
     c2 = _pick(c, "call")
     p2 = _pick(p, "put")
 
-    ladder = pd.merge(c2, p2, on="strike", how="outer").sort_values("strike")
+    ladder = pd.merge(c2, p2, on="strike", how="outer")
+    if "strike" in ladder.columns:
+        ladder = ladder.sort_values("strike")
 
     # Add selection + qty for both sides
     for side in ["call", "put"]:
