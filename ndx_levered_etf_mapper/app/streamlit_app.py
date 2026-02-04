@@ -1397,15 +1397,72 @@ with tab_scanner:
     if metric in sdf2.columns:
         sdf2 = sdf2.sort_values(metric, ascending=False)
 
+    # --- Top 5 strip by dollar volume ---
+    by_dv = sdf2.copy()
+    if "dollar_vol" in by_dv.columns:
+        by_dv = by_dv.sort_values("dollar_vol", ascending=False)
+
+    top5 = by_dv.head(5).copy()
+    strip_syms = top5["symbol"].tolist() if not top5.empty else []
+
+    st.markdown("#### Top 5 (dollar volume)")
+    if strip_syms:
+        cols = st.columns(len(strip_syms))
+        for i, sym in enumerate(strip_syms):
+            r = top5.iloc[i]
+            px = r.get("px")
+            chgp = r.get("chg_%")
+            dv = r.get("dollar_vol")
+
+            try:
+                pxs = f"${float(px):,.2f}" if px == px else "—"
+            except Exception:
+                pxs = "—"
+
+            try:
+                cps = f"{float(chgp):+.2f}%" if chgp == chgp else "—"
+            except Exception:
+                cps = "—"
+
+            try:
+                dvs = f"${float(dv)/1e9:,.2f}B" if dv == dv else "—"
+            except Exception:
+                dvs = "—"
+
+            cols[i].markdown(
+                f"<div class='casino-wrap'><div class='neon-blue'><b>{sym}</b></div>"
+                f"<div class='neon-green'>{pxs}</div>"
+                f"<div class='muted'>{cps} • {dvs}</div></div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.caption("No scan results yet.")
+
     topk = st.slider("Show top", 5, 50, 15, 5)
     st.dataframe(sdf2.head(int(topk)), use_container_width=True, hide_index=True, height=360)
 
-    focus = str(sdf2.head(1).iloc[0]["symbol"]) if not sdf2.empty else selected
+    # --- Focus selection: auto-rotate unless pinned ---
+    st.session_state.setdefault("scanner_pin", False)
+    st.session_state.setdefault("scanner_focus", "")
+    pin = st.toggle("Pin focus", value=bool(st.session_state.get("scanner_pin")), key="scanner_pin")
+
+    if pin and st.session_state.get("scanner_focus"):
+        focus = str(st.session_state.get("scanner_focus"))
+    else:
+        # rotate through top5 on each rerun (fast + fun)
+        if strip_syms:
+            i = int(st.session_state.get("scanner_rot_i", 0))
+            focus = strip_syms[i % len(strip_syms)]
+            st.session_state["scanner_rot_i"] = (i + 1) % len(strip_syms)
+        else:
+            focus = str(sdf2.head(1).iloc[0]["symbol"]) if not sdf2.empty else selected
+
+        st.session_state["scanner_focus"] = focus
 
     st.markdown("### Focus")
     fL, fR = st.columns([0.62, 0.38], gap="large")
     with fL:
-        st.caption(f"Most in-focus (top by {metric}): {focus}")
+        st.caption(f"In-focus: {focus} (rotates across Top 5 by $ volume unless pinned)")
         tf = st.selectbox("Focus timeframe", ["1m (4H)", "1m (3D)"], index=0, key="scanner_tf")
         dfp = _fetch_history(focus, tf)
         if dfp.empty:
