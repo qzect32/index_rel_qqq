@@ -1435,6 +1435,10 @@ with tab_scanner:
                 f"<div class='muted'>{cps} • {dvs}</div></div>",
                 unsafe_allow_html=True,
             )
+            if cols[i].button("Focus", key=f"scanner_focus_btn_{sym}"):
+                st.session_state["scanner_focus"] = sym
+                st.session_state["scanner_pin"] = True
+                st.rerun()
     else:
         st.caption("No scan results yet.")
 
@@ -1444,16 +1448,44 @@ with tab_scanner:
     # --- Focus selection: auto-rotate unless pinned ---
     st.session_state.setdefault("scanner_pin", False)
     st.session_state.setdefault("scanner_focus", "")
-    pin = st.toggle("Pin focus", value=bool(st.session_state.get("scanner_pin")), key="scanner_pin")
+    st.session_state.setdefault("scanner_rot_i", 0)
+    st.session_state.setdefault("scanner_rot_tick", 0)
+
+    cA, cB, cC = st.columns([0.34, 0.36, 0.30])
+    pin = cA.toggle("Pin focus", value=bool(st.session_state.get("scanner_pin")), key="scanner_pin")
+    rotate_every = cB.slider("Rotate every (refreshes)", 1, 10, 2, 1)
+    auto_refresh = cC.toggle("Auto-refresh Scanner", value=False)
+    if auto_refresh:
+        # keep it modest; Scanner does many quote calls
+        st_autorefresh(interval=15 * 1000, key="scanner_autorefresh")
+
+    focus_pool_mode = st.selectbox(
+        "Focus pool",
+        ["Top 5 by $ volume", "Top 5 by current rank"],
+        index=0,
+        help="$ volume is usually the best 'what matters right now' proxy.",
+    )
+
+    # pick pool
+    if focus_pool_mode == "Top 5 by current rank":
+        pool = sdf2.head(5)["symbol"].tolist() if not sdf2.empty else []
+    else:
+        pool = strip_syms
 
     if pin and st.session_state.get("scanner_focus"):
         focus = str(st.session_state.get("scanner_focus"))
     else:
-        # rotate through top5 on each rerun (fast + fun)
-        if strip_syms:
+        # rotate through pool every N refreshes
+        st.session_state["scanner_rot_tick"] = int(st.session_state.get("scanner_rot_tick", 0)) + 1
+        tick = int(st.session_state.get("scanner_rot_tick", 0))
+
+        if pool:
+            if tick % int(rotate_every) == 0:
+                i = int(st.session_state.get("scanner_rot_i", 0))
+                st.session_state["scanner_rot_i"] = (i + 1) % len(pool)
+
             i = int(st.session_state.get("scanner_rot_i", 0))
-            focus = strip_syms[i % len(strip_syms)]
-            st.session_state["scanner_rot_i"] = (i + 1) % len(strip_syms)
+            focus = pool[i % len(pool)]
         else:
             focus = str(sdf2.head(1).iloc[0]["symbol"]) if not sdf2.empty else selected
 
