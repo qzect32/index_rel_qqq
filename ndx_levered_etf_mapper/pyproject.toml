@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "etf-mapper"
 version = "0.1.0"
-description = "Nasdaq-100 constituents to leveraged/inverse/options-strategy ETF relationship mapper"
+description = "Schwab-only local Streamlit trading cockpit: watchlist, 1m candles, options, exposure, and research exports"
 requires-python = ">=3.10"
 dependencies = [
   "pandas>=2.1",

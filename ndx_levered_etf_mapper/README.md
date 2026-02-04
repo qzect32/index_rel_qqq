@@ -1,57 +1,85 @@
-# ETF Hub (ETF Mapper)
+# Market Hub (Schwab-only)
 
-Local-first Python project that builds a **relationship graph** and serves it through a lightweight **Streamlit UI**.
+A local-first **Streamlit trading cockpit** powered by **Charles Schwab Market Data**.
 
-## Primary rule: Schwab-only
+This repo is intentionally practical: fast symbol lookup, live 1‑minute candles, options inspection, portfolio exposure, and a sandbox (“Casino Lab”) for quant toys/backtests.
 
-This repo is intentionally **Schwab-only** for anything outbound:
-- Quotes → Schwab Market Data
-- 1-minute candles → Schwab Market Data (`pricehistory`)
-- Options chains → Schwab Market Data (`chains`)
+> Status: actively evolving. The UI is usable today, but some tiles are placeholders until Schwab endpoints/entitlements are confirmed.
+
+---
+
+## What it does (today)
+
+### Dashboard
+- **Watchlist** quotes table (Schwab quotes)
+- **Selected symbol**: big price card + **1m candles** (Schwab price history)
+- **Countdown**: a configurable “line in the sand” timer (currently hard-coded for the project owner)
+- **Alerts**: UI placeholder for Schwab-native/TOS alerts (waiting on endpoint docs)
+- **Headlines**: manual placeholder text area (feed wiring later)
+
+### Overview (single-symbol)
+- Symbol profile/metadata (Schwab quotes)
+- Live **1‑minute candles** (Schwab `pricehistory`)
+- Data-age indicators (quote time + last candle time)
+
+### Options
+- Options expirations + chain (Schwab `chains`)
+- Ladder-style view and position building helpers (no live order placement wired)
+
+### Exposure
+- Pulls accounts + positions (Schwab Trader endpoints)
+- Aggregates exposure and renders a donut chart + table
+- Groups options/futures **under the underlying** when Schwab provides underlying metadata
+- Generates a **redacted shareable snapshot** (text + download)
+
+### Casino Lab
+- Quant playground (Bayes + toy backtests) using Schwab 1m candles
+
+### Relations / Dataset export
+- Builds a relationship graph and exports local datasets:
+  - Parquet + SQLite (for notebooks, research, and agentic workflows)
+  - Graph export (GEXF)
+
+---
+
+## Primary rule: Schwab-only outbound
+
+All outbound market/trader requests are Schwab endpoints:
+- Quotes → Schwab Market Data (`/marketdata/v1/quotes`)
+- 1-minute candles → Schwab Market Data (`/marketdata/v1/pricehistory`)
+- Options chains → Schwab Market Data (`/marketdata/v1/chains`)
+- Accounts/positions → Schwab Trader (`/trader/v1/...`)
 
 Polygon support has been removed.
 
-## What it produces
+---
 
-The `refresh` pipeline outputs both Parquet and SQLite:
+## Installation
 
-- `data/equities.parquet` — Nasdaq-100 constituents (expected ~100 rows)
-- `data/etfs.parquet` — ETF master table (deduped by ticker)
-- `data/edges.parquet` — relationship edges (src → dst)
-- `data/graph.gexf` — graph for Gephi
-- `data/universe.sqlite` — same tables in SQLite
+### 1) Prerequisites
+- **Python 3.10+**
+- A Schwab Developer Portal app (client id/secret)
 
-Backward-compatible artifacts may also be written:
-- `data/nasdaq100_constituents.parquet`
-- `data/levered_etfs.parquet`
-
-## Quickstart
-
-Create and activate a virtualenv, then install deps:
+### 2) Create a virtualenv and install
 
 ```bash
-python -m pip install -r requirements.txt
+python -m venv .venv
+# Windows:
+.\.venv\Scripts\activate
+# macOS/Linux:
+# source .venv/bin/activate
+
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-Build the relationships graph:
+### 3) Configure Schwab OAuth secrets (local-only)
 
-```bash
-python -m etf_mapper.cli refresh --out data
-```
+Create a gitignored file:
 
-Run the UI (Streamlit):
+`data/schwab_secrets.local.json`
 
-```bash
-python -m streamlit run app/streamlit_app.py
-```
-
-## Schwab OAuth config
-
-Recommended: create a local, gitignored secrets file:
-
-- `data/schwab_secrets.local.json`
-
-Expected keys (either env-style or snake_case are accepted):
+Example:
 
 ```json
 {
@@ -63,7 +91,53 @@ Expected keys (either env-style or snake_case are accepted):
 }
 ```
 
-## Notes / roadmap
+Notes:
+- This file is intentionally **local-first** and **gitignored**.
+- Tokens are stored at `data/schwab_tokens.json` by default.
 
-- The UI focuses on a single ticker input, with live Schwab quote + 1m candles.
-- Relationship graph is currently seeded from derivative-style exposures; holdings-based discovery can come later.
+### 4) Run the UI
+
+```bash
+python -m streamlit run app/streamlit_app.py
+```
+
+Then open the **Admin → Schwab OAuth** section and complete OAuth.
+
+---
+
+## CLI (datasets)
+
+Build the relationships graph and export datasets to `data/`:
+
+```bash
+python -m etf_mapper.cli refresh --out data
+```
+
+Fetch daily bars via Schwab for a provided universe file:
+
+```bash
+python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider schwab --start 2024-01-01 --limit 200
+```
+
+---
+
+## Troubleshooting
+
+- If quotes/options/candles return empty: check **Admin → Schwab OAuth** and confirm tokens exist.
+- If **Exposure** shows accounts but not positions: your Schwab app may not be entitled for trader endpoints, or the account payload schema differs. Expand the “debug/raw payload” section and open an issue with the sanitized output.
+
+---
+
+## Safety / non-goals
+
+- The UI does **not** place live orders.
+- Casino Lab modules are exploratory. They are not trading advice.
+
+---
+
+## Roadmap (short)
+
+- Schwab-native alerts (create/list/delete) once endpoint docs are confirmed
+- Better exposure analytics (risk, concentration, hedges)
+- Options/Greeks-aware analytics + backtesting extensions
+- Real headlines feed (provider TBD)
