@@ -32,7 +32,7 @@ from etf_mapper.build import refresh_universe as refresh_relations
 
 
 # ---------- App boot ----------
-st.set_page_config(page_title="ETF Hub", layout="wide")
+st.set_page_config(page_title="Market Hub", layout="wide")
 
 # Flight recorder (local logs)
 if "session_id" not in st.session_state:
@@ -872,6 +872,26 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 with st.sidebar:
     st.markdown("### Explore")
 
+    with st.expander("Calculator", expanded=False):
+        a = st.number_input("A", value=0.0, step=1.0, format="%.6f")
+        op = st.selectbox("Op", ["+", "-", "*", "/", "%"], index=0)
+        b = st.number_input("B", value=0.0, step=1.0, format="%.6f")
+        out = None
+        try:
+            if op == "+":
+                out = a + b
+            elif op == "-":
+                out = a - b
+            elif op == "*":
+                out = a * b
+            elif op == "/":
+                out = None if b == 0 else a / b
+            elif op == "%":
+                out = None if b == 0 else a % b
+        except Exception:
+            out = None
+        st.markdown(f"**Result:** `{out if out is not None else '—'}`")
+
     # Advanced settings (collapsed by default)
     with st.expander("Advanced", expanded=False):
         st.text_input("Data directory", value=st.session_state.get("data_dir", "data"), key="data_dir")
@@ -922,8 +942,8 @@ if not selected:
 # Header row: title left, provider description right (uses otherwise-empty space)
 headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
 with headerL:
-    st.markdown("# ETF Hub")
-    st.caption("Schwab-only • Live quotes • 1m candles • Options ladder")
+    st.markdown("# Market Hub")
+    st.caption("Schwab-only • Live quotes • 1m candles • Options ladder • Exposure")
 
 with headerR:
     # Right-justified, compact description block for the current symbol
@@ -978,6 +998,33 @@ with st.expander("More stats", expanded=False):
     st.json(dict(prof_hdr) if prof_hdr else {})
 
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
+
+# Top-of-page rolling tape (watchlist) — Schwab-only
+watch = st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
+watch = st.text_input("Watchlist (comma-separated)", value=watch, key="watchlist")
+watch_syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()]
+watch_syms = watch_syms[:12]
+if watch_syms:
+    bits = []
+    for s in watch_syms:
+        q = _schwab_quote(s)
+        px = q.get("mark") or q.get("last")
+        try:
+            pxs = f"{float(px):,.2f}" if px not in (None, "") else "—"
+        except Exception:
+            pxs = str(px) if px is not None else "—"
+        bits.append(f"{s} ${pxs}")
+
+    st.markdown(
+        f"""
+<div class='ticker-tape'>
+  <span class='marquee'>
+    <span class='neon-gold'>TAPE</span> • {'  •  '.join(bits)}
+  </span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 def _beta_binomial_up_prob(prices_1m: pd.DataFrame, lookback_bars: int = 240) -> dict:
@@ -2006,6 +2053,12 @@ with tab_exposure:
                         instr = p.get("instrument") if isinstance(p.get("instrument"), dict) else {}
                         sym = instr.get("symbol") or instr.get("cusip") or "(unknown)"
                         asset = instr.get("assetType") or instr.get("type")
+                        underlying = (
+                            instr.get("underlyingSymbol")
+                            or instr.get("underlying")
+                            or instr.get("underlyingSymbolId")
+                            or sym
+                        )
 
                         qty = p.get("longQuantity") or p.get("quantity") or p.get("shortQuantity")
                         mv = p.get("marketValue") or p.get("currentDayProfitLoss")  # mv preferred
@@ -2016,6 +2069,7 @@ with tab_exposure:
                             {
                                 "account_hash": h,
                                 "symbol": str(sym),
+                                "underlying": str(underlying),
                                 "asset": asset,
                                 "qty": qty,
                                 "avg_price": avg,
@@ -2035,12 +2089,13 @@ with tab_exposure:
                         if c in df.columns:
                             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-                    # Aggregate exposure by symbol
-                    expo = df.groupby(["symbol"], as_index=False).agg(
+                    # Aggregate exposure by underlying (groups options/futures under their underlying when provided)
+                    expo = df.groupby(["underlying"], as_index=False).agg(
                         market_value=("market_value", "sum"),
                         qty=("qty", "sum"),
                         day_pl=("day_pl", "sum"),
                     )
+                    expo = expo.rename(columns={"underlying": "symbol"})
                     expo = expo.sort_values("market_value", ascending=False)
                     total_mv = float(expo["market_value"].fillna(0.0).sum())
                     expo["pct"] = (expo["market_value"].fillna(0.0) / total_mv) if total_mv else 0.0
