@@ -1545,7 +1545,8 @@ with tab_admin:
             st.success(f"Wrote: {p}")
     else:
         st.caption(
-            "Authorize once, then the app will refresh tokens automatically. Paste the full redirect URL (or just the code) below."
+            "Authorize once, then the app will refresh tokens automatically. Paste the full redirect URL (or just the code) below. "
+            "If your registered redirect URI is on port 8000, run: python scripts/schwab_callback_server.py"
         )
 
         import secrets
@@ -1562,6 +1563,20 @@ with tab_admin:
 
         oauth_in = st.text_input("Paste redirect URL (or code)", value=st.session_state.get("schwab_oauth_in", ""))
         st.session_state["schwab_oauth_in"] = oauth_in
+
+        # Convenience: if you use the local callback catcher script (port 8000), it can write the code to a file.
+        code_file = st.text_input("(Optional) Local code file", value=str((_data_dir() / "schwab_last_code.txt").resolve()))
+        if st.button("Load code from file"):
+            try:
+                p = Path(code_file)
+                if p.exists():
+                    st.session_state["schwab_oauth_in"] = p.read_text(encoding="utf-8").strip()
+                    st.success("Loaded code into input.")
+                    st.rerun()
+                else:
+                    st.error(f"File not found: {p}")
+            except Exception as e:
+                st.error(f"Failed to read file: {e}")
 
         def _extract_code(x: str) -> str | None:
             x = (x or "").strip()
