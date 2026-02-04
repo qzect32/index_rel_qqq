@@ -13,14 +13,14 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 ### Dashboard
 - **Watchlist** quotes table (Schwab quotes)
 - **Selected symbol**: big price card + **1m candles** (Schwab price history)
-- **Countdown**: a configurable “line in the sand” timer (currently hard-coded for the project owner)
 - **Alerts**: UI placeholder for Schwab-native/TOS alerts (waiting on endpoint docs)
 - **Headlines**: manual placeholder text area (feed wiring later)
 
-### Overview (single-symbol)
+### Trading / Overview (single-symbol)
 - Symbol profile/metadata (Schwab quotes)
 - Live **1‑minute candles** (Schwab `pricehistory`)
 - Data-age indicators (quote time + last candle time)
+- **Countdown**: a configurable “line in the sand” timer (currently hard-coded for the project owner)
 
 ### Options
 - Options expirations + chain (Schwab `chains`)
