@@ -8,6 +8,20 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 
 ---
 
+## Changelog (running)
+
+### 2026-02-04
+- Renamed project to **Market Hub** (from ETF Hub)
+- Enforced **Schwab-only** outbound (Polygon removed)
+- Live quote + **1m candles** with visible data-age indicators
+- New **Dashboard** tab (watchlist + selected chart tiles)
+- New **Casino Lab** tab (Bayes module + toy backtests)
+- New **Exposure** tab (accounts/positions, donut chart, redacted snapshot)
+- Added sidebar calculator + watchlist tape
+- Added margin discipline **countdown** (currently hard-coded for owner)
+
+---
+
 ## What it does (today)
 
 ### Dashboard
