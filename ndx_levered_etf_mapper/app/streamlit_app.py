@@ -1155,9 +1155,177 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_admin) = st.tabs(
-    ["Overview", "Relations", "Options", "Position Builder", "Casino Lab", "Exposure", "Admin"]
+(tab_dash, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_admin) = st.tabs(
+    ["Dashboard", "Overview", "Relations", "Options", "Position Builder", "Casino Lab", "Exposure", "Admin"]
 )
+
+with tab_dash:
+    st.subheader("Dashboard")
+    st.caption("Tiles: watchlist • selected chart • alerts • headlines. Schwab-only.")
+
+    # ---- Watchlist tile ----
+    dL, dM, dR = st.columns([0.36, 0.40, 0.24], gap="large")
+
+    with dL:
+        st.markdown("### Watchlist")
+        watch = st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
+        watch = st.text_input("Symbols", value=watch, key="watchlist")
+        syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()][:20]
+
+        rows = []
+        for s in syms:
+            q = _schwab_quote(s)
+            px = q.get("mark") or q.get("last")
+            net = q.get("netChange")
+            netp = q.get("netPct")
+            rows.append({"symbol": s, "px": px, "chg": net, "chg_%": netp})
+
+        wdf = pd.DataFrame(rows)
+        for c in ["px", "chg", "chg_%"]:
+            if c in wdf.columns:
+                wdf[c] = pd.to_numeric(wdf[c], errors="coerce")
+
+        st.dataframe(
+            wdf,
+            use_container_width=True,
+            height=360,
+            hide_index=True,
+        )
+
+        st.caption("Tip: click a row isn't supported by Streamlit dataframe yet; copy symbol into the Ticker box on the left.")
+
+    # ---- Selected chart tile ----
+    with dM:
+        st.markdown("### Selected")
+        q = _schwab_quote(selected)
+        px = q.get("mark") or q.get("last")
+        try:
+            pxs = f"${float(px):,.2f}" if px not in (None, "") else "—"
+        except Exception:
+            pxs = str(px) if px is not None else "—"
+
+        st.markdown(f"<div class='price-card'><div class='muted'>{selected}</div><div class='price-big neon-green'>{pxs}</div></div>", unsafe_allow_html=True)
+
+        tf = st.selectbox("Timeframe", ["1m (4H)", "1m (3D)"], index=0, key="dash_tf")
+        dfp = _fetch_history(selected, tf)
+        if dfp.empty:
+            st.warning("No 1m candles.")
+        else:
+            st.plotly_chart(_plot_candles(dfp, title=f"{selected} — {tf}"), use_container_width=True)
+
+    # ---- Alerts + headlines tile ----
+    with dR:
+        st.markdown("### Alerts")
+
+        st.session_state.setdefault("alerts", [])
+
+        with st.expander("Create alert", expanded=False):
+            a_sym = st.text_input("Symbol", value=selected, key="alert_sym")
+            a_op = st.selectbox("Condition", [">=", "<=", ">", "<", "=="], index=0, key="alert_op")
+            a_px = st.number_input("Trigger price", min_value=0.0, value=0.0, step=0.5, key="alert_px")
+            a_exp_min = st.slider("Expires in (minutes)", 5, 24 * 60, 60, 5, key="alert_exp")
+            a_sound = st.toggle("Sound", value=True, key="alert_sound")
+
+            if st.button("Add alert"):
+                exp_at = pd.Timestamp.now() + pd.Timedelta(minutes=int(a_exp_min))
+                st.session_state["alerts"].append(
+                    {
+                        "symbol": str(a_sym).upper().strip(),
+                        "op": a_op,
+                        "price": float(a_px),
+                        "expires_at": exp_at.isoformat(),
+                        "sound": bool(a_sound),
+                        "armed": True,
+                    }
+                )
+                st.success("Alert added.")
+
+        # Evaluate alerts (Schwab-only quote polling; runs on reruns/autorefresh)
+        now = pd.Timestamp.now()
+        active = []
+        fired = []
+        for al in list(st.session_state.get("alerts", [])):
+            try:
+                exp = pd.Timestamp(al.get("expires_at"))
+            except Exception:
+                exp = now
+
+            if not al.get("armed"):
+                continue
+            if exp < now:
+                continue
+
+            sym = str(al.get("symbol") or "").upper().strip()
+            qx = _schwab_quote(sym)
+            pxv = qx.get("mark") or qx.get("last")
+            try:
+                pxv = float(pxv)
+            except Exception:
+                pxv = None
+
+            ok = False
+            if pxv is not None:
+                trg = float(al.get("price") or 0.0)
+                op = str(al.get("op"))
+                if op == ">=":
+                    ok = pxv >= trg
+                elif op == "<=":
+                    ok = pxv <= trg
+                elif op == ">":
+                    ok = pxv > trg
+                elif op == "<":
+                    ok = pxv < trg
+                elif op == "==":
+                    ok = abs(pxv - trg) < 1e-9
+
+            if ok:
+                al["armed"] = False
+                fired.append((al, pxv))
+            else:
+                active.append((al, pxv))
+
+        if fired:
+            for al, pxv in fired:
+                st.error(f"ALERT: {al['symbol']} {al['op']} {al['price']} (px={pxv})")
+                try:
+                    st.toast(f"ALERT: {al['symbol']} hit {al['op']} {al['price']}")
+                except Exception:
+                    pass
+                if al.get("sound"):
+                    # simple beep (browser)
+                    st.markdown(
+                        """
+<audio autoplay>
+  <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=" type="audio/wav">
+</audio>
+""",
+                        unsafe_allow_html=True,
+                    )
+
+        st.markdown("#### Active")
+        if not active:
+            st.caption("No active alerts.")
+        else:
+            for al, pxv in active[:12]:
+                st.write(
+                    {
+                        "symbol": al.get("symbol"),
+                        "cond": f"{al.get('op')} {al.get('price')}",
+                        "px": pxv,
+                        "expires_at": al.get("expires_at"),
+                    }
+                )
+
+        with st.expander("Manage alerts", expanded=False):
+            if st.button("Clear all alerts"):
+                st.session_state["alerts"] = []
+                st.rerun()
+            st.json(st.session_state.get("alerts", []))
+
+        st.markdown("### Headlines")
+        st.caption("Placeholder for now (fastest path). Paste headlines you care about; later we’ll wire a feed.")
+        st.session_state.setdefault("headlines", "")
+        st.text_area("Headlines", key="headlines", height=180)
 
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
