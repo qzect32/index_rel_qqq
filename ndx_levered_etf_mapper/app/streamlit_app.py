@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ladder_styles import style_ladder_with_changes
+from local_oauth import CallbackServerState, ensure_localhost_cert, start_https_callback_server, stop_callback_server
 from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
@@ -1503,6 +1504,14 @@ with tab_admin:
 
     st.markdown("#### Schwab OAuth")
 
+    # One-click local OAuth support (HTTPS callback on 127.0.0.1:8000)
+    st.session_state.setdefault("oauth_server", None)
+    st.session_state.setdefault("oauth_thread", None)
+    st.session_state.setdefault(
+        "oauth_state",
+        CallbackServerState(out_path=_data_dir() / "schwab_last_code.txt"),
+    )
+
     api = _schwab_api()
     secrets = load_schwab_secrets(_data_dir())
     client_id_set = bool(secrets and secrets.client_id)
@@ -1545,8 +1554,55 @@ with tab_admin:
             st.success(f"Wrote: {p}")
     else:
         st.caption(
-            "Authorize once, then the app will refresh tokens automatically. Paste the full redirect URL (or just the code) below. "
-            "If your registered redirect URI is on port 8000, run: python scripts/schwab_callback_server.py"
+            "Authorize once, then the app will refresh tokens automatically. "
+            "If Schwab forces an HTTPS localhost callback (127.0.0.1:8000), you can use the one-click controls below."
+        )
+
+        st.markdown("**One-click local HTTPS callback (127.0.0.1:8000)**")
+        col_cb1, col_cb2, col_cb3 = st.columns([0.34, 0.33, 0.33])
+
+        cert_path = _data_dir() / "localhost.pem"
+        key_path = _data_dir() / "localhost-key.pem"
+
+        with col_cb1:
+            if st.button("Generate localhost cert", type="secondary"):
+                try:
+                    ensure_localhost_cert(cert_path, key_path)
+                    st.success("Generated data/localhost.pem and data/localhost-key.pem")
+                except Exception as e:
+                    st.error(f"Cert generation failed: {e}")
+
+        with col_cb2:
+            if st.button("Start HTTPS callback server", type="primary"):
+                try:
+                    ensure_localhost_cert(cert_path, key_path)
+                    state = st.session_state["oauth_state"]
+                    t, httpd = start_https_callback_server(state, cert_path, key_path)
+                    st.session_state["oauth_thread"] = t
+                    st.session_state["oauth_server"] = httpd
+                    st.success("Callback server started on https://127.0.0.1:8000")
+                except Exception as e:
+                    st.error(f"Failed to start callback server: {e}")
+
+        with col_cb3:
+            if st.button("Stop callback server"):
+                try:
+                    stop_callback_server(st.session_state.get("oauth_server"))
+                    st.session_state["oauth_server"] = None
+                    st.session_state["oauth_thread"] = None
+                    st.success("Stopped callback server")
+                except Exception as e:
+                    st.error(f"Failed to stop server: {e}")
+
+        # Status
+        st.write(
+            {
+                "callback_running": bool(getattr(st.session_state.get("oauth_state"), "running", False)),
+                "cert_present": cert_path.exists(),
+                "key_present": key_path.exists(),
+                "last_code_present": (_data_dir() / "schwab_last_code.txt").exists(),
+                "last_error": getattr(st.session_state.get("oauth_state"), "last_error", None),
+            }
         )
 
         import secrets
