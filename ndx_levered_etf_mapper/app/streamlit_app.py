@@ -809,7 +809,7 @@ st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
 # Context menus
 (tab_overview, tab_rel, tab_opts, tab_cart, tab_admin) = st.tabs(
-    ["Overview", "Relations", "Options", "Cart", "Admin"]
+    ["Overview", "Relations", "Options", "Position Builder", "Admin"]
 )
 
 with tab_overview:
@@ -1110,7 +1110,16 @@ with tab_opts:
             st.caption("Tip: the Admin → Options troubleshooting probe can confirm whether Schwab is working across a basket.")
         st.stop()
 
+    # TOS-like: pick expiration; strikes are shown around ATM by default.
     exp = st.selectbox("Expiration", expirations, index=0)
+
+    # Strike window (around ATM)
+    strike_window = st.selectbox(
+        "Strike window (around ATM)",
+        options=["4", "8", "16", "32", "ALL"],
+        index=2,
+        help="Shows N strikes above and below ATM (approx).",
+    )
 
     with st.spinner("Loading options chain…"):
         try:
@@ -1122,10 +1131,34 @@ with tab_opts:
                 st.rerun()
             st.stop()
 
-    if "cart" not in st.session_state:
-        st.session_state["cart"] = []
+    # Position Builder legs (backwards compatible with older key name)
+    if "builder_legs" not in st.session_state:
+        st.session_state["builder_legs"] = st.session_state.get("cart", [])
 
     ladder = _tos_options_ladder(calls, puts)
+
+    # Filter strikes around ATM by default
+    prof = _schwab_profile(selected)
+    spot = None
+    try:
+        spot = float(prof.get("lastPrice") or prof.get("mark"))
+    except Exception:
+        spot = None
+
+    if spot is not None and (strike_window or "").upper() != "ALL" and "strike" in ladder.columns and not ladder.empty:
+        try:
+            n = int(strike_window)
+        except Exception:
+            n = 16
+        strikes = ladder["strike"].astype(float)
+        atm_idx = int((strikes - float(spot)).abs().idxmin())
+        # Convert idx into position in the sorted ladder
+        ladder = ladder.sort_values("strike").reset_index(drop=True)
+        strikes2 = ladder["strike"].astype(float)
+        atm_pos = int((strikes2 - float(spot)).abs().idxmin())
+        lo = max(0, atm_pos - n)
+        hi = min(len(ladder), atm_pos + n + 1)
+        ladder = ladder.iloc[lo:hi].copy().reset_index(drop=True)
 
     st.markdown("#### Options ladder (calls left, puts right)")
 
@@ -1182,13 +1215,14 @@ with tab_opts:
         bid = r.get(f"{side}_bid")
         ask = r.get(f"{side}_ask")
         last = r.get(f"{side}_last")
-        st.session_state["cart"].append(
+        st.session_state["builder_legs"].append(
             {
                 "contractSymbol": sym,
                 "ticker": selected,
                 "expiration": exp,
                 "strike": float(r.get("strike")),
                 "side": side,
+                "action": "BUY",
                 "qty": qty,
                 "lastPrice": float(last) if pd.notna(last) else None,
                 "bid": float(bid) if pd.notna(bid) else None,
@@ -1197,7 +1231,7 @@ with tab_opts:
         )
 
     with colA:
-        if st.button("Add selected to cart", type="primary"):
+        if st.button("Add selected to position builder", type="primary"):
             added = 0
             for _, r in edited.iterrows():
                 if bool(r.get("call_select")):
@@ -1207,40 +1241,123 @@ with tab_opts:
                     _add_contract("put", r)
                     added += 1
             if added:
-                st.success(f"Added {added} contract(s) to cart.")
+                st.success(f"Added {added} contract(s) to position builder.")
             else:
                 st.warning("Select at least one call/put in the ladder.")
 
     with colB:
-        st.caption("Tip: pick strikes like TOS — calls on the left, puts on the right. Cart uses ask/last for premium estimate.")
+        st.caption("Tip: pick strikes like TOS — calls on the left, puts on the right. Position Builder uses bid/ask for debit/credit estimates.")
 
 with tab_cart:
-    st.subheader("Cart")
-    cart = st.session_state.get("cart", [])
-    if not cart:
-        st.info("Cart is empty. Add options contracts from the Options tab.")
+    st.subheader("Position Builder")
+
+    legs = st.session_state.get("builder_legs", [])
+    if not legs:
+        st.info("No legs yet. Add option contracts from the Options tab.")
         st.stop()
 
-    dfc = pd.DataFrame(cart)
+    df = pd.DataFrame(legs)
+    if "action" not in df.columns:
+        df["action"] = "BUY"
 
-    # Compute estimated premium cost
-    def _row_cost(r) -> float:
+    st.caption("Set BUY/SELL for each leg. Debit/Credit uses ask for BUY and bid for SELL (best-effort).")
+
+    edited = st.data_editor(
+        df,
+        use_container_width=True,
+        height=320,
+        column_config={
+            "action": st.column_config.SelectboxColumn(options=["BUY", "SELL"]),
+            "qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
+        },
+        disabled=[c for c in df.columns if c not in ("action", "qty")],
+    )
+
+    # Persist edits back
+    st.session_state["builder_legs"] = edited.to_dict(orient="records")
+
+    def _leg_price(r) -> float:
+        # BUY -> ask (pay); SELL -> bid (receive); fallback to last
+        a = str(r.get("action") or "BUY").upper()
+        if a == "SELL":
+            px = r.get("bid") or r.get("lastPrice") or 0.0
+            return float(px or 0.0)
         px = r.get("ask") or r.get("lastPrice") or 0.0
-        qty = int(r.get("qty") or 1)
-        return float(px) * 100.0 * qty
+        return float(px or 0.0)
 
-    dfc["est_cost"] = dfc.apply(_row_cost, axis=1)
+    def _leg_sign(r) -> int:
+        return -1 if str(r.get("action") or "BUY").upper() == "SELL" else 1
 
-    st.dataframe(dfc, use_container_width=True, height=360)
-    st.metric("Estimated premium (USD)", f"${dfc['est_cost'].sum():,.2f}")
+    edited["est_px"] = edited.apply(_leg_price, axis=1)
+    edited["est_premium"] = edited.apply(lambda r: _leg_sign(r) * float(r.get("est_px") or 0.0) * 100.0 * int(r.get("qty") or 1), axis=1)
+
+    net = float(edited["est_premium"].sum())
+    net_txt = f"${abs(net):,.2f}" + (" debit" if net > 0 else " credit" if net < 0 else "")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Net premium", net_txt)
+    c2.metric("Legs", str(len(edited)))
+    c3.metric("Expiration", str(edited["expiration"].iloc[0]) if "expiration" in edited.columns and len(edited) else "—")
+
+    # Payoff at expiration (intrinsic only) — a "good enough" first scaffold.
+    st.markdown("#### Payoff at expiration (scaffold)")
+
+    prof = _schwab_profile(selected)
+    spot = None
+    try:
+        spot = float(prof.get("lastPrice") or prof.get("mark"))
+    except Exception:
+        spot = None
+
+    if spot is None:
+        st.warning("Spot price unavailable; payoff graph needs lastPrice/mark.")
+    else:
+        import numpy as np
+
+        s0 = float(spot)
+        xs = np.linspace(s0 * 0.7, s0 * 1.3, 121)
+
+        def _payoff_leg(r, s: float) -> float:
+            side = str(r.get("side") or "").lower()
+            k = float(r.get("strike") or 0.0)
+            qty = int(r.get("qty") or 1)
+            sign = 1 if str(r.get("action") or "BUY").upper() == "BUY" else -1
+            px = float(r.get("est_px") or 0.0)
+
+            if side == "call":
+                intrinsic = max(s - k, 0.0)
+            elif side == "put":
+                intrinsic = max(k - s, 0.0)
+            else:
+                intrinsic = 0.0
+
+            # Profit = (intrinsic - premium) for BUY; (premium - intrinsic) for SELL
+            if sign == 1:
+                pnl = (intrinsic - px) * 100.0 * qty
+            else:
+                pnl = (px - intrinsic) * 100.0 * qty
+            return float(pnl)
+
+        ys = []
+        for s in xs:
+            total = 0.0
+            for _, r in edited.iterrows():
+                total += _payoff_leg(r, float(s))
+            ys.append(total)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="PnL @ exp"))
+        fig.add_vline(x=s0, line_width=1, line_dash="dot", line_color="#94a3b8")
+        fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10), template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
 
     col1, col2 = st.columns([0.25, 0.75])
     with col1:
-        if st.button("Clear cart", type="secondary"):
-            st.session_state["cart"] = []
+        if st.button("Clear position builder", type="secondary"):
+            st.session_state["builder_legs"] = []
             st.rerun()
     with col2:
-        st.info("Schwab/TOS order placement is not live yet — this is a functional staging cart.")
+        st.info("Order placement is intentionally not wired yet. This tab is for building/inspecting positions.")
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
