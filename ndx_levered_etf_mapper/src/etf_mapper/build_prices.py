@@ -21,7 +21,7 @@ def _load_tickers_from_universe(universe_path: str | Path) -> list[str]:
     if not universe_path.exists():
         raise FileNotFoundError(
             f"Universe file not found: {universe_path}. "
-            "Run: python -m etf_mapper.cli universe --out data --provider polygon"
+            "Provide a universe parquet/CSV with a 'ticker' column (this project is Schwab-only; no Polygon universe fetch)."
         )
 
     if universe_path.suffix.lower() in {".parquet"}:

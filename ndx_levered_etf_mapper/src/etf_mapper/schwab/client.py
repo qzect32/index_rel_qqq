@@ -40,6 +40,8 @@ class SchwabAPI:
     def __init__(self, cfg: SchwabConfig):
         self.cfg = cfg
         self.tokens = TokenStore(cfg.token_path)
+        # Keep a session for connection pooling (noticeably reduces latency on repeated calls).
+        self.session = requests.Session()
 
     # ---------- OAuth ----------
     def build_authorize_url(self, state: str, scope: str = "readonly") -> str:
@@ -106,13 +108,13 @@ class SchwabAPI:
 
     def _get(self, path: str, params: Optional[dict[str, Any]] = None) -> Any:
         url = self.cfg.base_url.rstrip("/") + path
-        r = requests.get(url, params=params, headers=self._headers(), timeout=30)
+        r = self.session.get(url, params=params, headers=self._headers(), timeout=30)
         r.raise_for_status()
         return r.json()
 
     def _post(self, path: str, json_body: dict[str, Any]) -> Any:
         url = self.cfg.base_url.rstrip("/") + path
-        r = requests.post(url, json=json_body, headers=self._headers(), timeout=30)
+        r = self.session.post(url, json=json_body, headers=self._headers(), timeout=30)
         r.raise_for_status()
         if r.text:
             return r.json()

@@ -26,8 +26,7 @@ from etf_mapper.spade_checks import check_option_chain, check_price_history, sum
 
 # Schwab API removed (replaced with Schwab Market Data)
 
-# Polygon universe builder kept in codebase but not required by Schwab-only UI.
-# from etf_mapper.build_universe import refresh_etf_universe
+# Schwab-only build (no Polygon universe builder).
 from etf_mapper.build_prices import refresh_prices
 from etf_mapper.build import refresh_universe as refresh_relations
 
@@ -66,6 +65,53 @@ st.markdown(
   div[data-testid="stDataFrame"] div[role="columnheader"] {
     background: rgba(255,255,255,0.04);
   }
+
+  /* Casino mode hooks */
+  .casino-wrap {
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 14px;
+    padding: 0.75rem 0.9rem;
+    background: rgba(0,0,0,0.25);
+    backdrop-filter: blur(6px);
+  }
+
+  .ticker-tape {
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 12px;
+    padding: 0.45rem 0.7rem;
+    background: linear-gradient(90deg, rgba(14,16,24,0.90), rgba(8,10,18,0.90));
+    overflow: hidden;
+    white-space: nowrap;
+    box-shadow: 0 0 22px rgba(0,255,209,0.05);
+  }
+
+  .ticker-tape .marquee {
+    display: inline-block;
+    padding-left: 100%;
+    animation: marquee 18s linear infinite;
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+
+  .neon-green { color: #33ffcc; text-shadow: 0 0 12px rgba(51,255,204,0.35); }
+  .neon-red   { color: #ff4d6d; text-shadow: 0 0 12px rgba(255,77,109,0.25); }
+  .neon-gold  { color: #ffd166; text-shadow: 0 0 12px rgba(255,209,102,0.18); }
+  .neon-blue  { color: #74c0fc; text-shadow: 0 0 12px rgba(116,192,252,0.20); }
+
+  .price-card {
+    border-radius: 16px;
+    padding: 0.85rem 1.0rem;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: radial-gradient(1200px 160px at 15% 20%, rgba(51,255,204,0.10), transparent 55%),
+                radial-gradient(800px 220px at 85% 30%, rgba(255,209,102,0.08), transparent 60%),
+                rgba(8,10,18,0.65);
+  }
+
+  .price-big { font-size: 2.1rem; font-weight: 750; letter-spacing: 0.2px; }
+  .muted { color: #9ca3af; }
 </style>
     """,
     unsafe_allow_html=True,
@@ -280,7 +326,7 @@ def _infer_intended_usage(name: str) -> str:
     return ", ".join(hits)
 
 
-@st.cache_data(show_spinner=False, ttl=60 * 5)
+@st.cache_data(show_spinner=False, ttl=30)
 def _schwab_profile(ticker: str) -> dict:
     """Lightweight symbol/quote metadata via Schwab quotes endpoint."""
     tkr = _normalize_ticker(ticker)
@@ -324,6 +370,84 @@ def _schwab_profile(ticker: str) -> dict:
         "totalVolume",
     ]
     out = {k: rec.get(k) for k in keys if rec.get(k) not in (None, "")}
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=5)
+def _schwab_quote(ticker: str) -> dict:
+    """Fetch a live quote snapshot from Schwab.
+
+    Returned dict is normalized and includes best-effort timestamps so the UI can show "data age".
+    """
+    tkr = _normalize_ticker(ticker)
+    if not tkr:
+        return {}
+
+    api = _schwab_api()
+    if api is None:
+        return {}
+
+    try:
+        js = api.quotes([tkr])
+    except Exception:
+        return {}
+
+    if isinstance(js, dict):
+        rec = js.get(tkr) or js.get(tkr.upper()) or js.get("quotes", {}).get(tkr) or js
+    else:
+        rec = {}
+
+    if not isinstance(rec, dict):
+        return {}
+
+    # Common time fields (Schwab schemas vary). Keep them if present.
+    # Prefer "...InLong" (epoch ms) when available.
+    time_keys = [
+        "quoteTimeInLong",
+        "tradeTimeInLong",
+        "regularMarketTradeTimeInLong",
+        "regularMarketLastPriceTimeInLong",
+    ]
+    ts_ms = None
+    for k in time_keys:
+        v = rec.get(k)
+        if isinstance(v, (int, float)) and v > 0:
+            ts_ms = int(v)
+            break
+
+    out = {
+        "symbol": rec.get("symbol") or tkr,
+        "last": rec.get("lastPrice") or rec.get("last") or rec.get("lastPriceInDouble"),
+        "mark": rec.get("mark") or rec.get("markPrice") or rec.get("markPriceInDouble"),
+        "bid": rec.get("bidPrice") or rec.get("bid"),
+        "ask": rec.get("askPrice") or rec.get("ask"),
+        "volume": rec.get("totalVolume") or rec.get("volume"),
+        "netChange": rec.get("netChange"),
+        "netPct": rec.get("netPercentChangeInDouble") or rec.get("netPercentChange"),
+        "ts_ms": ts_ms,
+        "raw": rec,
+    }
+
+    # Trim raw a bit (some schemas are huge)
+    if isinstance(out.get("raw"), dict) and len(out["raw"]) > 120:
+        # keep only a subset if it's gigantic
+        keep = set(
+            [
+                "symbol",
+                "description",
+                "assetType",
+                "exchangeName",
+                "quoteType",
+                "lastPrice",
+                "mark",
+                "bidPrice",
+                "askPrice",
+                "totalVolume",
+            ]
+            + time_keys
+        )
+        out["raw"] = {k: rec.get(k) for k in keep if k in rec}
+
     return out
 
 
@@ -718,6 +842,7 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 # Keep the sidebar focused on exploration; move operational controls behind an expander.
 with st.sidebar:
     st.markdown("### Explore")
+    casino_mode = st.toggle("Casino mode", value=True)
 
     # Advanced settings (collapsed by default)
     with st.expander("Advanced", expanded=False):
@@ -729,14 +854,14 @@ with st.sidebar:
         price_limit = st.slider("Price fetch limit", min_value=25, max_value=1000, value=200, step=25)
 
     with st.expander("Live", expanded=False):
-        auto_refresh = st.toggle("Auto-refresh UI", value=False)
-        auto_refresh_s = st.slider("Refresh interval (seconds)", 5, 60, 15, 5)
+        st.caption("Live mode is Schwab-only. Enable to refresh the UI every 60 seconds.")
+        auto_refresh = st.toggle("Auto-refresh (60s)", value=True)
         if auto_refresh:
             # lightweight refresh loop (useful during market hours)
-            st_autorefresh(interval=auto_refresh_s * 1000, key="autorefresh")
+            st_autorefresh(interval=60 * 1000, key="autorefresh")
 
     with st.expander("Secrets", expanded=False):
-        # Schwab-only UI: polygon is not required.
+        # Schwab-only UI.
         secrets = load_schwab_secrets(_data_dir())
         st.write(
             {
@@ -770,7 +895,10 @@ if not selected:
 headerL, headerR = st.columns([0.42, 0.58], vertical_alignment="top")
 with headerL:
     st.markdown("# ETF Hub")
-    st.caption("Schwab • Relations • Prices • Options • Position Builder")
+    if casino_mode:
+        st.caption("Schwab-only • Live tape • 1m candles • Options ladder")
+    else:
+        st.caption("Schwab • Relations • Prices • Options • Position Builder")
 
 with headerR:
     # Right-justified, compact description block for the current symbol
@@ -808,6 +936,56 @@ with headerR:
 
 # Quick facts row (Schwab quotes are lightweight; universe metadata may be absent)
 nm = selected
+
+# Casino tape + quick facts
+if casino_mode:
+    q_tape = _schwab_quote(selected)
+    last = q_tape.get("last")
+    mark = q_tape.get("mark")
+    net = q_tape.get("netChange")
+    netp = q_tape.get("netPct")
+
+    def _fmt(x, nd=2):
+        try:
+            if x is None or x == "":
+                return "—"
+            return f"{float(x):,.{nd}f}"
+        except Exception:
+            return str(x)
+
+    px_txt = _fmt(mark) if mark not in (None, "") else _fmt(last)
+    net_txt = "—"
+    try:
+        if net not in (None, ""):
+            net_txt = f"{float(net):+.2f}"
+    except Exception:
+        net_txt = str(net)
+
+    netp_txt = "—"
+    try:
+        if netp not in (None, ""):
+            netp_txt = f"{float(netp):+.2f}%"
+    except Exception:
+        netp_txt = str(netp)
+
+    st.markdown(
+        f"""
+<div class='ticker-tape'>
+  <span class='marquee'>
+    <span class='neon-gold'>LIVE TAPE</span>  •  
+    <span class='neon-blue'>{selected}</span>  
+    <span class='neon-green'>${px_txt}</span>  
+    <span class='muted'>({net_txt} / {netp_txt})</span>
+    &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
+    <span class='muted'>Asset</span>: {str(prof_hdr.get('assetType') or '—')}  
+    <span class='muted'>Exch</span>: {str(prof_hdr.get('exchangeName') or prof_hdr.get('exchange') or '—')}
+    &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
+    <span class='muted'>Tip:</span> turn off Casino mode in the sidebar if you want it calmer.
+  </span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 c1, c2, c3, c4, c5, c6 = st.columns([0.14, 0.22, 0.18, 0.18, 0.14, 0.14], vertical_alignment="top")
 c1.metric("Symbol", selected)
@@ -869,32 +1047,13 @@ with tab_overview:
         if tos_tf not in tos_tf_options:
             tos_tf = tos_tf_options[tos_tf_default_index]
 
-        # Prefer DB (fast, stable). If missing, pull from Schwab on-demand.
-        universe_parquet = data_dir / "etf_universe.parquet"
-        prices_db = data_dir / "prices.sqlite"
+        # Schwab-only: chart + quote always come from Schwab Market Data.
+        # (Daily bootstrap DB is still available for offline exploration, but not used for the live chart.)
 
-        dfp: pd.DataFrame
-        used_db = False
+        q = _schwab_quote(selected)
 
-        if prices_db.exists():
-            try:
-                dfp = _load_prices(prices_db, selected)
-                used_db = True
-            except Exception as e:
-                st.error(str(e))
-                if st.button("Reset prices DB", type="primary"):
-                    prices_db.unlink(missing_ok=True)
-                    st.success("Deleted prices.sqlite. Refresh and refetch.")
-                dfp = pd.DataFrame()
-        else:
-            dfp = pd.DataFrame()
-
-        # Let user choose timeframe *below* the chart; but we still need a value for the initial fetch.
-        # If the UI reruns, Streamlit will preserve the selectbox state.
-
-        if dfp.empty:
-            with st.spinner("Fetching chart data from Schwab…"):
-                dfp = _fetch_history(selected, tos_tf)
+        with st.spinner("Fetching 1m candles from Schwab…"):
+            dfp = _fetch_history(selected, tos_tf)
 
         # Spade checks: price history
         try:
@@ -904,25 +1063,59 @@ with tab_overview:
             st.session_state["spade"]["history"] = None
 
         if dfp.empty:
-            st.warning("No price history found (Schwab may be down, tokens missing, or symbol unsupported).")
+            st.warning("No 1m candle history returned (Schwab may be down, tokens missing, or symbol unsupported).")
             st.caption("This does not block the rest of the app. Use Admin → Schwab OAuth to connect.")
-            if universe_parquet.exists() and st.button("Fetch bootstrap prices DB now", type="secondary"):
-                _ensure_prices(data_dir, universe_parquet, provider=price_provider, start=price_start, limit=price_limit)
-                st.rerun()
-            # IMPORTANT: don't st.stop() here; it prevents other tabs (Admin) from rendering.
-            dfp = pd.DataFrame()
 
-        # Current price (best-effort): use last close from the chart dataframe.
+        # Current price: prefer quote mark/last; fallback to last candle close.
+        cur_px = None
         try:
-            cur_px = float(dfp["close"].dropna().iloc[-1])
+            if q.get("mark") not in (None, ""):
+                cur_px = float(q.get("mark"))
+            elif q.get("last") not in (None, ""):
+                cur_px = float(q.get("last"))
         except Exception:
             cur_px = None
 
-        title_price = f"Price" if cur_px is None else f"Price — ${cur_px:,.2f}"
+        if cur_px is None:
+            try:
+                cur_px = float(dfp["close"].dropna().iloc[-1])
+            except Exception:
+                cur_px = None
+
+        title_price = "Price" if cur_px is None else f"Price — ${cur_px:,.2f}"
         st.subheader(title_price)
 
+        # Data age indicators
+        now = pd.Timestamp.now()
+
+        qt_ms = q.get("ts_ms")
+        qt = None
+        if isinstance(qt_ms, (int, float)) and qt_ms:
+            try:
+                qt = pd.to_datetime(int(qt_ms), unit="ms", utc=True).tz_convert(None)
+            except Exception:
+                qt = None
+
+        last_candle = None
+        if not dfp.empty and "date" in dfp.columns:
+            try:
+                last_candle = pd.to_datetime(dfp["date"].dropna().max(), errors="coerce")
+            except Exception:
+                last_candle = None
+
+        age_bits = []
+        if qt is not None:
+            age_bits.append(f"Quote: {qt.strftime('%Y-%m-%d %H:%M:%S')} (age {(now-qt).total_seconds():.0f}s)")
+        else:
+            age_bits.append("Quote: (no timestamp)")
+
+        if last_candle is not None and not pd.isna(last_candle):
+            age_bits.append(f"Last 1m candle: {pd.Timestamp(last_candle).strftime('%Y-%m-%d %H:%M:%S')} (age {(now-pd.Timestamp(last_candle)).total_seconds():.0f}s)")
+
+        st.caption(" • ".join(age_bits))
+
         if not dfp.empty:
-            st.plotly_chart(_plot_candles(dfp, title=f"{selected}"), use_container_width=True)
+            st.plotly_chart(_plot_candles(dfp, title=f"{selected} — 1m"), use_container_width=True)
 
         # Spade status (history)
         sp = st.session_state.get("spade", {}).get("history")
@@ -946,15 +1139,10 @@ with tab_overview:
             key="tos_tf",
         )
 
-        st.caption("Source: local prices.sqlite (daily bars)." if used_db else "Source: Schwab (on-demand).")
+        st.caption("Source: Schwab Market Data (quotes + 1m candles).")
 
-        # Move ETF record under raw prices/source area (collapsed by default)
-        meta = universe[universe["ticker"] == selected].head(1)
-        with st.expander("ETF record (from universe)", expanded=False):
-            if not meta.empty:
-                st.json(meta.iloc[0].dropna().to_dict())
-            else:
-                st.caption("No ETF record found in the ETF universe table (might be a stock symbol).")
+        with st.expander("Raw quote (Schwab)", expanded=False):
+            st.json(dict(q.get("raw") or {}))
 
         with st.expander("Raw prices", expanded=False):
             st.dataframe(dfp, use_container_width=True, height=320)
@@ -1823,8 +2011,8 @@ with tab_admin:
         except Exception as e:
             st.error(f"Diagnostics error: {e}")
 
-    st.markdown("#### 1) Universe (disabled)")
-    st.caption("Polygon/universe fetch is disabled in Schwab-only mode. Use manual symbols.")
+    st.markdown("#### 1) Universe")
+    st.caption("Universe fetch has been removed. This UI is Schwab-only; use manual symbols.")
 
     st.markdown("#### 2) Prices")
     st.code(
