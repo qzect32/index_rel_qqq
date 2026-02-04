@@ -872,6 +872,14 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
 with st.sidebar:
     st.markdown("### Explore")
 
+    # Event mode (affects scanner/dashboard defaults)
+    st.session_state.setdefault("event_mode", "Normal")
+    st.session_state["event_mode"] = st.selectbox(
+        "Event mode",
+        ["Normal", "Fed day", "CPI/NFP day", "Earnings week"],
+        index=["Normal", "Fed day", "CPI/NFP day", "Earnings week"].index(st.session_state.get("event_mode", "Normal")),
+    )
+
     with st.expander("Calculator", expanded=False):
         a = st.number_input("A", value=0.0, step=1.0, format="%.6f")
         op = st.selectbox("Op", ["+", "-", "*", "/", "%"], index=0)
@@ -931,7 +939,8 @@ else:
 
 # Single source of truth: one ticker box.
 with st.sidebar:
-    selected = st.text_input("Ticker", value="QQQ").upper().strip()
+    st.session_state.setdefault("selected_ticker", "QQQ")
+    selected = st.text_input("Ticker", value=st.session_state.get("selected_ticker", "QQQ"), key="selected_ticker").upper().strip()
 
 if not selected:
     st.warning("Enter a ticker symbol (e.g. TSLA, TSLL, QQQ).")
@@ -1188,6 +1197,37 @@ def _parse_symbols(s: str) -> list[str]:
             out.append(p)
     return out
 
+
+def _hotlist_path() -> Path:
+    return _data_dir() / "scanner_hotlist.json"
+
+
+def _load_hotlist() -> list[str]:
+    try:
+        p = _hotlist_path()
+        if not p.exists():
+            return []
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(obj, list):
+            return [str(x).upper().strip() for x in obj if str(x).strip()]
+    except Exception:
+        return []
+    return []
+
+
+def _save_hotlist(syms: list[str]) -> None:
+    try:
+        p = _hotlist_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        clean = []
+        for x in syms:
+            t = str(x).upper().strip()
+            if t and t not in clean:
+                clean.append(t)
+        p.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
     # ---- Watchlist tile ----
     dL, dM, dR = st.columns([0.36, 0.40, 0.24], gap="large")
 
@@ -1311,7 +1351,13 @@ def _parse_symbols(s: str) -> list[str]:
 
 with tab_scanner:
     st.subheader("Scanner")
-    st.caption("Broad scan scaffold. Quotes/candles come from Schwab. News/halts feeds are placeholders for now.")
+    em = st.session_state.get("event_mode", "Normal")
+    st.caption(
+        f"Broad scan scaffold. Quotes/candles come from Schwab. News/halts feeds are placeholders for now.  |  Event mode: {em}"
+    )
+
+    # Persistent hot list (saved under data/)
+    st.session_state.setdefault("scanner_hotlist", _load_hotlist())
 
     # Universe selection
     base = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
@@ -1386,16 +1432,39 @@ with tab_scanner:
     st.markdown("### Rankings")
     metric = st.selectbox(
         "Rank by",
-        ["dollar_vol", "volume", "chg_%", "abs_chg_%"],
+        ["heat", "dollar_vol", "volume", "chg_%", "abs_chg_%"],
         index=0,
-        help="abs_chg_% is a volatility-ish proxy for what’s popping today.",
+        help="heat is a composite: abs % change + dollar volume rank (fast proxy for 'what's popping').",
     )
-    if metric == "abs_chg_%":
-        sdf["abs_chg_%"] = sdf["chg_%"].abs()
-
+    # Derived columns
     sdf2 = sdf.dropna(subset=["symbol"]).copy()
+
+    sdf2["abs_chg_%"] = sdf2["chg_%"].abs()
+
+    # Heat score: blend of abs % move + dollar volume percentile
+    # (no candles needed; stays fast)
+    try:
+        dv_rank = sdf2["dollar_vol"].rank(pct=True).fillna(0.0)
+        mv_rank = sdf2["abs_chg_%"].rank(pct=True).fillna(0.0)
+        sdf2["heat"] = (0.62 * mv_rank + 0.38 * dv_rank) * 100.0
+    except Exception:
+        sdf2["heat"] = None
+
     if metric in sdf2.columns:
         sdf2 = sdf2.sort_values(metric, ascending=False)
+
+    # Hot list controls
+    st.markdown("### Hot List")
+    hl = list(st.session_state.get("scanner_hotlist", []))
+    hL, hR = st.columns([0.72, 0.28])
+    with hL:
+        st.caption("Persistent (saved locally). Use it as your pinboard.")
+        st.write(hl if hl else "(empty)")
+    with hR:
+        if st.button("Clear hot list"):
+            st.session_state["scanner_hotlist"] = []
+            _save_hotlist([])
+            st.rerun()
 
     # --- Top 5 strip by dollar volume ---
     by_dv = sdf2.copy()
@@ -1435,15 +1504,24 @@ with tab_scanner:
                 f"<div class='muted'>{cps} • {dvs}</div></div>",
                 unsafe_allow_html=True,
             )
-            if cols[i].button("Focus", key=f"scanner_focus_btn_{sym}"):
+            b1, b2 = cols[i].columns([0.5, 0.5])
+            if b1.button("Focus", key=f"scanner_focus_btn_{sym}"):
                 st.session_state["scanner_focus"] = sym
                 st.session_state["scanner_pin"] = True
+                st.rerun()
+            if b2.button("Hot+", key=f"scanner_hot_btn_{sym}"):
+                cur = list(st.session_state.get("scanner_hotlist", []))
+                if sym not in cur:
+                    cur.insert(0, sym)
+                st.session_state["scanner_hotlist"] = cur[:50]
+                _save_hotlist(st.session_state["scanner_hotlist"])
                 st.rerun()
     else:
         st.caption("No scan results yet.")
 
     topk = st.slider("Show top", 5, 50, 15, 5)
-    st.dataframe(sdf2.head(int(topk)), use_container_width=True, hide_index=True, height=360)
+    show_cols = [c for c in ["symbol", "px", "chg_%", "volume", "dollar_vol", "heat", "assetType", "exchange"] if c in sdf2.columns]
+    st.dataframe(sdf2[show_cols].head(int(topk)), use_container_width=True, hide_index=True, height=360)
 
     # --- Focus selection: auto-rotate unless pinned ---
     st.session_state.setdefault("scanner_pin", False)
@@ -1494,7 +1572,20 @@ with tab_scanner:
     st.markdown("### Focus")
     fL, fR = st.columns([0.62, 0.38], gap="large")
     with fL:
-        st.caption(f"In-focus: {focus} (rotates across Top 5 by $ volume unless pinned)")
+        st.caption(f"In-focus: {focus} (rotates across Top 5 unless pinned)")
+        a1, a2 = st.columns([0.5, 0.5])
+        if a1.button("Set as main ticker", key="scanner_set_main"):
+            st.session_state["selected_ticker"] = str(focus).upper().strip()
+            st.toast(f"Main ticker set: {focus}")
+            st.rerun()
+        if a2.button("Hot+", key="scanner_hot_focus"):
+            cur = list(st.session_state.get("scanner_hotlist", []))
+            if focus not in cur:
+                cur.insert(0, focus)
+            st.session_state["scanner_hotlist"] = cur[:50]
+            _save_hotlist(st.session_state["scanner_hotlist"])
+            st.rerun()
+
         tf = st.selectbox("Focus timeframe", ["1m (4H)", "1m (3D)"], index=0, key="scanner_tf")
         dfp = _fetch_history(focus, tf)
         if dfp.empty:
@@ -1503,6 +1594,39 @@ with tab_scanner:
             st.plotly_chart(_plot_candles(dfp, title=f"{focus} — {tf}"), use_container_width=True)
 
     with fR:
+        st.markdown("#### Exposure overlap")
+        st.caption("If you're already holding it, we flag it here (best-effort).")
+
+        held = []
+        try:
+            accts = _schwab_account_numbers()
+            hashes = []
+            for a in accts:
+                h = str(a.get("hashValue") or a.get("accountHash") or a.get("hash") or "")
+                if h:
+                    hashes.append(h)
+            hashes = hashes[:3]  # keep it cheap
+
+            for h in hashes:
+                js = _schwab_account_details(h)
+                acct = js.get("securitiesAccount") if isinstance(js.get("securitiesAccount"), dict) else js
+                pos = acct.get("positions") if isinstance(acct, dict) else []
+                if isinstance(pos, list):
+                    for p in pos:
+                        instr = p.get("instrument") if isinstance(p, dict) and isinstance(p.get("instrument"), dict) else {}
+                        sym = (instr.get("underlyingSymbol") or instr.get("symbol") or "").upper().strip()
+                        if sym and sym not in held:
+                            held.append(sym)
+        except Exception:
+            held = []
+
+        pool_now = list(set((pool or []) + [focus] + list(st.session_state.get("scanner_hotlist", []))))
+        overlap = sorted([s for s in pool_now if s in held])
+        if overlap:
+            st.warning(f"Already exposed to: {', '.join(overlap[:12])}")
+        else:
+            st.caption("No detected overlap (or positions unavailable).")
+
         st.markdown("#### Why is it moving? (placeholder)")
         st.caption("Paste a headline or catalyst here for now. Later we’ll wire a news source.")
         note = st.text_area("Catalyst", value="", height=160, key="scanner_catalyst")
