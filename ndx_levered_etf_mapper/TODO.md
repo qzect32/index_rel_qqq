@@ -137,6 +137,11 @@ Guiding rule:
 These are not required for “tomorrow’s API wiring” but are high ROI once the core endpoints are stable.
 
 ### Scanner / Dashboard
+- [ ] **Wide monitor wall (“50-ticker view”)**
+  - [ ] Grid view (e.g., 5×10) with minimal per-ticker info
+  - [ ] Price + % change + tiny sparkline (“micro squiggle”)
+  - [ ] Quick filter: only show movers / only show hotlist / only show watchlist
+  - [ ] Optional pattern tagger (basic: trend up/down, range, spike)
 - [ ] **Composite scanner presets** (save/load named scanners)
   - [ ] Persist scanner configs to `data/scanners/*.json`
   - [ ] Quick-switch dropdown ("Momentum", "Vol", "Fed Day", "Earnings", "Semis", "Energy", etc.)
@@ -178,6 +183,10 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
   - [ ] Maintenance/breach heuristics (best-effort)
 
 ### Options / Greeks
+- [ ] **Chart indicators (first-class)**
+  - [ ] Overlay indicators (VWAP, EMAs, RSI, MACD, ATR, volume profile-ish proxy)
+  - [ ] Indicator presets per Event mode
+  - [ ] Scanner filters driven by indicators (e.g., RSI>70, VWAP reclaim)
 - [ ] **Greeks panel**
   - [ ] Delta/Gamma/Theta/Vega totals per underlying
   - [ ] Expiration ladder summaries
@@ -232,4 +241,9 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
 - Whether we want to support live order placement (currently intentionally NOT wired)
+  - If yes: build a HARD safety gate (paper mode toggle, confirm screens, allowlist symbols)
 - Whether this becomes a personal cockpit only vs a sharable product (impacts secrets handling + multi-user)
+- OAuth/token architecture decision:
+  - [ ] Confirm whether Schwab marketdata + trader + alerts (if any) can share the same token set/scopes
+  - [ ] Confirm whether we need separate apps/scopes for read-only vs trading endpoints
+  - [ ] Build a single “connection status” panel that validates: quotes, pricehistory, chains, trader, alerts
