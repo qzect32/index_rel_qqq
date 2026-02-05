@@ -255,58 +255,160 @@ These are common failure modes in broker-grade data and trading workflows.
 
 ---
 
-## 4) Quant-grade trading interface wishlist (50)
+## 4) Quant-grade trading interface wishlist (50) — fleshed out
 
-1. [ ] **DOM/Level II view** (if data source allows)
-2. [ ] **Time & Sales** tape (prints, size, aggressor side if available)
-3. [ ] **VWAP bands** (VWAP ±1/±2 stdev)
-4. [ ] **Multi-timeframe chart grid** (1m/5m/15m/1h/1d)
-5. [ ] **Session shading** (premarket/RTH/after-hours)
-6. [ ] **Anchored VWAP** (from event/date/high/low)
-7. [ ] **ORH/ORL (Opening Range)** indicator + breakout signals
-8. [ ] **ATR-based stops** calculator + overlays
-9. [ ] **Volume profile** proxy (intraday histogram)
-10. [ ] **Market internals tile** (A/D, TRIN proxies, ticks — source TBD)
-11. [ ] **Breadth by sector** heatmap (requires sector mapping)
-12. [ ] **Relative strength vs SPY/QQQ** line
-13. [ ] **Beta / correlation vs index** (rolling)
-14. [ ] **Volatility cone** (realized vol vs history)
-15. [ ] **IV rank / IV percentile** (requires options IV history)
-16. [ ] **Skew chart** (put/call IV skew by strike)
-17. [ ] **Term structure** (IV by expiration)
-18. [ ] **Greeks by underlying** (delta/gamma/theta/vega totals)
-19. [ ] **Gamma exposure (GEX) estimate** (source/model TBD)
-20. [ ] **Dealer positioning proxy** (if feasible)
-21. [ ] **Max pain** estimate (options OI-based)
-22. [ ] **OI + volume by strike** ladder visualization
-23. [ ] **Unusual options activity detector** (sweeps/blocks — source TBD)
-24. [ ] **News-catalyst timeline** pinned to chart (source TBD)
-25. [ ] **Event markers** (earnings, Fed, CPI) on charts (source TBD)
-26. [ ] **Earnings whisper vs reported** (source TBD)
-27. [ ] **Halt/LULD markers** on chart (halts feed required)
-28. [ ] **Gap scanner** (premarket gap %, volume)
-29. [ ] **Top movers** (gainers/losers) with filters
-30. [ ] **Top active** (volume + dollar volume) market-wide (source TBD)
-31. [ ] **Multi-symbol alert rules** (e.g., SPY down AND VIX up)
-32. [ ] **Trailing stop automation suggestions** (UI-only)
-33. [ ] **Position sizing calculator** (risk per trade → shares/contracts)
-34. [ ] **Kelly fraction estimator** (optional, guarded)
-35. [ ] **Expected value (EV) calculator** for setups
-36. [ ] **R-multiple tracking** for each trade
-37. [ ] **Trade replay** (bar-by-bar playback for a day)
-38. [ ] **Backtest library** with saved strategies + parameters
-39. [ ] **Walk-forward validation** (basic)
-40. [ ] **Monte Carlo on trade outcomes** (equity curve distribution)
-41. [ ] **Slippage model** (spread/volume-based)
-42. [ ] **Commission/fees model** per asset
-43. [ ] **Portfolio Greeks** (aggregate across accounts)
-44. [ ] **Risk parity / rebalancing suggestions** (optional)
-45. [ ] **Hedge finder** (what reduces delta/beta fastest)
-46. [ ] **Drawdown guard** (auto-warn and lock suggestions when DD spikes)
-47. [ ] **Correlation breakdown under stress** (tail correlation proxy)
-48. [ ] **Regime switch detector** (trend vs chop classifier)
-49. [ ] **Execution checklist** (pre-trade, during, post-trade)
-50. [ ] **Audit log** of user actions (what changed, when)
+Each line item below is written as a **unique UI need** with a brief rationale and the likely data dependency.
+
+1. [ ] **DOM/Level II view**
+   - Need: see depth/liquidity to avoid entering/exiting into thin books.
+   - Requires: Level II feed (Schwab if available; otherwise external).
+2. [ ] **Time & Sales tape**
+   - Need: confirm real participation/urgency (prints) rather than just candles.
+   - Requires: tick/print stream (data source dependent).
+3. [ ] **VWAP bands**
+   - Need: quantify mean-reversion vs trend strength around VWAP.
+   - Requires: intraday candles (Schwab 1m).
+4. [ ] **Multi-timeframe chart grid**
+   - Need: avoid getting trapped by 1m noise; confirm alignment across frames.
+   - Requires: multiple bar sizes (Schwab price history config).
+5. [ ] **Session shading (PM/RTH/AH)**
+   - Need: prevent misreading illiquid pre/after-hours moves.
+   - Requires: timestamps + trading session rules.
+6. [ ] **Anchored VWAP (AVWAP)**
+   - Need: measure price relative to a specific event anchor (earnings, breakout).
+   - Requires: intraday candles + chosen anchor.
+7. [ ] **Opening Range (ORH/ORL) tool**
+   - Need: classic intraday playbook support with consistent definitions.
+   - Requires: intraday candles + market open time.
+8. [ ] **ATR-based stops calculator**
+   - Need: stops sized to volatility so you don’t get wicked out by noise.
+   - Requires: recent candles (1m/5m) + ATR calculation.
+9. [ ] **Volume profile proxy**
+   - Need: identify high-volume nodes (support/resistance) intraday.
+   - Requires: intraday volume by price (approx via candle bins).
+10. [ ] **Market internals tile**
+   - Need: detect “index is propped but internals are weak/strong”.
+   - Requires: internals feed (A/D, ticks) — likely external.
+11. [ ] **Sector breadth heatmap**
+   - Need: know if move is isolated or broad across a sector.
+   - Requires: sector mapping + sector constituents data.
+12. [ ] **Relative strength vs SPY/QQQ**
+   - Need: trade winners (outperformers) not just absolute movers.
+   - Requires: candles for symbol + benchmark.
+13. [ ] **Rolling beta/correlation vs index**
+   - Need: understand hidden leverage to market beta.
+   - Requires: returns history for both series.
+14. [ ] **Volatility cone**
+   - Need: contextualize realized vol vs historical distribution.
+   - Requires: longer-term price history.
+15. [ ] **IV rank / IV percentile**
+   - Need: decide option selling/buying regimes rationally.
+   - Requires: historical IV time series (external unless broker provides).
+16. [ ] **IV skew chart (strike)**
+   - Need: see tail pricing and put/call demand.
+   - Requires: option chain IV across strikes.
+17. [ ] **IV term structure (expiration)**
+   - Need: spot event risk vs long-dated pricing.
+   - Requires: option chain IV across expirations.
+18. [ ] **Greeks totals per underlying**
+   - Need: know your true delta/gamma/theta exposure at a glance.
+   - Requires: chain greeks or model greeks per leg.
+19. [ ] **Gamma exposure (GEX) estimate**
+   - Need: anticipate pinning/accelerations near key strikes.
+   - Requires: OI by strike + IV + model assumptions (often external).
+20. [ ] **Dealer positioning proxy**
+   - Need: map “who’s trapped” scenarios; helps fade/chase decisions.
+   - Requires: specialized data/model; likely external.
+21. [ ] **Max pain estimate**
+   - Need: rough magnet level into expiry for short-term options context.
+   - Requires: OI by strike (chain) + calc.
+22. [ ] **OI + volume by strike ladder**
+   - Need: quickly find “where the fight is” on a chain.
+   - Requires: chain OI/volume by strike.
+23. [ ] **Unusual options activity detector**
+   - Need: identify flow-driven names without staring at everything.
+   - Requires: options prints/sweeps feed — usually external.
+24. [ ] **News/catalyst timeline on chart**
+   - Need: explain price action and anchor risk to time.
+   - Requires: news/events feed with timestamps.
+25. [ ] **Event markers (earnings/Fed/CPI)**
+   - Need: avoid holding risk unknowingly into binary events.
+   - Requires: macro/earnings calendar feed.
+26. [ ] **Earnings whisper vs reported**
+   - Need: measure surprise magnitude vs expectations.
+   - Requires: estimates + reported numbers (external).
+27. [ ] **Halt/LULD markers on chart**
+   - Need: understand discontinuities and resume behavior.
+   - Requires: halts feed + timestamps.
+28. [ ] **Gap scanner**
+   - Need: surf the premarket opportunity set fast.
+   - Requires: premarket quotes + volume; often external.
+29. [ ] **Top movers with filters**
+   - Need: surface tradeable movers and exclude junk.
+   - Requires: market-wide mover feed OR curated universe.
+30. [ ] **Top active (market-wide)**
+   - Need: always know where liquidity is today.
+   - Requires: market-wide volume/$ volume feed.
+31. [ ] **Multi-symbol alert rules**
+   - Need: alert on regimes (SPY down + vol up) not single tickers.
+   - Requires: alerts engine + multi-symbol quotes.
+32. [ ] **Trailing stop suggestions (UI-only)**
+   - Need: take emotion out of managing winners.
+   - Requires: candle stream + trailing logic.
+33. [ ] **Position sizing calculator**
+   - Need: translate risk ($) → shares/contracts instantly.
+   - Requires: entry/stop + account equity/budget.
+34. [ ] **Kelly fraction estimator (guarded)**
+   - Need: sizing model for edges with known winrate/odds.
+   - Requires: winrate/EV inputs (from journal/backtests).
+35. [ ] **Expected Value (EV) calculator**
+   - Need: compare setups on math, not vibes.
+   - Requires: probability + payoff assumptions.
+36. [ ] **R-multiple tracking**
+   - Need: measure performance independent of instrument price.
+   - Requires: entry/stop + exits + journal.
+37. [ ] **Trade replay (bar-by-bar)**
+   - Need: post-mortems and skill-building.
+   - Requires: stored intraday candles.
+38. [ ] **Backtest library**
+   - Need: re-run proven systems quickly with parameters.
+   - Requires: historical data + strategy definitions.
+39. [ ] **Walk-forward validation**
+   - Need: reduce overfitting by testing across regimes.
+   - Requires: historical data + splits.
+40. [ ] **Monte Carlo on trade outcomes**
+   - Need: understand drawdown distributions and risk of ruin.
+   - Requires: trade outcome series.
+41. [ ] **Slippage model**
+   - Need: keep backtests honest and position sizing realistic.
+   - Requires: spread/volume proxies; ideally prints.
+42. [ ] **Commission/fees model**
+   - Need: net P&L realism across asset types.
+   - Requires: fee schedules.
+43. [ ] **Portfolio Greeks (aggregate)**
+   - Need: total risk across accounts, not per-position.
+   - Requires: positions + greeks per leg.
+44. [ ] **Risk parity/rebalancing suggestions**
+   - Need: long-term portfolio hygiene and defense.
+   - Requires: vol/corr estimates + holdings.
+45. [ ] **Hedge finder**
+   - Need: quickest way to reduce delta/beta when storms hit.
+   - Requires: correlation/beta estimates + hedge instruments.
+46. [ ] **Drawdown guard**
+   - Need: prevent spiral trading; enforce cool-down rules.
+   - Requires: P&L tracking + thresholds.
+47. [ ] **Stress correlation (“tail corr”) proxy**
+   - Need: correlations change in selloffs; warn early.
+   - Requires: longer history + regime logic.
+48. [ ] **Regime switch detector**
+   - Need: know when trend systems vs mean reversion should be active.
+   - Requires: return features + classifier.
+49. [ ] **Execution checklist**
+   - Need: reduce dumb mistakes (size, stop, catalyst) before entry.
+   - Requires: UI workflow + journal.
+50. [ ] **Audit log of user actions**
+   - Need: reproduce “what did I change?” across settings/trades.
+   - Requires: local logging + timestamps.
 
 ## 5) QA / quality methodologies (6)
 
@@ -325,7 +427,7 @@ These are common failure modes in broker-grade data and trading workflows.
 
 ---
 
-## 5) Implementation notes / decisions to make later
+## 6) Implementation notes / decisions to make later
 
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
