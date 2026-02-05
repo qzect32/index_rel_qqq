@@ -11,6 +11,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from etf_mapper.feeds import (
+    StubHaltsFeed,
+    StubNewsFeed,
+    StubCalendarFeed,
+    StubEarningsFeed,
+    StubFilingsFeed,
+)
+
 from ladder_styles import style_ladder_with_changes
 from local_oauth import CallbackServerState, ensure_localhost_cert, start_https_callback_server, stop_callback_server
 from schwab_diagnostics import safe_snip
@@ -1636,16 +1644,19 @@ with tab_scanner:
 
 with tab_halts:
     st.subheader("Trading halts")
-    st.caption(
-        "Scaffold. Eventually this will ingest Nasdaq/NYSE halt lists. For now: paste the halt feed text/CSV and we’ll parse it."
+
+    halts_feed = StubHaltsFeed()
+    st.caption(f"Feed status: {halts_feed.status().detail}")
+
+    st.info(
+        "Scaffold mode: auto-fetch not wired yet. Paste a halts CSV below (or later we'll fetch Nasdaq/NYSE)."
     )
 
-    sample = "symbol,market,reason,halt_time,resume_time\n" ""  # empty by default
     raw = st.text_area(
         "Paste halts CSV (columns like: symbol, market, reason, halt_time, resume_time)",
         value="",
         height=220,
-        placeholder="Example: TICKER,NASDAQ,T1,09:45:01,10:15:00",
+        placeholder="symbol,market,reason,halt_time,resume_time\nTICKER,NASDAQ,T1,09:45:01,10:15:00",
     )
 
     if raw.strip():
@@ -1660,10 +1671,11 @@ with tab_halts:
     else:
         st.info("No halts pasted yet.")
 
-    st.markdown("### Notes (scaffold)")
+    st.markdown("### What’s needed next")
     st.write(
-        "- Next: add a one-click fetch from Nasdaq Trader / NYSE when you decide you're okay with pulling public sources.\n"
-        "- We'll classify halt reason codes and highlight resumptions."
+        "- Choose a halts source (Nasdaq Trader + NYSE).\n"
+        "- Implement fetch + parse + reason-code mapping.\n"
+        "- Add resume countdown + highlight newly halted/resumed symbols."
     )
 
 with tab_signals:

@@ -43,10 +43,12 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 2) **Schwab market movers / most active** (if exists)
    - Goal: “Top 5 most active trading stocks” without manually curating symbols.
-   - Status: not implemented.
-   - Needed:
-     - Confirm whether Schwab has a movers/actives endpoint
-     - If not: choose another source (see below)
+   - STATUS: BLOCKED (scaffold exists: Scanner can rotate top-5 within a chosen universe)
+   - NEXT: confirm Schwab movers/actives endpoint; if missing, pick external breadth/actives source.
+   - BLOCKERS: endpoint availability unknown.
+   - Decision:
+     - Option A: Schwab provides actives/movers → implement in `SchwabAPI` and feed Scanner universe automatically.
+     - Option B: Use exchange lists/vendor feed → add `ActivesFeed` interface under `etf_mapper.feeds`.
 
 3) **Schwab news endpoints** (if exists)
    - Goal: “Why is it moving?” + headline list tied to symbols.
