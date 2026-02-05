@@ -469,7 +469,33 @@ Each line item below is written as a **unique UI need** with a brief rationale a
 
 ---
 
-## 6) Implementation notes / decisions to make later
+## 6) Concerns / risks to watch (read before wiring APIs)
+
+These are the things most likely to bite us when we turn scaffolds into real integrations.
+
+- [ ] **Scope creep vs speed**
+  - We’re intentionally scaffolding lots of surfaces. Tomorrow: prioritize the few feeds that unlock the most value (alerts, actives, halts, calendar/news).
+- [ ] **Schwab entitlement uncertainty**
+  - Some endpoints may be unavailable depending on account/app entitlements (especially trader/alerts/news). Build precise "not entitled" messaging.
+- [ ] **Token/scope architecture**
+  - Confirm whether a single OAuth token set can cover marketdata + trader + alerts/news (if any).
+  - If not, decide whether to maintain multiple apps or multiple scopes with one app.
+- [ ] **Rate limits and UI polling**
+  - Scanner and monitor-wall features can explode request counts. Enforce a request budget + caching policy per tile.
+- [ ] **Data quality / schema drift**
+  - Schwab responses can vary by symbol/assetType. Use contract tests + golden fixtures and show “unknown/stale” instead of wrong numbers.
+- [ ] **News/legal/compliance**
+  - News/transcript vendors often have licensing limits. Decide early if we allow scraping vs paid APIs.
+- [ ] **Timezones + session boundaries**
+  - Fed events, earnings calls, and market sessions must be normalized to America/New_York and clearly labeled.
+- [ ] **Privacy / safety**
+  - Exposure tab must remain redacted-by-default for shareable snapshots; never leak account identifiers.
+- [ ] **Order routing safety (future)**
+  - If we ever wire live orders: add hard gates (paper/live toggle, confirmations, allowlists, maximum size rules).
+
+---
+
+## 7) Implementation notes / decisions to make later
 
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
