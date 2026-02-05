@@ -255,7 +255,24 @@ These are common failure modes in broker-grade data and trading workflows.
 
 ---
 
-## 4) Implementation notes / decisions to make later
+## 4) QA / quality methodologies (6)
+
+- [ ] **Golden-record fixtures**
+  - Capture sanitized JSON responses for quotes/pricehistory/chains/accounts and replay them in tests.
+- [ ] **Contract tests for API clients**
+  - Validate required keys/types per endpoint and fail loudly when Schwab schema changes.
+- [ ] **Latency + request-budget monitoring**
+  - Log per-tile timings and request counts; set thresholds that fail CI when regressions occur.
+- [ ] **Chaos testing (simulated bad data)**
+  - Inject missing fields, NaNs, empty candles, and entitlement errors to verify graceful UI degradation.
+- [ ] **Repro bundles for bug reports**
+  - One-click “debug bundle” includes recent logs + anonymized payload samples + app config (no secrets).
+- [ ] **Manual smoke checklist**
+  - A short checklist for releases: OAuth connect, quote load, 1m candles, options chain, exposure load, scanner scan.
+
+---
+
+## 5) Implementation notes / decisions to make later
 
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
