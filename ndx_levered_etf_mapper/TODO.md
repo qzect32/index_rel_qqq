@@ -215,7 +215,12 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 - [ ] **Policy / Congress board (manual → feed later)**
   - [ ] Paste headlines + auto-detect tickers + affected sectors
   - [ ] “Likely beneficiaries / losers” note template
-- [ ] **Commodities signal panels**
+- [ ] **Earnings + filings + votes ingestion (sentiment)**
+  - [ ] Pull earnings call transcripts/audio links, 10-Q/10-K, and proxy/vote items (DEF 14A)
+  - [ ] Extract key sections (guidance, risks, MD&A, buybacks, dilution, comp changes)
+  - [ ] Run sentiment + change detection quarter-over-quarter (tone shift, new risk language)
+  - [ ] Output: per-ticker “what changed” summary + catalysts + red flags
+  - [ ] Source TBD: SEC EDGAR + earnings transcript provider (free/paid)- [ ] **Commodities signal panels**
   - [ ] Oil: WTI/Brent proxies, nat gas, EIA weekly inventory placeholder
   - [ ] Metals: gold/silver/copper proxies + mining ETF proxies
 - [ ] **"Storm watch" presets**
