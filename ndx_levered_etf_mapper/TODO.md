@@ -220,6 +220,10 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 - [ ] **Performance instrumentation**
   - [ ] Display per-tile latency (quotes/candles/options)
   - [ ] Simple request budget (calls/min) counters
+- [ ] **Single-position cockpit mode ("Tournament Blue")**
+  - [ ] Dedicated tab/view optimized for one symbol (minimal distractions)
+  - [ ] Calm colorway option (tournament-blue felt / ocean vibe) for “in a trade” headspace
+  - [ ] Optional chart overlays: stop/target, time-to-catalyst, position P&L
 
 ---
 
