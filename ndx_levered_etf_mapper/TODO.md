@@ -150,6 +150,16 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
   - [ ] Flash on threshold crossings
 
 ### Exposure / Risk
+- [ ] **Always-on risk strip (“Oh sh*t bar”)**
+  - [ ] Toggleable bar showing: risk state (G/Y/R), next catalyst countdown, quick scenario P&L
+  - [ ] Flags: wide spread / low volume / stale data / missing quote time
+- [ ] **Risk budget / guardrails**
+  - [ ] Daily loss limit, per-trade loss limit, max % in one underlying
+  - [ ] Warn if adding a trade would exceed guardrails
+- [ ] **Exit plan required (lightweight)**
+  - [ ] Store thesis, stop, target, time stop, invalidation note
+  - [ ] Overlay stop/target on chart
+  - [ ] “What changed since entry?” diff view
 - [ ] **Exposure by category**
   - [ ] By sector
   - [ ] By asset class (equity/ETF/options/futures)
@@ -157,9 +167,15 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 - [ ] **Concentration warnings**
   - [ ] "Top 1", "Top 3", "Top 5" concentration
   - [ ] Account-level vs total portfolio
+- [ ] **Correlation / overlap warnings**
+  - [ ] Detect clustered exposures (e.g., TSLA+TSLL+QQQ+TQQQ)
+  - [ ] Simple correlation matrix from recent returns (throttled)
 - [ ] **Scenario overlays**
-  - [ ] "If TSLA -5%" → approximate impact on portfolio MV and day P/L
+  - [ ] "If TSLA -1%/-2%/-5%" → approximate impact on portfolio MV and day P/L
   - [ ] Event-mode stress templates (Fed day / CPI day)
+- [ ] **Leverage / margin stress** (approx)
+  - [ ] Gross exposure / equity
+  - [ ] Maintenance/breach heuristics (best-effort)
 
 ### Options / Greeks
 - [ ] **Greeks panel**
@@ -172,9 +188,30 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 - [ ] **Weekly plan board**
   - [ ] Earnings week planner (import/paste calendar)
   - [ ] Fed week planner (auto countdowns per event)
+  - [ ] “Binary days” tagging (Fed decision, CPI, NFP, big earnings)
+  - [ ] One-click add countdown for selected event
 - [ ] **Trade journal / post-mortems**
   - [ ] One-click snapshot of chart + exposure + notes saved locally
   - [ ] Export to markdown/PDF
+  - [ ] "What changed since entry?" auto-diff block (price/IV/events/exposure)
+
+### Macro / Signals (thought process expansion)
+- [ ] **Macro regime dashboard**
+  - [ ] Risk-on/off gauge (based on a small basket: SPY/QQQ/IWM, TLT, DXY proxy, GLD, oil proxy)
+  - [ ] Vol proxy tile (VIX proxy ETFs + realized vol from 1m bars)
+  - [ ] Credit stress proxy tile (HYG/LQD vs SPY spread)
+- [ ] **Event heatmap**
+  - [ ] Calendar view: Fed speakers, FOMC, CPI, PPI, NFP, auctions
+  - [ ] Countdown widgets per event
+- [ ] **Policy / Congress board (manual → feed later)**
+  - [ ] Paste headlines + auto-detect tickers + affected sectors
+  - [ ] “Likely beneficiaries / losers” note template
+- [ ] **Commodities signal panels**
+  - [ ] Oil: WTI/Brent proxies, nat gas, EIA weekly inventory placeholder
+  - [ ] Metals: gold/silver/copper proxies + mining ETF proxies
+- [ ] **"Storm watch" presets**
+  - [ ] One-click switch event mode + watchlist + risk budgets
+  - [ ] Pre-market checklist + post-event checklist
 
 ### UX / Ops
 - [ ] **Session persistence**
