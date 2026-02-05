@@ -17,6 +17,8 @@ from etf_mapper.feeds import (
     StubCalendarFeed,
     StubEarningsFeed,
     StubFilingsFeed,
+    StubActivesFeed,
+    StubInternalsFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -1369,6 +1371,7 @@ with tab_scanner:
 
     # Universe selection
     base = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+    actives_feed = StubActivesFeed()
 
     with st.expander("Universe", expanded=True):
         st.caption(
@@ -1382,10 +1385,12 @@ with tab_scanner:
                 "Core liquid (starter)",
                 "Semis / AI-ish (starter)",
                 "Energy / Oil & Gas (starter)",
+                "Market-wide actives (feed stub)",
                 "Custom (paste)",
             ],
             index=0,
         )
+        st.caption(f"Actives feed status: {actives_feed.status().detail}")
 
         core_liquid = _parse_symbols("SPY,QQQ,IWM,DIA,TQQQ,SQQQ,TLT,GLD,SLV,USO,XLF,XLK,XLE,XLI,XLY,XLP")
         semis = _parse_symbols("NVDA,AMD,INTC,TSM,AVGO,QCOM,AMAT,LRCX,SMH,SOXL,SOXS")
@@ -1401,6 +1406,15 @@ with tab_scanner:
             uni = semis
         elif preset == "Energy / Oil & Gas (starter)":
             uni = energy
+        elif preset == "Market-wide actives (feed stub)":
+            try:
+                adf = actives_feed.fetch_actives()
+                if isinstance(adf, pd.DataFrame) and not adf.empty and "symbol" in adf.columns:
+                    uni = _parse_symbols(",".join(adf["symbol"].astype(str).tolist()))
+                else:
+                    uni = []
+            except Exception:
+                uni = []
         else:
             uni = _parse_symbols(custom)
 

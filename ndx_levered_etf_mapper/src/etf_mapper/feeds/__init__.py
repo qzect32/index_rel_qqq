@@ -13,6 +13,8 @@ from .stub import (
     StubEarningsFeed,
     StubFilingsFeed,
 )
+from .actives import ActivesFeed, StubActivesFeed
+from .internals import InternalsFeed, StubInternalsFeed
 
 __all__ = [
     "FeedStatus",
@@ -21,9 +23,13 @@ __all__ = [
     "CalendarFeed",
     "EarningsFeed",
     "FilingsFeed",
+    "ActivesFeed",
+    "InternalsFeed",
     "StubHaltsFeed",
     "StubNewsFeed",
     "StubCalendarFeed",
     "StubEarningsFeed",
     "StubFilingsFeed",
+    "StubActivesFeed",
+    "StubInternalsFeed",
 ]

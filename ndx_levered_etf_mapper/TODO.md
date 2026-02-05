@@ -52,10 +52,12 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 3) **Schwab news endpoints** (if exists)
    - Goal: “Why is it moving?” + headline list tied to symbols.
-   - Status: manual paste areas only.
-   - Needed:
-     - Confirm whether Schwab provides news via API
-     - If not: choose another provider (RSS, paid news API, etc.)
+   - STATUS: SCaffolded (Signals/Scanner have news placeholders + feed stub interface exists)
+   - NEXT: pick a NewsFeed implementation and wire it into Scanner focus + Dashboard headlines.
+   - BLOCKERS: choose provider + allowed domains policy.
+   - Decision:
+     - Option A: Schwab provides news → implement in `SchwabAPI` and build `SchwabNewsFeed`.
+     - Option B: RSS/news API vendor → implement `RssNewsFeed` / `VendorNewsFeed`.
 
 4) **Schwab account balances fields** (Exposure)
    - Goal: show account cards: account name/type, net liq, cash, buying power, etc.
@@ -87,7 +89,12 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 2) **Macro calendar (Fed, CPI, NFP, speakers, etc.)**
    - Goal: event mode planning + countdowns + weekly planning.
-   - Status: manual paste scaffold.
+   - STATUS: SCaffolded (Signals tab has manual paste + CalendarFeed stub)
+   - NEXT: choose a CalendarFeed source and auto-populate events + countdown widgets.
+   - BLOCKERS: source choice.
+   - Decision:
+     - Option A: public Fed calendars + econ calendar feed (scrape/RSS)
+     - Option B: paid calendar API
    - Candidates:
      - FOMC schedule + Federal Reserve speeches
      - Economic calendar source (free or paid)
@@ -97,7 +104,12 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 3) **Earnings calendar**
    - Goal: plan the week by earnings; attach call links.
-   - Status: idea only.
+   - STATUS: SCaffolded (Signals tab + EarningsFeed stub exists)
+   - NEXT: choose earnings calendar source + add call links + timezone normalization.
+   - BLOCKERS: source choice.
+   - Decision:
+     - Option A: manual CSV/paste import (no external calls)
+     - Option B: external earnings calendar feed/API
    - Candidates:
      - Public earnings calendar (web scrape/RSS)
      - Paid calendar API
