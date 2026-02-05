@@ -1680,7 +1680,23 @@ with tab_halts:
 
 with tab_signals:
     st.subheader("Signals")
-    st.caption("Macro/news scaffolding. No external feeds wired yet — paste or type what you care about.")
+
+    news_feed = StubNewsFeed()
+    cal_feed = StubCalendarFeed()
+    earn_feed = StubEarningsFeed()
+    filings_feed = StubFilingsFeed()
+
+    st.caption(
+        "Scaffold mode: feeds are stubbed. Paste or type what you care about now; wire providers later."
+    )
+    st.write(
+        {
+            "news_feed": news_feed.status().detail,
+            "calendar_feed": cal_feed.status().detail,
+            "earnings_feed": earn_feed.status().detail,
+            "filings_feed": filings_feed.status().detail,
+        }
+    )
 
     sL, sR = st.columns([0.55, 0.45], gap="large")
 
