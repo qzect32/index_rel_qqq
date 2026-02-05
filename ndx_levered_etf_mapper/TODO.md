@@ -236,7 +236,26 @@ These are not required for “tomorrow’s API wiring” but are high ROI once t
 
 ---
 
-## 3) Implementation notes / decisions to make later
+## 3) Fringe cases / edge conditions (add tests + UI behavior)
+
+These are common failure modes in broker-grade data and trading workflows.
+
+- [ ] **Stale/partial quote payloads**
+  - Some Schwab quote schemas omit timestamps or return `None` fields; ensure UI shows “stale/unknown” rather than misleading values.
+- [ ] **Market hours vs extended hours**
+  - Pre/after-hours can have thin prints; ensure candles/quotes clearly indicate session and don’t mix RTH/ETH unintentionally.
+- [ ] **Symbol normalization oddities**
+  - Futures (`/ES`), indices (`$SPX`, `^NDX`), options symbols, and OTC symbols may require different formatting; add a normalization map + clear errors.
+- [ ] **Rate limit / throttle behavior**
+  - Handle 429/backoff centrally; Scanner should degrade gracefully (reduce universe, increase cache TTL, show “limited”).
+- [ ] **Entitlement gaps (accounts but no positions / options but no chains)**
+  - Detect “not entitled” vs “empty” and show a precise next-step message in Admin.
+- [ ] **Corporate actions & symbol changes**
+  - Splits, reverse splits, ticker changes, delistings: ensure exposure snapshots and scanner don’t silently break; add a “symbol changed” warning when detected.
+
+---
+
+## 4) Implementation notes / decisions to make later
 
 - Allowed outbound domains list (if we start pulling halts/news/macro from public sources)
 - Whether we want an internal “data repo” or keep everything live + local snapshots
