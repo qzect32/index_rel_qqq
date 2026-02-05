@@ -8,13 +8,34 @@ Guiding rule:
 
 ---
 
+## Workflow: scaffold-first + status tracking
+
+Yes, we can implement *most* of these as scaffolds first (UI panels, placeholders, local calculations) and then progressively “light them up” with real endpoints.
+
+**Status tags (use one):**
+- `STATUS: SCaffolded` (UI exists / placeholders exist)
+- `STATUS: IN-PROGRESS` (actively being wired)
+- `STATUS: BLOCKED` (missing endpoint/provider/decision)
+- `STATUS: DONE`
+
+**For each TODO that matters, add 3 sub-bullets:**
+- `STATUS:` one of the above
+- `NEXT:` the next concrete step to finish
+- `BLOCKERS:` only if something is missing (endpoint docs, entitlement, provider choice)
+
+Decision-related blocks should be captured as explicit TODOs under “Implementation notes / decisions”.
+
+---
+
 ## 0) Inventory: what currently requires external APIs / sources
 
 ### A) Schwab APIs we *haven’t confirmed / wired* yet
 
 1) **Schwab-native Alerts (TOS/Schwab Mobile)**
    - Goal: create/read/delete price alerts inside Schwab so **Schwab** sends push/SMS.
-   - Status: UI has placeholders; endpoints not confirmed.
+   - STATUS: SCaffolded (UI placeholders exist)
+   - NEXT: confirm Schwab alerts endpoints + required OAuth scopes, then implement create/list/delete in `SchwabAPI` + wire UI.
+   - BLOCKERS: Schwab Developer Portal docs/endpoints not yet accessible in this workspace.
    - Needed:
      - Identify Schwab Developer Portal endpoints (paths, scopes, payloads)
      - Implement client methods + UI flows
@@ -52,7 +73,9 @@ Guiding rule:
 
 1) **Trading halts feed (Nasdaq / NYSE)**
    - Goal: dedicated “Halts” tab that auto-updates.
-   - Status: paste-CSV scaffold.
+   - STATUS: SCaffolded (paste/parse UI exists)
+   - NEXT: choose halt feed source(s), implement scheduled fetch + parse + reason-code classifier, render "resuming soon" highlights.
+   - BLOCKERS: outbound source choice + allowed domains policy.
    - Candidates:
      - Nasdaq Trader halt list
      - NYSE halt list
