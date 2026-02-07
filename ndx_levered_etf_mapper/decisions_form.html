@@ -48,42 +48,42 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "News RSS: allowlist + cache + Signals board";
-const BLOCK_NOTE = "We will only use existing RSS URLs in data/rss_feeds.json unless you explicitly add more.";
+const BLOCK_TITLE = "News RSS guardrails: rate-limit, failures, and source hygiene";
+const BLOCK_NOTE = "We already fetch RSS. Now decide how aggressive to be and how to handle flaky sources (429s, bad XML).";
 
 const DECISIONS = [
   {
-    key: "news_enable_auto",
-    label: "1) Turn on News auto-fetch now?",
-    why: "Pulls RSS feeds into cache and shows a board in Signals.",
-    options: { A: "Yes", B: "Hold" },
-    default: "B",
-  },
-  {
-    key: "news_refresh",
-    label: "2) News refresh cadence",
-    why: "RSS sources can rate-limit; keep it conservative.",
-    options: { A: "5 min", B: "15 min", C: "60 min" },
-    default: "B",
-  },
-  {
-    key: "news_ui",
-    label: "3) News UI location",
-    why: "Signals is the intel hub.",
-    options: { A: "Signals right panel", B: "New News tab", C: "Both" },
+    key: "news_fetch_mode",
+    label: "1) Fetch mode",
+    why: "Parallel fetch is faster but may trigger rate limits.",
+    options: { A: "Sequential (safer)", B: "Parallel (faster)" },
     default: "A",
   },
   {
-    key: "news_ticker_detect",
-    label: "4) Ticker detection",
-    why: "Extract tickers from titles and show Schwab quotes.",
-    options: { A: "Off", B: "On (simple regex)", C: "On + symbol allowlist" },
+    key: "news_fail_policy",
+    label: "2) Failure policy",
+    why: "How to treat feeds that error repeatedly.",
+    options: { A: "Ignore errors (silent)", B: "Show status badge with error count", C: "Auto-disable after N failures" },
     default: "B",
   },
   {
-    key: "start_coding_news",
-    label: "5) Start coding News block now?",
-    why: "If yes, I’ll add feed fetch+cache + Signals board + basic ticker detect.",
+    key: "news_max_items",
+    label: "3) Max items shown",
+    why: "Keeps UI snappy.",
+    options: { A: "50", B: "100", C: "200" },
+    default: "A",
+  },
+  {
+    key: "news_source_whitelist",
+    label: "4) Source hygiene",
+    why: "You can restrict which domains are allowed to fetch.",
+    options: { A: "Use rss_feeds.json only", B: "Add explicit domain allowlist" },
+    default: "A",
+  },
+  {
+    key: "start_coding_news_guardrails",
+    label: "5) Start coding this guardrails block now?",
+    why: "If yes, I’ll add per-feed status, failure counts, and optional disabling.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
