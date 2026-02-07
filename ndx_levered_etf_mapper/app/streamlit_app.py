@@ -21,6 +21,7 @@ from etf_mapper.feeds import (
     StubInternalsFeed,
     WebHaltsFeed,
     WebEarningsCalendarFeed,
+    EdgarFilingsFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -1779,12 +1780,13 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_halts, tab_signals, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
         "Halts",
         "Signals",
+        "Earnings",
         "Overview",
         "Relations",
         "Options",
@@ -2789,6 +2791,41 @@ with tab_signals:
     if st.session_state.get("signals_drive_dashboard"):
         # Just set the macro tile from the Signals 'Next event'
         pass
+
+with tab_earnings:
+    st.subheader("Earnings")
+    st.caption("Seamless target: earnings calendar + filings download + sentiment checks.")
+
+    ef = WebEarningsCalendarFeed(data_dir=_data_dir())
+    ff = EdgarFilingsFeed(data_dir=_data_dir())
+
+    st.write({"earnings_feed": ef.status().detail, "filings_feed": ff.status().detail})
+
+    eL, eR = st.columns([0.52, 0.48], gap="large")
+    with eL:
+        st.markdown("### Earnings calendar (provider discovery)")
+        st.info("Earnings calendar via Schwab/TOS endpoints is not wired yet. Next step: endpoint discovery.")
+
+        st.markdown("### Filings (SEC EDGAR)")
+        sym = st.text_input("Symbol", value=selected, key="earnings_sym").upper().strip()
+        if st.button("Fetch recent 10-Q/10-K/8-K"):
+            try:
+                fdf = ff.fetch_filings(sym)
+                st.session_state["earnings_filings_df"] = fdf
+            except Exception as e:
+                st.error(str(e))
+
+        fdf = st.session_state.get("earnings_filings_df")
+        if isinstance(fdf, pd.DataFrame) and not fdf.empty:
+            st.dataframe(fdf, use_container_width=True, height=420, hide_index=True)
+        else:
+            st.caption("No filings loaded yet.")
+
+    with eR:
+        st.markdown("### Sentiment / diff (scaffold)")
+        st.caption("Next: download filing text and compare Risk Factors + MD&A vs prior quarter.")
+        st.text_area("Notes", value="", height=240, placeholder="What changed? Any new risk language? Guidance tone shift?…")
+
 
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
