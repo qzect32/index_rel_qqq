@@ -56,122 +56,89 @@
 
 <script>
 // ---- CONFIG FOR THIS BLOCK ----
-const BLOCK_TITLE = "Feeds: provide concrete URLs (RSS + earnings)";
-const BLOCK_NOTE = "No repeats: we won't ask domain-choice again unless it changes.";
+const BLOCK_TITLE = "Feeds: paste the actual URLs (RSS + Fed + earnings)";
+const BLOCK_NOTE = "This block is mostly collecting URLs so we can implement.";
 
-// Decisions already locked-in (snapshot). These are shown so we don't keep asking.
+// Decisions already locked-in.
 const LOCKED = [
   { key: "feeds_news_domains", value: "A", label: "News domains allowlisted", detail: "reuters.com + finance.yahoo.com + seekingalpha.com" },
   { key: "feeds_allowed_domains", value: "B", label: "Allowed domains", detail: "+ federalreserve.gov" },
-  { key: "halts_include_cboe", value: "A", label: "Cboe halts", detail: "included" },
+  { key: "rss_config_path", value: "A", label: "RSS config path", detail: "data/rss_feeds.json" },
+  { key: "earnings_source_site", value: "A", label: "Earnings source", detail: "you will paste the site/URL" },
+  { key: "fed_urls", value: "C", label: "Fed URLs", detail: "you will paste exact URLs" },
 ];
 
 // Only ask NEW questions here.
 const DECISIONS = [
   {
-    key: "news_rss_urls_final",
-    label: "Provide RSS URLs (Reuters/Yahoo/SeekingAlpha)",
-    why: "We can’t ship RSS ingestion without exact feed URLs. Domains alone aren’t enough.",
-    options: {
-      A: "I will paste 3–10 exact RSS URLs in chat",
-      B: "I will put RSS URLs in a local config file",
-      C: "Both",
-    },
-    default: "C",
+    key: "rss_urls_payload",
+    label: "1) News RSS URLs — how many?",
+    why: "We need a concrete list to start ingesting headlines.",
+    options: { A: "3", B: "5", C: "10" },
+    default: "B",
   },
   {
-    key: "rss_config_path",
-    label: "If using a config file: where should RSS URLs live?",
-    why: "We need one canonical place to read feeds from.",
-    options: {
-      A: "data/rss_feeds.json",
-      B: "data/feeds/rss.json",
-      C: "Hardcode in repo (not recommended)",
-    },
+    key: "rss_urls_format",
+    label: "2) RSS URL format",
+    why: "We can accept either per-domain bundles or one flat list.",
+    options: { A: "Flat list of URLs", B: "Grouped by domain" },
     default: "A",
   },
   {
-    key: "earnings_source_site",
-    label: "Earnings: pick a public source site to scrape (best-effort)",
-    why: "You chose hybrid scrape + manual override, but we need the specific site target.",
-    options: {
-      A: "I will paste the site/URL (you don’t pick)",
-      B: "Use a common public earnings calendar site (you pick)",
-    },
+    key: "rss_urls_delivery",
+    label: "3) RSS URL delivery (you chose both earlier)",
+    why: "Confirm the primary method so implementation targets the right path.",
+    options: { A: "Primary: config file", B: "Primary: paste into chat", C: "Equal support" },
     default: "A",
   },
   {
-    key: "earnings_manual_override",
-    label: "Earnings: manual override format",
-    why: "When scraping breaks, we need a stable fallback.",
-    options: {
-      A: "CSV upload",
-      B: "Paste table (CSV text)",
-      C: "Both",
-    },
-    default: "C",
+    key: "fed_urls_count",
+    label: "4) Fed URLs — how many endpoints/pages?",
+    why: "Keeps the allowlist tight and avoids scraping too much.",
+    options: { A: "1", B: "2", C: "3+" },
+    default: "B",
   },
   {
-    key: "fed_urls",
-    label: "Fed calendar: which pages are allowed?",
-    why: "You allowlisted federalreserve.gov — now we pick the endpoints/pages we’ll fetch.",
-    options: {
-      A: "FOMC calendar only",
-      B: "FOMC calendar + speeches/testimony",
-      C: "I will paste exact URLs",
-    },
-    default: "C",
-  },
-  {
-    key: "halts_accept_beta_nyse",
-    label: "NYSE source is beta.nyse.com — ok to rely on 'beta' subdomain?",
-    why: "Avoid surprises if NYSE changes beta URLs; we can swap to a stable domain if needed.",
-    options: {
-      A: "Yes, ok",
-      B: "Prefer non-beta if available",
-    },
+    key: "fed_urls_delivery",
+    label: "5) Fed URLs delivery",
+    why: "Where do you want to paste them?",
+    options: { A: "Paste into chat", B: "Put into data/rss_feeds.json under a 'fed' section" },
     default: "A",
   },
   {
-    key: "cboe_halts_source",
-    label: "Cboe halts: use their halts page as a scrape source?",
-    why: "You pasted a Cboe halts URL; we should decide if it’s data-source or just reference.",
-    options: {
-      A: "Yes, scrape it",
-      B: "No, keep as reference link only",
-    },
+    key: "earnings_url_count",
+    label: "6) Earnings source URLs",
+    why: "If the site has multiple pages (week/day), we can support more than one.",
+    options: { A: "1 URL", B: "2 URLs", C: "3+ URLs" },
     default: "A",
   },
   {
-    key: "feeds_store_parsed",
-    label: "Store parsed tables",
-    why: "Raw cache is for debugging; parsed tables help fast UI rendering.",
-    options: {
-      A: "Write parsed CSV/JSON alongside raw cache",
-      B: "Parsed in-memory only",
-    },
+    key: "earnings_url_delivery",
+    label: "7) Earnings URLs delivery",
+    why: "Where should we store these?",
+    options: { A: "Paste into chat", B: "Store in data/rss_feeds.json under 'earnings'" },
     default: "A",
   },
   {
-    key: "feeds_key_names",
-    label: "Key naming convention in generated JSON",
-    why: "Keeps your decisions file readable over time.",
-    options: {
-      A: "snake_case keys (current)",
-      B: "grouped nested objects (feeds.halts..., feeds.news...) (bigger change)",
-    },
+    key: "nyse_beta_fallback",
+    label: "8) NYSE beta URL fallback",
+    why: "If beta.nyse.com changes, should we fall back to another source automatically?",
+    options: { A: "Yes: fall back to Nasdaq/Cboe only", B: "No: show error and keep last good" },
     default: "A",
   },
   {
-    key: "next_after_urls",
-    label: "After URLs are provided, what do we implement next?",
-    why: "This sets the work order so you can start testing sooner.",
-    options: {
-      A: "Halts auto-fetch end-to-end (parse + UI)",
-      B: "News RSS end-to-end",
-      C: "Earnings calendar end-to-end",
-    },
-    default: "A",
+    key: "config_file_shape",
+    label: "9) data/rss_feeds.json shape",
+    why: "We want this to be dead-simple to edit.",
+    options: { A: "{rss_urls:[...]} only", B: "{news:{rss_urls:[...]}, fed:{urls:[...]}, earnings:{urls:[...]}}" },
+    default: "B",
+  },
+  {
+    key: "ready_to_implement",
+    label: "10) Ready-to-implement check",
+    why: "If you answer 'Yes', next step is me wiring Halts auto-fetch end-to-end.",
+    options: { A: "Yes — start implementing now", B: "Not yet — I still need to paste URLs" },
+    default: "B",
   },
 ];
 
@@ -195,7 +162,7 @@ function renderLocked() {
   root.innerHTML='';
   if (!LOCKED || !LOCKED.length) return;
   const card=el('div',{class:'card'});
-  card.appendChild(el('h2',{},'Already locked-in (won\'t ask again)'));
+  card.appendChild(el('h2',{},"Already locked-in (won't ask again)"));
   const ul=el('ul',{style:'margin:8px 0 0; color: var(--muted);'});
   for (const x of LOCKED) {
     ul.appendChild(el('li',{}, `${x.label}: ${x.detail} (${x.key}=${x.value})`));
