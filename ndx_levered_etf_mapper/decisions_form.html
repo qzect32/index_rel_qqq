@@ -31,7 +31,7 @@
       Block: <span class="pill" id="block"></span>
       <span class="pill warn" id="note" style="display:none"></span>
     </p>
-    <p class="tiny">Pick answers → <b>Generate JSON</b> → paste JSON into chat. Local-only.</p>
+    <p class="tiny">15 questions. Pick answers → <b>Generate JSON</b> → paste JSON into chat. Local-only.</p>
 
     <div id="questions"></div>
 
@@ -42,31 +42,30 @@
         <button id="download">Download decisions.json</button>
         <button id="reset">Reset</button>
       </div>
-      <p class="tiny">Tip: If Copy is blocked by the browser, use Download.</p>
       <pre id="out">(click Generate JSON)</pre>
     </div>
   </div>
 
 <script>
-const BLOCK_TITLE = "Wide monitor wall (50-ticker view) — layout + behavior";
-const BLOCK_NOTE = "15 questions (per your preference). No live orders. Quotes via Schwab only.";
+const BLOCK_TITLE = "Wall tab: guardrails + polish (post-v1)";
+const BLOCK_NOTE = "Now that Wall exists, choose guardrails (API budget), thresholds, and small UX polish.";
 
 const DECISIONS = [
-  { key:"wall_enable", label:"1) Add the Wall tab now?", why:"Creates a new tab with a dense grid.", options:{A:"Yes",B:"Hold"}, default:"A" },
-  { key:"wall_grid", label:"2) Default grid", why:"How many tiles?", options:{A:"5×10 (50)",B:"4×8 (32)",C:"6×10 (60)"}, default:"A" },
-  { key:"wall_source", label:"3) Symbol source", why:"What list drives the wall?", options:{A:"Watchlist",B:"Hot List (combined)",C:"Watchlist + Hot List"}, default:"C" },
-  { key:"wall_refresh", label:"4) Auto-refresh cadence", why:"Guardrails matter.", options:{A:"Off (manual refresh)",B:"30s",C:"60s"}, default:"C" },
-  { key:"wall_quote_ttl", label:"5) Quote TTL", why:"Reduce API calls.", options:{A:"15s",B:"30s",C:"60s"}, default:"B" },
-  { key:"wall_show_spark", label:"6) Micro-sparkline", why:"Tiny trend squiggle.", options:{A:"Off",B:"On (1h)",C:"On (4h)"}, default:"B" },
-  { key:"wall_show_heat", label:"7) Show heat score", why:"Reuse scanner heat.", options:{A:"Off",B:"On"}, default:"B" },
-  { key:"wall_click_behavior", label:"8) Clicking a tile", why:"Streamlit tables don’t click; we can add buttons.", options:{A:"Focus (Scanner)",B:"Set as main ticker",C:"Both"}, default:"C" },
-  { key:"wall_filters", label:"9) Quick filters", why:"Reduce clutter.", options:{A:"None",B:"Movers only",C:"Hot only"}, default:"B" },
-  { key:"wall_color", label:"10) Colorization", why:"Readable at a glance.", options:{A:"By % change",B:"By heat",C:"None"}, default:"A" },
-  { key:"wall_badges", label:"11) Badges", why:"Small status chips.", options:{A:"Halt + filings",B:"Halt only",C:"None"}, default:"A" },
-  { key:"wall_export", label:"12) Export", why:"Local snapshot.", options:{A:"CSV",B:"PDF",C:"Both"}, default:"A" },
-  { key:"wall_perf", label:"13) Performance posture", why:"How aggressive?", options:{A:"Conservative (cap 50 symbols)",B:"Normal",C:"Aggressive"}, default:"A" },
-  { key:"wall_layout", label:"14) Tile contents", why:"What each tile shows.", options:{A:"Symbol + px + %",B:"A + vol",C:"A + bid/ask"}, default:"A" },
-  { key:"start_coding_wall", label:"15) Start coding the Wall now?", why:"If yes, I’ll implement tab + grid + caching + guardrails.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"wall_movers_threshold", label:"1) Movers threshold", why:"Defines 'movers only' cutoff.", options:{A:"abs % >= 1%",B:"abs % >= 2%",C:"Top N only (ignore threshold)"}, default:"C" },
+  { key:"wall_top_n", label:"2) If Top N, N= ?", why:"Used when movers filter is Top-N.", options:{A:"32",B:"50",C:"80"}, default:"A" },
+  { key:"wall_max_universe", label:"3) Max candidate symbols to fetch", why:"Caps API usage.", options:{A:"60",B:"120",C:"200"}, default:"B" },
+  { key:"wall_spark_budget", label:"4) Sparkline budget", why:"Sparklines can be expensive.", options:{A:"Only for visible tiles",B:"Only for top 16",C:"Off by default"}, default:"A" },
+  { key:"wall_badge_style", label:"5) Badge style", why:"Compact vs loud.", options:{A:"Text (HALT/FIL)",B:"Icons",C:"No badges"}, default:"A" },
+  { key:"wall_heat_scale", label:"6) Heat scale", why:"How to show heat.", options:{A:"Number only",B:"Number + color",C:"Hidden"}, default:"A" },
+  { key:"wall_csv_columns", label:"7) CSV columns", why:"What goes into export.", options:{A:"sym,px,%",B:"A + vol",C:"A + vol + heat"}, default:"C" },
+  { key:"wall_pdf_detail", label:"8) PDF detail", why:"PDF can be compact or verbose.", options:{A:"Table only",B:"Table + timestamp + mode",C:"Add top movers summary"}, default:"B" },
+  { key:"wall_tile_buttons", label:"9) Tile buttons", why:"Two buttons per tile adds clutter.", options:{A:"Keep Main+Focus",B:"Single button (menu)",C:"Buttons only on hover (not really possible)"}, default:"A" },
+  { key:"wall_link_out", label:"10) Link-outs", why:"Open news/filings quickly.", options:{A:"None",B:"Link to News tab filter",C:"Link to EDGAR report"}, default:"A" },
+  { key:"wall_error_display", label:"11) Errors", why:"How to show quote failures.", options:{A:"Silent",B:"Show small red 'stale' marker",C:"Show toast"}, default:"B" },
+  { key:"wall_refresh_control", label:"12) Refresh control", why:"Override autorefresh.", options:{A:"No control",B:"Toggle autorefresh",C:"Manual refresh button"}, default:"B" },
+  { key:"wall_dark_mode", label:"13) Theme", why:"Any tweaks?", options:{A:"Keep current",B:"Higher contrast",C:"Minimal"}, default:"A" },
+  { key:"wall_store_prefs", label:"14) Persist wall settings", why:"Save settings in app settings JSON.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"start_coding_wall_polish", label:"15) Start coding this polish/guardrails block now?", why:"If yes, I implement thresholds + budgets + toggles + persistence.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
@@ -119,7 +118,6 @@ function setOut(obj) {
   return s;
 }
 
-// Init header
 document.getElementById('block').textContent = BLOCK_TITLE;
 document.getElementById('note').style.display = 'inline-block';
 document.getElementById('note').textContent = BLOCK_NOTE;
@@ -130,12 +128,8 @@ document.getElementById('gen').addEventListener('click', () => setOut(gather()))
 
 document.getElementById('copy').addEventListener('click', async () => {
   const s = document.getElementById('out').textContent;
-  try {
-    await navigator.clipboard.writeText(s);
-    alert('Copied. Paste it back into chat.');
-  } catch (e) {
-    alert('Copy failed (browser blocked it). Use Download instead.');
-  }
+  try { await navigator.clipboard.writeText(s); alert('Copied. Paste it back into chat.'); }
+  catch (e) { alert('Copy failed. Use Download instead.'); }
 });
 
 document.getElementById('download').addEventListener('click', () => {
