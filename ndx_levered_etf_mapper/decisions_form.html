@@ -73,34 +73,83 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Feeds: paste URLs + confirm we're ready";
-const BLOCK_NOTE = "This block collects URLs so I can start implementing Halts auto-fetch end-to-end.";
+const BLOCK_TITLE = "Next work: Earnings calendar + Feeds tab + Dashboard highlights";
+const BLOCK_NOTE = "This block picks the next implementation targets and how to ingest earnings/macro events.";
 
 const LOCKED = [
-  { label: "RSS config path", detail: "data/rss_feeds.json" },
-  { label: "Config shape", detail: "news/fed/earnings nested" },
-  { label: "Ready to implement", detail: "Yes" },
+  { label: "Halts auto-fetch", detail: "implemented" },
+  { label: "Rollout order", detail: "Halts → Earnings" },
+  { label: "Feeds tab name", detail: "Signals" },
 ];
 
 const DECISIONS = [
   {
-    key: "confirm_urls_complete",
-    label: "1) Are the URLs pasted above complete enough to implement?",
-    why: "If yes, I start wiring Halts auto-fetch + cache + UI immediately.",
-    options: { A: "Yes", B: "Not yet" },
+    key: "earnings_primary_mode",
+    label: "1) Earnings calendar: primary mode",
+    why: "You chose hybrid scrape+manual, but we need a default workflow.",
+    options: { A: "Manual-first (CSV/paste/import), scrape later", B: "Scrape-first, manual override when needed", C: "Manual-only" },
     default: "B",
   },
   {
-    key: "write_to_rss_feeds_json",
-    label: "2) Should I write these into data/rss_feeds.json automatically?",
-    why: "Keeps everything in one place (your chosen path).",
-    options: { A: "Yes", B: "No (just paste in chat later)" },
+    key: "earnings_scope",
+    label: "2) Earnings scope",
+    why: "Controls how many symbols we track and how heavy it gets.",
+    options: { A: "Mega-caps only", B: "Watchlist + Hot List + Focus", C: "Custom list" },
     default: "A",
   },
   {
-    key: "start_implementation_now",
-    label: "3) Start implementing now?",
-    why: "If yes, next work is code (no more decisions until a blocker).",
+    key: "earnings_fields",
+    label: "3) Earnings normalized fields",
+    why: "Defines what we store + render.",
+    options: { A: "symbol, date, time, eps_est, eps_act", B: "A + rev_est, rev_act", C: "B + guidance flag + notes" },
+    default: "C",
+  },
+  {
+    key: "earnings_time_normalization",
+    label: "4) Time normalization",
+    why: "Providers vary (BMO/AMC vs exact times).",
+    options: { A: "Store as BMO/AMC only", B: "Store ET datetime when available else BMO/AMC", C: "Store UTC + display ET" },
+    default: "B",
+  },
+  {
+    key: "earnings_ui",
+    label: "5) Earnings UI",
+    why: "Where and how you want to see it.",
+    options: { A: "Signals tab: Upcoming earnings table + countdown tile", B: "New Earnings tab", C: "Both" },
+    default: "A",
+  },
+  {
+    key: "earnings_refresh",
+    label: "6) Earnings refresh cadence",
+    why: "Avoids hammering sources.",
+    options: { A: "Manual refresh only", B: "Auto every 60 min", C: "Auto every 15 min" },
+    default: "B",
+  },
+  {
+    key: "macro_tile",
+    label: "7) Dashboard macro tile",
+    why: "You asked for Next macro event tile.",
+    options: { A: "Show next Fed event only", B: "Show next (Fed + econ) combined", C: "No tile" },
+    default: "B",
+  },
+  {
+    key: "feeds_tab_contents",
+    label: "8) New 'Signals' (Feeds) tab contents (first pass)",
+    why: "We should ship something minimal but useful.",
+    options: { A: "Halts + Macro + Earnings", B: "Halts only", C: "Macro + Earnings" },
+    default: "A",
+  },
+  {
+    key: "news_ingestion_now",
+    label: "9) News ingestion: implement now?",
+    why: "You pasted a big RSS list; we can wire it after earnings.",
+    options: { A: "Not yet (after earnings)", B: "Yes, basic RSS headlines next", C: "Manual paste only" },
+    default: "A",
+  },
+  {
+    key: "start_build",
+    label: "10) Start coding this block now?",
+    why: "If yes, I’ll implement earnings scaffolding + UI + storage.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
