@@ -48,45 +48,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Hot List per Event mode (Normal/Fed/CPI/Earnings)";
-const BLOCK_NOTE = "Currently Hot List is global. This adds separate lists per event mode, with minimal UI friction.";
+const BLOCK_TITLE = "Wide monitor wall (50-ticker view) — layout + behavior";
+const BLOCK_NOTE = "15 questions (per your preference). No live orders. Quotes via Schwab only.";
 
 const DECISIONS = [
-  {
-    key: "hotlist_mode",
-    label: "1) Storage mode",
-    why: "How should hot list be stored and persisted?",
-    options: { A: "One file with multiple lists keyed by event mode", B: "Separate file per mode" },
-    default: "A",
-  },
-  {
-    key: "hotlist_default_view",
-    label: "2) Default view in Scanner",
-    why: "When you open Scanner, which hot list is shown?",
-    options: { A: "Current event mode", B: "All modes combined", C: "Always Normal" },
-    default: "A",
-  },
-  {
-    key: "hotlist_dashboard",
-    label: "3) Dashboard Hot List tile",
-    why: "What should Dashboard show?",
-    options: { A: "Current event mode", B: "Combined view", C: "Pinned mode selector" },
-    default: "C",
-  },
-  {
-    key: "hotlist_migration",
-    label: "4) Migration of existing global hot list",
-    why: "You already have items saved.",
-    options: { A: "Move existing symbols into Normal list", B: "Copy into all modes", C: "Start empty" },
-    default: "A",
-  },
-  {
-    key: "start_coding_hotlist_modes",
-    label: "5) Start coding this block now?",
-    why: "If yes, I’ll implement storage migration + UI wiring (Scanner + Dashboard).",
-    options: { A: "Yes", B: "Hold" },
-    default: "A",
-  },
+  { key:"wall_enable", label:"1) Add the Wall tab now?", why:"Creates a new tab with a dense grid.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"wall_grid", label:"2) Default grid", why:"How many tiles?", options:{A:"5×10 (50)",B:"4×8 (32)",C:"6×10 (60)"}, default:"A" },
+  { key:"wall_source", label:"3) Symbol source", why:"What list drives the wall?", options:{A:"Watchlist",B:"Hot List (combined)",C:"Watchlist + Hot List"}, default:"C" },
+  { key:"wall_refresh", label:"4) Auto-refresh cadence", why:"Guardrails matter.", options:{A:"Off (manual refresh)",B:"30s",C:"60s"}, default:"C" },
+  { key:"wall_quote_ttl", label:"5) Quote TTL", why:"Reduce API calls.", options:{A:"15s",B:"30s",C:"60s"}, default:"B" },
+  { key:"wall_show_spark", label:"6) Micro-sparkline", why:"Tiny trend squiggle.", options:{A:"Off",B:"On (1h)",C:"On (4h)"}, default:"B" },
+  { key:"wall_show_heat", label:"7) Show heat score", why:"Reuse scanner heat.", options:{A:"Off",B:"On"}, default:"B" },
+  { key:"wall_click_behavior", label:"8) Clicking a tile", why:"Streamlit tables don’t click; we can add buttons.", options:{A:"Focus (Scanner)",B:"Set as main ticker",C:"Both"}, default:"C" },
+  { key:"wall_filters", label:"9) Quick filters", why:"Reduce clutter.", options:{A:"None",B:"Movers only",C:"Hot only"}, default:"B" },
+  { key:"wall_color", label:"10) Colorization", why:"Readable at a glance.", options:{A:"By % change",B:"By heat",C:"None"}, default:"A" },
+  { key:"wall_badges", label:"11) Badges", why:"Small status chips.", options:{A:"Halt + filings",B:"Halt only",C:"None"}, default:"A" },
+  { key:"wall_export", label:"12) Export", why:"Local snapshot.", options:{A:"CSV",B:"PDF",C:"Both"}, default:"A" },
+  { key:"wall_perf", label:"13) Performance posture", why:"How aggressive?", options:{A:"Conservative (cap 50 symbols)",B:"Normal",C:"Aggressive"}, default:"A" },
+  { key:"wall_layout", label:"14) Tile contents", why:"What each tile shows.", options:{A:"Symbol + px + %",B:"A + vol",C:"A + bid/ask"}, default:"A" },
+  { key:"start_coding_wall", label:"15) Start coding the Wall now?", why:"If yes, I’ll implement tab + grid + caching + guardrails.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
