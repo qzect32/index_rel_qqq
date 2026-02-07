@@ -2814,9 +2814,54 @@ with tab_signals:
             st.write({"status": st.session_state.get("signals_earnings_detail"), "last_refresh": st.session_state.get("signals_last_refresh")})
             edf = st.session_state.get("signals_earnings_df")
             if isinstance(edf, pd.DataFrame) and not edf.empty:
-                st.dataframe(edf, use_container_width=True, height=360, hide_index=True)
+                st.dataframe(edf, use_container_width=True, height=240, hide_index=True)
             else:
                 st.info("Earnings calendar is scaffolded. Next step is selecting/wiring a provider.")
+
+            st.markdown("---")
+            st.markdown("#### Filings (watcher alerts)")
+            st.caption("Shows new filings whose diff score meets threshold. Sorted by score (desc).")
+
+            alerts = st.session_state.get("signals_filings_alerts", [])
+            if not isinstance(alerts, list) or not alerts:
+                st.caption("No filings alerts yet.")
+            else:
+                arows = []
+                for a in alerts:
+                    if not isinstance(a, dict):
+                        continue
+                    arows.append(
+                        {
+                            "symbol": a.get("symbol"),
+                            "score": a.get("score"),
+                            "current": a.get("current"),
+                            "baseline": a.get("baseline"),
+                            "report_md": a.get("report_md"),
+                        }
+                    )
+                adf = pd.DataFrame(arows)
+                if "score" in adf.columns:
+                    adf["score"] = pd.to_numeric(adf["score"], errors="coerce")
+                    adf = adf.sort_values("score", ascending=False)
+
+                st.dataframe(adf[[c for c in ["symbol", "score", "current", "baseline"] if c in adf.columns]], use_container_width=True, height=200, hide_index=True)
+
+                # Drilldown: show report.md inline
+                opts = []
+                for _, r in adf.iterrows():
+                    sym = str(r.get("symbol") or "")
+                    sc = r.get("score")
+                    opts.append(f"{sym} — score {sc}")
+
+                sel_ix = st.selectbox("Open report", list(range(len(opts))), format_func=lambda i: opts[i], key="signals_filings_open")
+                try:
+                    p = Path(str(adf.iloc[int(sel_ix)].get("report_md") or ""))
+                    if p.exists():
+                        st.markdown(p.read_text(encoding="utf-8", errors="ignore"))
+                    else:
+                        st.caption(f"Missing report file: {p}")
+                except Exception as e:
+                    st.caption(str(e))
 
     with cM:
         st.markdown("### Macro")
@@ -2847,6 +2892,37 @@ with tab_earnings:
 
         st.markdown("### Filings (SEC EDGAR)")
         sym = st.text_input("Symbol", value=selected, key="earnings_sym").upper().strip()
+
+        # Recent reports list (from watcher and manual runs)
+        st.markdown("#### Recent reports")
+        rep_rows = []
+        try:
+            rep_root = (Path(_data_dir()) / "filings" / sym / "reports")
+            if rep_root.exists():
+                for md in rep_root.glob("*/report.md"):
+                    try:
+                        rep_rows.append({"report": md.parent.name, "md": str(md), "mtime": md.stat().st_mtime})
+                    except Exception:
+                        pass
+        except Exception:
+            rep_rows = []
+
+        if rep_rows:
+            rdf = pd.DataFrame(rep_rows)
+            rdf["mtime"] = pd.to_datetime(rdf["mtime"], unit="s", errors="coerce")
+            rdf = rdf.sort_values("mtime", ascending=False).head(25)
+            st.dataframe(rdf[["report", "mtime"]], use_container_width=True, height=180, hide_index=True)
+
+            sel = st.selectbox("Open recent report", list(range(len(rdf))), format_func=lambda i: str(rdf.iloc[int(i)]["report"]), key="earnings_recent_report")
+            try:
+                p = Path(str(rdf.iloc[int(sel)]["md"]))
+                if p.exists():
+                    with st.expander("Report (inline)", expanded=False):
+                        st.markdown(p.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                pass
+        else:
+            st.caption("No reports found yet for this symbol.")
         if st.button("Fetch recent 10-Q/10-K/8-K"):
             try:
                 fdf = ff.fetch_filings(sym)
