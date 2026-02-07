@@ -34,7 +34,6 @@
     </p>
     <p class="tiny">Pick answers → <b>Generate JSON</b> → paste JSON into chat. Local-only.</p>
 
-    <div id="locked"></div>
     <div id="questions"></div>
 
     <div class="card">
@@ -50,86 +49,77 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Earnings via Schwab/TOS: calendar + filings download + sentiment";
-const BLOCK_NOTE = "Goal: replace the blocked earnings provider by using Schwab/TOS-visible data if endpoints exist.";
-
-const LOCKED = [
-  { label: "No new URLs", detail: "acknowledged" },
-  { label: "Earnings should be seamless", detail: "no manual import" },
-];
+const BLOCK_TITLE = "EDGAR pipeline: download + extract + diff scoring";
+const BLOCK_NOTE = "Next: store filings under data/filings/... and generate MD&A/Risk Factors diffs.";
 
 const DECISIONS = [
   {
-    key: "schwab_earnings_discovery",
-    label: "1) Discovery approach for Schwab earnings/calendar endpoints",
-    why: "We need to confirm if Schwab API exposes earnings calendar or if we must use a different route.",
-    options: {
-      A: "Try Schwab API docs/endpoints first (preferred)",
-      B: "Use browser automation against Schwab web/TOS pages (fallback)",
-      C: "Defer earnings calendar; focus on 10-Q/8-K retrieval",
-    },
+    key: "edgar_download_format",
+    label: "1) Prefer which document format?",
+    why: "EDGAR filings can be HTML, TXT, or PDFs (sometimes exhibits).",
+    options: { A: "HTML primary document", B: "Full submission TXT", C: "PDF when available" },
     default: "A",
   },
   {
-    key: "schwab_earnings_scope",
-    label: "2) Earnings calendar scope",
-    why: "Controls how many symbols we query and cache.",
-    options: { A: "Main ticker only", B: "Watchlist + Hot List + Focus", C: "User-pinned list" },
-    default: "B",
-  },
-  {
-    key: "schwab_earnings_fields",
-    label: "3) Earnings fields to show",
-    why: "Keep UI high-signal.",
-    options: { A: "date + BMO/AMC", B: "A + EPS estimate/actual (if available)", C: "B + revenue est/act (if available)" },
+    key: "edgar_rate_limit",
+    label: "2) SEC rate limit posture",
+    why: "SEC is strict about scraping volume. We'll be conservative.",
+    options: { A: "Max 1 request/sec", B: "Max 2 requests/sec", C: "Burst ok (not recommended)" },
     default: "A",
   },
   {
-    key: "filings_download",
-    label: "4) Filings download at earnings time",
-    why: "You mentioned downloading 10-Q/10-K around earnings; we can auto-fetch filings when a new report hits.",
-    options: { A: "10-Q/10-K only", B: "Add 8-K too", C: "All SEC filings types (bigger)" },
-    default: "B",
+    key: "edgar_cache",
+    label: "3) Cache strategy",
+    why: "Avoid re-downloading filings repeatedly.",
+    options: { A: "Never re-download if file exists", B: "Re-download if older than 7d", C: "Always re-download" },
+    default: "A",
   },
   {
-    key: "filings_source",
-    label: "5) Source for filings",
-    why: "Schwab may link filings, but SEC EDGAR is the canonical public source.",
-    options: { A: "SEC EDGAR (direct)", B: "Schwab links (if exposed)", C: "Both" },
+    key: "diff_baseline",
+    label: "4) Diff baseline",
+    why: "What do we compare against?",
+    options: { A: "Previous same form (10-Q vs 10-Q)", B: "Previous quarter regardless of form", C: "Manual choose" },
+    default: "A",
+  },
+  {
+    key: "diff_output",
+    label: "5) Diff output",
+    why: "How you want to read the changes.",
+    options: { A: "Top added/removed sentences", B: "Keyword + risk phrase deltas", C: "Both" },
     default: "C",
   },
   {
-    key: "sentiment_mode",
-    label: "6) Sentiment/check mode on filings",
-    why: "We can start lightweight and expand.",
-    options: { A: "Keyword/risk-phrase diff only", B: "Section extraction + tone summary", C: "Full diff + scoring" },
-    default: "B",
-  },
-  {
-    key: "sentiment_sections",
-    label: "7) Sections to extract (first pass)",
-    why: "Limits token/compute and keeps it useful.",
-    options: { A: "MD&A + Risk Factors", B: "A + Guidance/Outlook", C: "All major sections" },
+    key: "risk_phrase_list",
+    label: "6) Risk phrase list",
+    why: "Scoring uses a phrase list.",
+    options: { A: "Ship with a starter list", B: "Start empty (you add later)" },
     default: "A",
   },
   {
-    key: "filings_storage",
-    label: "8) Storage for downloaded filings",
-    why: "So you can review later and we can diff quarter-over-quarter.",
-    options: { A: "data/filings/{symbol}/{date}/ (raw)", B: "A + extracted text.json", C: "A + embeddings (later)" },
-    default: "B",
+    key: "sentiment_scoring",
+    label: "7) Sentiment scoring method",
+    why: "Keep it lightweight and reproducible.",
+    options: { A: "Count-based score", B: "TF-IDF change score", C: "LLM summary (later)" },
+    default: "A",
   },
   {
-    key: "earnings_ui_in_signals",
-    label: "9) Where earnings appears",
-    why: "You already have Signals hub.",
-    options: { A: "Signals panel only", B: "Signals + Dashboard tile", C: "New Earnings tab" },
-    default: "B",
+    key: "where_show_results",
+    label: "8) Where show results",
+    why: "You asked for seamless workflow.",
+    options: { A: "Earnings tab only", B: "Earnings tab + Signals panel badge", C: "Export markdown report" },
+    default: "C",
   },
   {
-    key: "start_coding_earnings_schwab",
-    label: "10) Start coding this block now?",
-    why: "If yes, I’ll implement: EDGAR filings pipeline + earnings UI hooks + endpoint discovery scaffolds.",
+    key: "report_format",
+    label: "9) Report format",
+    why: "So you can archive it.",
+    options: { A: "Markdown", B: "JSON", C: "Both" },
+    default: "C",
+  },
+  {
+    key: "start_build_edgar",
+    label: "10) Start coding this diff/scoring block now?",
+    why: "If yes, I implement download+extract+diff+report end-to-end.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
@@ -147,18 +137,6 @@ function el(tag, attrs={}, children=[]) {
     else if(c) e.appendChild(c);
   });
   return e;
-}
-
-function renderLocked() {
-  const root=document.getElementById('locked');
-  root.innerHTML='';
-  if (!LOCKED || !LOCKED.length) return;
-  const card=el('div',{class:'card'});
-  card.appendChild(el('h2',{},"Already locked-in"));
-  const ul=el('ul',{style:'margin:8px 0 0; color: var(--muted);'});
-  for (const x of LOCKED) ul.appendChild(el('li',{}, `${x.label}: ${x.detail}`));
-  card.appendChild(ul);
-  root.appendChild(card);
 }
 
 function renderQuestions() {
@@ -203,7 +181,6 @@ const n = document.getElementById('note');
 n.style.display = 'inline-block';
 n.textContent = BLOCK_NOTE;
 
-renderLocked();
 renderQuestions();
 
 document.getElementById('gen').addEventListener('click', () => setOut(gather()));
@@ -231,7 +208,6 @@ document.getElementById('download').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
-  renderLocked();
   renderQuestions();
   document.getElementById('out').textContent = '(click Generate JSON)';
 });
