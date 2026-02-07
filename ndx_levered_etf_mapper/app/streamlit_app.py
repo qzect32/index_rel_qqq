@@ -2955,7 +2955,13 @@ with tab_signals:
         except Exception:
             news_urls = []
 
-        nf = NewsRssFeed(data_dir=_data_dir(), urls=[str(u) for u in news_urls])
+        from etf_mapper.feeds.news_rss import NewsRssConfig
+
+        nf = NewsRssFeed(
+            data_dir=_data_dir(),
+            urls=[str(u) for u in news_urls],
+            cfg=NewsRssConfig(parallel=True, max_show=50),
+        )
         st.session_state.setdefault("news_last_fetch", 0.0)
         if (time.time() - float(st.session_state.get("news_last_fetch", 0.0))) >= 15 * 60:
             try:
@@ -2963,6 +2969,13 @@ with tab_signals:
             except Exception:
                 pass
             st.session_state["news_last_fetch"] = time.time()
+
+        # Per-feed status (badge style)
+        pf = nf.per_feed_status() or {}
+        n_ok = sum(1 for v in pf.values() if isinstance(v, dict) and v.get("ok"))
+        n_bad = sum(1 for v in pf.values() if isinstance(v, dict) and not v.get("ok"))
+        if pf:
+            st.caption(f"Feeds: {n_ok} ok / {n_bad} error")
 
         nd = nf.read_cache()
         if isinstance(nd, pd.DataFrame) and not nd.empty:
@@ -2990,7 +3003,13 @@ with tab_news:
     except Exception:
         news_urls = []
 
-    nf = NewsRssFeed(data_dir=_data_dir(), urls=[str(u) for u in news_urls])
+    from etf_mapper.feeds.news_rss import NewsRssConfig
+
+    nf = NewsRssFeed(
+        data_dir=_data_dir(),
+        urls=[str(u) for u in news_urls],
+        cfg=NewsRssConfig(parallel=True, max_show=50),
+    )
 
     st.session_state.setdefault("news_last_fetch", 0.0)
     if (time.time() - float(st.session_state.get("news_last_fetch", 0.0))) >= 15 * 60:
@@ -3000,6 +3019,17 @@ with tab_news:
             pass
         st.session_state["news_last_fetch"] = time.time()
 
+    pf = nf.per_feed_status() or {}
+    if pf:
+        rows = []
+        for url, v in pf.items():
+            if not isinstance(v, dict):
+                continue
+            rows.append({"feed": url, "ok": bool(v.get("ok")), "fail_count": int(v.get("fail_count", 0)), "detail": str(v.get("detail"))[:180]})
+        sdf = pd.DataFrame(rows)
+        st.markdown("### Feed status")
+        st.dataframe(sdf, use_container_width=True, height=220, hide_index=True)
+
     nd = nf.read_cache()
     if not isinstance(nd, pd.DataFrame) or nd.empty:
         st.info("No news cached yet.")
@@ -3007,7 +3037,7 @@ with tab_news:
         show = nd.copy()
         if "published_ts" in show.columns:
             show = show.sort_values("published_ts", ascending=False)
-        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]].head(40), use_container_width=True, height=520, hide_index=True)
+        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]].head(50), use_container_width=True, height=520, hide_index=True)
 
         # Ticker detection (simple regex)
         import re
