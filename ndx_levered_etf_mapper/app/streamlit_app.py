@@ -1799,7 +1799,43 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
 
 with tab_dash:
     st.subheader("Dashboard")
-    st.caption("Tiles: watchlist • selected chart • countdown • alerts • headlines. Schwab-only.")
+    st.caption("Tiles: watchlist • hot list • selected chart • countdown • alerts • headlines.")
+
+    # Highlights row (Halts + Macro next event)
+    hL, hR = st.columns([0.52, 0.48], vertical_alignment="top")
+    with hL:
+        st.markdown("### Halts (highlight)")
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_halts_cboe.json"
+            if not p.exists():
+                p = _data_dir() / "feeds_cache" / "latest_halts_nasdaq.json"
+            if not p.exists():
+                p = _data_dir() / "feeds_cache" / "latest_halts_nyse.json"
+
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                rows = obj.get("rows") if isinstance(obj, dict) else None
+                dfh = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+            else:
+                dfh = pd.DataFrame()
+        except Exception:
+            dfh = pd.DataFrame()
+
+        if dfh.empty:
+            st.caption("No cached halts yet. Open Halts tab and click Refresh now.")
+        else:
+            # show top few active halts
+            show = dfh.copy()
+            if "resumed" in show.columns:
+                show = show[show["resumed"] == False]  # noqa: E712
+            show = show.head(8)
+            st.dataframe(show[[c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et"] if c in show.columns]], use_container_width=True, height=210, hide_index=True)
+
+    with hR:
+        st.markdown("### Next macro event")
+        st.caption("Macro feed not wired yet; this will auto-populate later.")
+        st.session_state.setdefault("next_macro_event", "")
+        st.text_area("Next", key="next_macro_event", height=210, placeholder="e.g., CPI 08:30 ET — estimate/notes…")
 
 
 def _parse_symbols(s: str) -> list[str]:
