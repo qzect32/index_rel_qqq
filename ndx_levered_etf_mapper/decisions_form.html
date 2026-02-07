@@ -48,79 +48,51 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Schwab earnings/calendar endpoint discovery + safety";
-const BLOCK_NOTE = "We will try Schwab endpoints for earnings calendar; if not available, we fall back to other seamless options.";
+const BLOCK_TITLE = "Filings watcher UX: surfacing reports + drilldown";
+const BLOCK_NOTE = "Now that the watcher runs daily, decide how you want alerts shown + how deep the drilldown should go.";
 
 const DECISIONS = [
   {
-    key: "schwab_endpoints_ok",
-    label: "1) Do you want me to attempt Schwab endpoint discovery in code now?",
-    why: "This may require adjusting Schwab OAuth scopes and handling entitlement errors cleanly.",
-    options: { A: "Yes", B: "Hold until you’re ready to test OAuth" },
-    default: "B",
-  },
-  {
-    key: "schwab_scope_policy",
-    label: "2) OAuth scope policy",
-    why: "Some endpoints may require more than readonly.",
-    options: { A: "Keep readonly only", B: "Allow expanding scopes if needed (you approve)" },
+    key: "signals_show_filings_panel",
+    label: "1) Add a Filings panel in Signals?",
+    why: "Right now you only see a badge count.",
+    options: { A: "Yes: show a small panel listing alerts", B: "No: badge only" },
     default: "A",
   },
   {
-    key: "earnings_calendar_fallback",
-    label: "3) If Schwab earnings calendar isn’t available",
-    why: "You want seamless; we need a Plan B.",
-    options: { A: "Use SEC filings timing as proxy for earnings events", B: "Use an external calendar feed later", C: "Show 'blocked' until Schwab works" },
+    key: "signals_filings_panel_location",
+    label: "2) If yes, where?",
+    why: "Signals is currently Halts | Earnings(expander) | Macro.",
+    options: { A: "Under Earnings expander", B: "Under Halts panel", C: "Replace Macro notes" },
     default: "A",
   },
   {
-    key: "filings_trigger",
-    label: "4) Auto-trigger filings download",
-    why: "When a new 10-Q/10-K/8-K appears, we can auto-download and run diff.",
-    options: { A: "On-demand only", B: "Auto when new filing detected for watchlist/hotlist", C: "Auto for main ticker only" },
-    default: "B",
-  },
-  {
-    key: "filings_check_interval",
-    label: "5) Filing check interval",
-    why: "SEC endpoints have rate limits; keep it reasonable.",
-    options: { A: "15 min", B: "60 min", C: "Daily" },
-    default: "B",
-  },
-  {
-    key: "signals_badge_logic",
-    label: "6) Signals badges",
-    why: "When should Signals show a badge for a new filing/report?",
-    options: { A: "Any new filing", B: "Only when diff score above threshold", C: "Never" },
-    default: "B",
-  },
-  {
-    key: "diff_threshold",
-    label: "7) Diff score threshold",
-    why: "Used when filtering badges/alerts.",
-    options: { A: "5", B: "10", C: "20" },
-    default: "B",
-  },
-  {
-    key: "report_retention",
-    label: "8) Keep reports",
-    why: "Controls disk usage.",
-    options: { A: "Keep all", B: "Keep 30 days", C: "Keep last 20" },
-    default: "C",
-  },
-  {
-    key: "edgar_contact",
-    label: "9) SEC User-Agent contact string",
-    why: "SEC guidance prefers a real contact method.",
-    options: { A: "Use generic 'contact: user'", B: "You will provide an email to embed" },
+    key: "filings_alert_sort",
+    label: "3) Sort alerts by",
+    why: "If multiple tickers trigger.",
+    options: { A: "Score desc", B: "Most recent", C: "Symbol" },
     default: "A",
   },
   {
-    key: "start_background_job",
-    label: "10) Start background filings watcher now?",
-    why: "This will run periodic checks and produce reports automatically.",
+    key: "filings_drilldown",
+    label: "4) Drilldown behavior",
+    why: "How you open/read the report.",
+    options: { A: "Show report.md inline", B: "Show paths only", C: "Add Download buttons" },
+    default: "A",
+  },
+  {
+    key: "earnings_tab_integration",
+    label: "5) Earnings tab integration",
+    why: "Tie watcher outputs into Earnings tab.",
+    options: { A: "Show recent reports list", B: "No change" },
+    default: "A",
+  },
+  {
+    key: "start_coding_filings_ux",
+    label: "6) Start coding this UX block now?",
+    why: "If yes, I’ll implement the panel + drilldown + recent reports list.",
     options: { A: "Yes", B: "Hold" },
-    default: "B",
+    default: "A",
   },
 ];
 
