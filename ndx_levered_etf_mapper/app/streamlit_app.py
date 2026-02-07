@@ -22,6 +22,7 @@ from etf_mapper.feeds import (
     WebHaltsFeed,
     WebEarningsCalendarFeed,
     EdgarFilingsFeed,
+    FedRssFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -1835,8 +1836,38 @@ with tab_dash:
 
     with hR:
         st.markdown("### Next macro event")
-        st.caption("Macro feed not wired yet; this will auto-populate later.")
+
+        # Auto-highlight from cached Fed RSS (most recent title + published)
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_fed_rss.json"
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                rows = obj.get("rows") if isinstance(obj, dict) else None
+                dff = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+            else:
+                dff = pd.DataFrame()
+        except Exception:
+            dff = pd.DataFrame()
+
         st.session_state.setdefault("next_macro_event", "")
+        if not dff.empty:
+            try:
+                if "published_ts" in dff.columns:
+                    dff["published_ts"] = pd.to_datetime(dff["published_ts"], errors="coerce", utc=True)
+                    dff = dff.sort_values("published_ts", ascending=False)
+                top = dff.iloc[0].to_dict()
+                title = str(top.get("title") or "").strip()
+                pub = str(top.get("published") or "").strip()
+                auto = f"{pub} — {title}".strip(" —")
+                # populate if empty
+                if not str(st.session_state.get("next_macro_event") or "").strip():
+                    st.session_state["next_macro_event"] = auto
+                st.caption(f"Auto (Fed RSS): {auto}")
+            except Exception:
+                pass
+        else:
+            st.caption("Macro auto-feed uses Fed RSS cache; no items cached yet.")
+
         st.text_area("Next", key="next_macro_event", height=210, placeholder="e.g., CPI 08:30 ET — estimate/notes…")
 
 
@@ -2865,8 +2896,49 @@ with tab_signals:
 
     with cM:
         st.markdown("### Macro")
-        st.caption("Manual note + next-event placeholder")
-        st.text_area("Notes", key="macro_events", height=280, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+
+        # Auto-feed: Fed RSS (all urls from data/rss_feeds.json -> fed.urls)
+        try:
+            cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
+            fed_urls = ((cfg.get("fed") or {}).get("urls")) if isinstance(cfg, dict) else None
+            fed_urls = fed_urls if isinstance(fed_urls, list) else []
+        except Exception:
+            fed_urls = []
+
+        fr = FedRssFeed(data_dir=_data_dir(), urls=[str(u) for u in fed_urls])
+        st.session_state.setdefault("macro_last_fetch", 0.0)
+        if (time.time() - float(st.session_state.get("macro_last_fetch", 0.0))) >= 60 * 60:
+            try:
+                _ = fr.fetch()
+            except Exception:
+                pass
+            st.session_state["macro_last_fetch"] = time.time()
+
+        dff = fr.read_cache()
+        if isinstance(dff, pd.DataFrame) and not dff.empty:
+            st.caption("Auto (Fed RSS) — most recent items")
+            show = dff.copy()
+            if "published_ts" in show.columns:
+                show = show.sort_values("published_ts", ascending=False)
+            st.dataframe(show[[c for c in ["published", "title"] if c in show.columns]].head(12), use_container_width=True, height=240, hide_index=True)
+
+            # highlight rule: most recent title + published
+            try:
+                top = show.iloc[0].to_dict()
+                title = str(top.get("title") or "").strip()
+                pub = str(top.get("published") or "").strip()
+                st.session_state.setdefault("next_macro_event", "")
+                auto = f"{pub} — {title}".strip(" —")
+                if not str(st.session_state.get("next_macro_event") or "").strip():
+                    st.session_state["next_macro_event"] = auto
+            except Exception:
+                pass
+        else:
+            st.caption("No Fed RSS items cached yet.")
+
+        st.markdown("---")
+        st.caption("Manual note + next-event override")
+        st.text_area("Notes", key="macro_events", height=220, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
         st.session_state.setdefault("next_macro_event", "")
         st.text_area("Next event", key="next_macro_event", height=120, placeholder="CPI 08:30 ET — notes…")
 
