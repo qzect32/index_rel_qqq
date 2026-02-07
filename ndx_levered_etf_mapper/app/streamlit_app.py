@@ -663,12 +663,12 @@ def _schwab_account_numbers() -> list[dict]:
 
 
 @st.cache_data(show_spinner=False, ttl=15)
-def _schwab_account_details(account_hash: str) -> dict:
+def _schwab_account_details(account_hash: str, *, fields: str = "positions") -> dict:
     api = _schwab_api()
     if api is None:
         return {}
     try:
-        js = api.account_details(account_hash, fields="positions")
+        js = api.account_details(account_hash, fields=fields)
     except Exception:
         return {}
     return js if isinstance(js, dict) else {}
@@ -1597,6 +1597,12 @@ with tab_scanner:
     st.caption(
         f"Broad scan scaffold. Quotes/candles come from Schwab. News/halts feeds are placeholders for now.  |  Event mode: {em}"
     )
+
+    # User preference: scanner is OFF by default (avoid unnecessary API calls).
+    scan_on = st.toggle("Enable scanning", value=bool(st.session_state.get("scan_on", False)), key="scan_on")
+    if not scan_on:
+        st.info("Scanner is off. Toggle 'Enable scanning' when you want to run it.")
+        st.stop()
 
     # Persistent hot list (saved under data/)
     st.session_state.setdefault("scanner_hotlist", _load_hotlist())
@@ -2989,12 +2995,13 @@ with tab_exposure:
                 h = str(a.get("hashValue") or a.get("accountHash") or a.get("hash") or "")
                 if h:
                     label = num[-4:] if num else h[:8]
-                    opts.append((f"…{label}  ({h[:6]}…)", h, num))
+                    opts.append((f"…{label}", h, num))
 
             if not opts:
                 st.warning("Accounts list did not include hashes. Can't fetch positions.")
             else:
-                mode = st.radio("Scope", ["Single account", "All accounts"], horizontal=True)
+                # Decision: default scope = All accounts
+                mode = st.radio("Scope", ["All accounts", "Single account"], horizontal=True, index=0)
 
                 if mode == "Single account":
                     pick = st.selectbox("Account", opts, format_func=lambda x: x[0])
@@ -3002,10 +3009,18 @@ with tab_exposure:
                 else:
                     hashes = [x[1] for x in opts]
 
-                rows = []
+                group_underlying = st.toggle(
+                    "Group under underlying",
+                    value=True,
+                    help="On by default. Groups options/futures under their underlying when Schwab provides underlyingSymbol.",
+                    key="expo_group_underlying",
+                )
+
+                # Pull account details (positions + best-effort balances)
+                per_account = []
                 raw_payloads = {}
                 for h in hashes:
-                    js = _schwab_account_details(h)
+                    js = _schwab_account_details(h, fields="positions")
                     raw_payloads[h] = js
 
                     # Schwab payload can be nested; handle a few common shapes
@@ -3020,10 +3035,17 @@ with tab_exposure:
                     if not isinstance(acct, dict):
                         continue
 
+                    # balances (best-effort; varies by entitlement/account type)
+                    bals = acct.get("currentBalances") if isinstance(acct.get("currentBalances"), dict) else {}
+                    net_liq = bals.get("liquidationValue") or bals.get("equity") or bals.get("accountValue")
+                    cash = bals.get("cashBalance") or bals.get("cashAvailableForTrading")
+                    bp = bals.get("buyingPower") or bals.get("availableFunds")
+
                     pos = acct.get("positions") or []
                     if not isinstance(pos, list):
                         pos = []
 
+                    rows = []
                     for p in pos:
                         if not isinstance(p, dict):
                             continue
@@ -3038,8 +3060,23 @@ with tab_exposure:
                             or sym
                         )
 
-                        qty = p.get("longQuantity") or p.get("quantity") or p.get("shortQuantity")
-                        mv = p.get("marketValue") or p.get("currentDayProfitLoss")  # mv preferred
+                        # Quantity: show shorts as negative when possible
+                        long_qty = p.get("longQuantity")
+                        short_qty = p.get("shortQuantity")
+                        qty = p.get("quantity")
+                        try:
+                            if short_qty not in (None, 0, 0.0):
+                                qty_out = -abs(float(short_qty))
+                            elif long_qty not in (None, 0, 0.0):
+                                qty_out = float(long_qty)
+                            elif qty not in (None, 0, 0.0):
+                                qty_out = float(qty)
+                            else:
+                                qty_out = None
+                        except Exception:
+                            qty_out = qty
+
+                        mv = p.get("marketValue")  # mv preferred
                         avg = p.get("averagePrice") or p.get("avgPrice")
                         pl = p.get("currentDayProfitLoss")
 
@@ -3049,14 +3086,32 @@ with tab_exposure:
                                 "symbol": str(sym),
                                 "underlying": str(underlying),
                                 "asset": asset,
-                                "qty": qty,
+                                "qty": qty_out,
                                 "avg_price": avg,
                                 "market_value": mv,
                                 "day_pl": pl,
                             }
                         )
 
-                df = pd.DataFrame(rows)
+                    per_account.append(
+                        {
+                            "hash": h,
+                            "label": next((o[0] for o in opts if o[1] == h), h[:6]),
+                            "net_liq": net_liq,
+                            "cash": cash,
+                            "buying_power": bp,
+                            "positions": pd.DataFrame(rows),
+                        }
+                    )
+
+                # Combined positions df
+                all_rows = []
+                for a in per_account:
+                    d = a.get("positions")
+                    if isinstance(d, pd.DataFrame) and not d.empty:
+                        all_rows.append(d)
+                df = pd.concat(all_rows, axis=0, ignore_index=True) if all_rows else pd.DataFrame()
+
                 if df.empty:
                     st.warning("No positions found (or schema mismatch).")
                     with st.expander("Raw account payloads (debug)", expanded=False):
@@ -3067,23 +3122,36 @@ with tab_exposure:
                         if c in df.columns:
                             df[c] = pd.to_numeric(df[c], errors="coerce")
 
-                    # Aggregate exposure by underlying (groups options/futures under their underlying when provided)
-                    expo = df.groupby(["underlying"], as_index=False).agg(
+                    key_col = "underlying" if group_underlying else "symbol"
+
+                    expo = df.groupby([key_col], as_index=False).agg(
                         market_value=("market_value", "sum"),
-                        qty=("qty", "sum"),
                         day_pl=("day_pl", "sum"),
                     )
-                    expo = expo.rename(columns={"underlying": "symbol"})
-                    expo = expo.sort_values("market_value", ascending=False)
+                    expo = expo.rename(columns={key_col: "symbol"})
+
                     total_mv = float(expo["market_value"].fillna(0.0).sum())
                     expo["pct"] = (expo["market_value"].fillna(0.0) / total_mv) if total_mv else 0.0
 
+                    # Decision: default sort by day P/L
+                    expo = expo.sort_values("day_pl", ascending=False)
+
                     topn = st.slider("Top symbols", 5, 60, 20, 5)
                     expo_top = expo.head(int(topn)).copy()
+                    other_mv = float(expo["market_value"].fillna(0.0).sum() - expo_top["market_value"].fillna(0.0).sum())
+                    if other_mv > 0:
+                        expo_top = pd.concat(
+                            [
+                                expo_top,
+                                pd.DataFrame([{ "symbol": "Other", "market_value": other_mv, "day_pl": None, "pct": other_mv / total_mv if total_mv else 0.0 }]),
+                            ],
+                            ignore_index=True,
+                        )
 
+                    # Combined summary
                     k1, k2, k3 = st.columns(3)
                     k1.metric("Total market value (sum)", f"${total_mv:,.0f}")
-                    k2.metric("Positions", f"{len(expo):,}")
+                    k2.metric("Grouped symbols" if group_underlying else "Symbols", f"{len(expo):,}")
                     k3.metric("Accounts in scope", f"{len(hashes)}")
 
                     fig = go.Figure(
@@ -3100,27 +3168,76 @@ with tab_exposure:
                     st.plotly_chart(fig, use_container_width=True)
 
                     st.markdown("### Exposure table")
-                    st.dataframe(
-                        expo.assign(pct=(expo["pct"] * 100.0)).rename(columns={"pct": "pct_%"}),
+                    expo_tbl = expo[["symbol", "market_value", "pct", "day_pl"]].copy()
+                    expo_tbl["pct_%"] = (expo_tbl["pct"] * 100.0).round(2)
+                    expo_tbl = expo_tbl.drop(columns=["pct"])
+
+                    # Set-as-main via data editor selection
+                    expo_tbl.insert(0, "set_main", False)
+                    edited = st.data_editor(
+                        expo_tbl,
                         use_container_width=True,
                         height=420,
+                        hide_index=True,
+                        column_config={
+                            "set_main": st.column_config.CheckboxColumn("Set main"),
+                        },
                     )
+                    try:
+                        picks = edited[edited["set_main"] == True]["symbol"].astype(str).tolist()  # noqa: E712
+                    except Exception:
+                        picks = []
+                    if picks:
+                        st.session_state["selected_ticker"] = str(picks[0]).upper().strip()
+                        st.toast(f"Main ticker set: {picks[0]}")
+
+                    # Account cards (collapsible) with balances in header (best-effort)
+                    st.markdown("### Accounts")
+                    st.caption("Balances are best-effort; if missing, we stay positions-only.")
+                    for a in per_account:
+                        label = a.get("label")
+                        nl = a.get("net_liq")
+                        cash = a.get("cash")
+                        bp = a.get("buying_power")
+
+                        def _fmt(x):
+                            try:
+                                return f"${float(x):,.0f}" if x not in (None, "") else "—"
+                            except Exception:
+                                return "—"
+
+                        hdr = f"{label} • NetLiq {_fmt(nl)} • Cash {_fmt(cash)} • BP {_fmt(bp)}"
+                        with st.expander(hdr, expanded=False):
+                            d = a.get("positions")
+                            if not isinstance(d, pd.DataFrame) or d.empty:
+                                st.write("(no positions)")
+                            else:
+                                # Raw positions view includes qty + avg_price (trade price)
+                                st.dataframe(
+                                    d[["symbol", "underlying", "asset", "qty", "avg_price", "market_value", "day_pl"]],
+                                    use_container_width=True,
+                                    height=260,
+                                    hide_index=True,
+                                )
 
                     st.markdown("### Shareable snapshot (redacted)")
-                    st.caption("This intentionally excludes account numbers and anything personally identifying.")
+                    st.caption("Markdown format, no account ids/numbers.")
                     snap = expo.copy()
                     snap["market_value"] = snap["market_value"].fillna(0.0).round(2)
                     snap["pct"] = (snap["pct"] * 100.0).round(2)
-                    snap = snap[["symbol", "qty", "market_value", "pct", "day_pl"]]
+                    snap = snap[["symbol", "market_value", "pct", "day_pl"]]
 
-                    txt = "\n".join(
-                        [
-                            f"{r.symbol:>8}  qty={r.qty:>10.4g}  mv=${r.market_value:>12,.0f}  pct={r.pct:>6.2f}%  dayPL={0 if pd.isna(r.day_pl) else float(r.day_pl):+.2f}"
-                            for r in snap.itertuples(index=False)
-                        ]
-                    )
-                    st.text_area("Snapshot", value=txt, height=220)
-                    st.download_button("Download snapshot.txt", data=txt.encode("utf-8"), file_name="exposure_snapshot.txt")
+                    md_lines = ["| symbol | mv | pct | dayPL |", "|---:|---:|---:|---:|"]
+                    for r in snap.itertuples(index=False):
+                        daypl = "" if pd.isna(r.day_pl) else f"{float(r.day_pl):+.2f}"
+                        md_lines.append(f"| {r.symbol} | ${float(r.market_value):,.0f} | {float(r.pct):.2f}% | {daypl} |")
+                    md = "\n".join(md_lines)
+
+                    st.text_area("Snapshot (markdown)", value=md, height=260)
+                    st.download_button("Download snapshot.md", data=md.encode("utf-8"), file_name="exposure_snapshot.md")
+
+                    with st.expander("Raw account payloads (debug)", expanded=False):
+                        st.json(raw_payloads)
 
                     st.caption("PDF export: we can add a one-click PDF once you tell me what format you like (1-page summary vs full tables).")
 
