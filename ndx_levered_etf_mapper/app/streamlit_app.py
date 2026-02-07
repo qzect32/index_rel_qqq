@@ -1513,7 +1513,19 @@ with tab_scanner:
     hL, hR = st.columns([0.72, 0.28])
     with hL:
         st.caption("Persistent (saved locally). Use it as your pinboard.")
-        st.write(hl if hl else "(empty)")
+
+        if not hl:
+            st.write("(empty)")
+        else:
+            # Remove buttons (Scanner-only)
+            for sym in hl[:50]:
+                rL, rR = st.columns([0.78, 0.22])
+                rL.write(sym)
+                if rR.button("Remove", key=f"hot_rm_{sym}"):
+                    nxt = [x for x in hl if x != sym]
+                    st.session_state["scanner_hotlist"] = nxt
+                    _save_hotlist(nxt)
+                    st.rerun()
     with hR:
         if st.button("Clear hot list"):
             st.session_state["scanner_hotlist"] = []
