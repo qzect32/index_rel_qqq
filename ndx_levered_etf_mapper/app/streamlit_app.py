@@ -1789,10 +1789,11 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
+        "Wall",
         "Halts",
         "Signals",
         "News",
@@ -2640,6 +2641,239 @@ with tab_scanner:
         st.markdown("#### Related headlines (manual)")
         st.session_state.setdefault("scanner_headlines", "")
         st.text_area("Headlines", key="scanner_headlines", height=220, placeholder="Paste bullet headlines here…")
+
+with tab_wall:
+    st.subheader("Wall")
+    st.caption("Wide monitor wall: dense grid view. Schwab-only quotes. No live orders.")
+
+    # Decisions applied:
+    # - grid: 4x8
+    # - source: Watchlist + Hot List (combined)
+    # - refresh: 60s
+    # - quote TTL: 30s
+    # - micro sparkline: 1h
+    # - heat: on (computed locally from current wall universe)
+    # - click behavior: both (set main ticker + focus scanner)
+    # - filters: movers only
+    # - color: by % change
+    # - badges: halt + filings
+    # - export: csv + pdf
+    # - perf: aggressive
+
+    # Auto-refresh
+    st_autorefresh(interval=60 * 1000, key="wall_autorefresh")
+
+    # Build symbol universe
+    watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+    hot = _hotlist_combined()
+    universe = []
+    for s in (watch + hot):
+        s = str(s).upper().strip()
+        if not s:
+            continue
+        if s not in universe:
+            universe.append(s)
+
+    # Aggressive posture: allow larger candidate pool, but cap fetches
+    universe = universe[:120]
+
+    # Quote cache (TTL=30s)
+    st.session_state.setdefault("wall_quote_cache", {})
+    qc = st.session_state.get("wall_quote_cache")
+    if not isinstance(qc, dict):
+        qc = {}
+        st.session_state["wall_quote_cache"] = qc
+
+    def _wall_quote(sym: str, ttl_s: float = 30.0) -> dict:
+        sym = str(sym).upper().strip()
+        now = time.time()
+        rec = qc.get(sym)
+        if isinstance(rec, dict):
+            ts = float(rec.get("ts", 0.0) or 0.0)
+            if (now - ts) <= float(ttl_s):
+                q = rec.get("q")
+                return q if isinstance(q, dict) else {}
+        q = _schwab_quote(sym)
+        qc[sym] = {"ts": now, "q": q}
+        return q
+
+    # Preload badges sources
+    # Halts cached file
+    halts_active = set()
+    try:
+        p = _data_dir() / "feeds_cache" / "latest_halts_cboe.json"
+        if not p.exists():
+            p = _data_dir() / "feeds_cache" / "latest_halts_nasdaq.json"
+        if not p.exists():
+            p = _data_dir() / "feeds_cache" / "latest_halts_nyse.json"
+        if p.exists():
+            obj = json.loads(p.read_text(encoding="utf-8"))
+            rows = obj.get("rows") if isinstance(obj, dict) else None
+            dfh = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+            if not dfh.empty and "symbol" in dfh.columns:
+                if "resumed" in dfh.columns:
+                    dfh = dfh[dfh["resumed"] == False]  # noqa: E712
+                halts_active = set([str(x).upper().strip() for x in dfh["symbol"].tolist() if str(x).strip()])
+    except Exception:
+        halts_active = set()
+
+    # Filings alerts
+    filings_alerts = st.session_state.get("signals_filings_alerts", [])
+    filings_syms = set()
+    try:
+        if isinstance(filings_alerts, list):
+            for a in filings_alerts:
+                if isinstance(a, dict) and a.get("symbol"):
+                    filings_syms.add(str(a.get("symbol")).upper().strip())
+    except Exception:
+        filings_syms = set()
+
+    # Build rows (quotes)
+    rows = []
+    for s in universe:
+        q = _wall_quote(s, ttl_s=30.0)
+        px = q.get("mark") or q.get("last")
+        chg = q.get("netChange")
+        chgp = q.get("netPct")
+        vol = q.get("totalVolume") or q.get("volume")
+        rows.append({"symbol": s, "px": px, "chg_%": chgp, "chg": chg, "vol": vol})
+
+    df = pd.DataFrame(rows)
+    for c in ["px", "chg_%", "chg", "vol"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Movers-only filter: take top N by abs % change
+    df["abs_chg_%"] = df["chg_%"].abs()
+    df = df.sort_values("abs_chg_%", ascending=False)
+
+    # Grid 4x8 => 32 tiles
+    N = 32
+    df = df.head(N).copy()
+
+    # Heat score (local ranks across wall only)
+    try:
+        em = str(st.session_state.get("event_mode", "Normal"))
+        w = _heat_weights_for_mode(em)
+        df["dollar_vol"] = df["px"].fillna(0.0) * df["vol"].fillna(0.0)
+        dv_rank = df["dollar_vol"].rank(pct=True).fillna(0.0)
+        mv_rank = df["abs_chg_%"].rank(pct=True).fillna(0.0)
+        df["heat"] = (w["w_move"] * mv_rank + w["w_dollar_vol"] * dv_rank) * 100.0
+    except Exception:
+        df["heat"] = None
+
+    # Exports
+    csv_bytes = df[[c for c in ["symbol", "px", "chg_%", "vol", "heat"] if c in df.columns]].to_csv(index=False).encode("utf-8")
+    st.download_button("Download CSV", data=csv_bytes, file_name="wall_snapshot.csv", mime="text/csv")
+
+    # PDF export (simple)
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        import io
+
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=letter)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(40, 760, "Market Hub — Wall snapshot")
+        c.setFont("Helvetica", 10)
+        c.drawString(40, 744, time.strftime("%Y-%m-%d %H:%M:%S"))
+
+        y = 720
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(40, y, "SYM")
+        c.drawString(90, y, "PX")
+        c.drawString(140, y, "%")
+        c.drawString(190, y, "VOL")
+        c.drawString(260, y, "HEAT")
+        y -= 12
+        c.setFont("Helvetica", 9)
+
+        for _, r in df.iterrows():
+            if y < 50:
+                c.showPage()
+                y = 760
+                c.setFont("Helvetica", 9)
+            sym = str(r.get("symbol") or "")
+            px = r.get("px")
+            chgp = r.get("chg_%")
+            vol = r.get("vol")
+            heat = r.get("heat")
+            c.drawString(40, y, sym)
+            c.drawString(90, y, (f"{px:,.2f}" if px == px else "—"))
+            c.drawString(140, y, (f"{chgp:+.2f}%" if chgp == chgp else "—"))
+            c.drawString(190, y, (f"{int(vol):,}" if vol == vol else "—"))
+            c.drawString(260, y, (f"{heat:,.1f}" if heat == heat else "—"))
+            y -= 11
+
+        c.save()
+        pdf_bytes = buf.getvalue()
+        st.download_button("Download PDF", data=pdf_bytes, file_name="wall_snapshot.pdf", mime="application/pdf")
+    except Exception:
+        st.caption("PDF export unavailable (reportlab missing).")
+
+    # Render grid
+    tile_syms = df["symbol"].tolist() if "symbol" in df.columns else []
+
+    def _tile_color(chgp: float) -> str:
+        try:
+            v = float(chgp)
+        except Exception:
+            return "rgba(255,255,255,0.04)"
+        if v > 0:
+            return "rgba(51,255,204,0.10)"
+        if v < 0:
+            return "rgba(255,99,132,0.10)"
+        return "rgba(255,255,255,0.04)"
+
+    cols_per_row = 8
+    for i in range(0, len(tile_syms), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            k = i + j
+            if k >= len(tile_syms):
+                continue
+            sym = tile_syms[k]
+            r = df[df["symbol"] == sym].iloc[0].to_dict() if not df.empty else {}
+            px = r.get("px")
+            chgp = r.get("chg_%")
+            heat = r.get("heat")
+
+            badge = ""
+            if sym in halts_active:
+                badge += " HALT"
+            if sym in filings_syms:
+                badge += " FIL"
+            bg = _tile_color(chgp)
+            cols[j].markdown(
+                f"<div style='padding:10px;border-radius:12px;background:{bg};border:1px solid rgba(255,255,255,0.10)'>"
+                f"<div style='font-weight:700'>{sym} <span style='font-size:11px;color:#9ca3af'>{badge}</span></div>"
+                f"<div style='font-size:16px'>{(f'${float(px):,.2f}' if px==px else '—')}</div>"
+                f"<div style='color:#9ca3af;font-size:12px'>{(f'{float(chgp):+.2f}%' if chgp==chgp else '—')} • heat {(f'{float(heat):.0f}' if heat==heat else '—')}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            b1, b2 = cols[j].columns([0.5, 0.5])
+            if b1.button("Main", key=f"wall_main_{sym}"):
+                st.session_state["selected_ticker"] = sym
+                st.toast(f"Main ticker set: {sym}")
+                st.rerun()
+            if b2.button("Focus", key=f"wall_focus_{sym}"):
+                st.session_state["scanner_focus"] = sym
+                st.session_state["scanner_pin"] = True
+                st.toast(f"Scanner focus pinned: {sym}")
+                st.rerun()
+
+            # Micro-sparkline (1h)
+            try:
+                sp = _sparkline_history(sym, window="1h")
+                if isinstance(sp, pd.DataFrame) and not sp.empty and "close" in sp.columns:
+                    cols[j].line_chart(sp["close"].tail(60), height=60)
+            except Exception:
+                pass
+
 
 with tab_halts:
     st.subheader("Trading halts")
