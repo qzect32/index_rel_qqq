@@ -32,6 +32,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # PDF exports (reportlab)
 from io import BytesIO
+import time
 
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
 from etf_mapper.config import load_schwab_secrets
@@ -172,6 +173,9 @@ def _sparkline_history(ticker: str, *, window: str = "1h") -> pd.DataFrame:
 
     Cached to reduce Schwab call volume (user preference: 60–120s).
     """
+    if _budget_blocked():
+        return pd.DataFrame()
+
     api = _schwab_api()
     if api is None:
         return pd.DataFrame()
@@ -180,6 +184,7 @@ def _sparkline_history(ticker: str, *, window: str = "1h") -> pd.DataFrame:
     if not tkr:
         return pd.DataFrame()
 
+    _budget_note_call(1)
     try:
         js = api.price_history(
             tkr,
@@ -526,23 +531,36 @@ def _schwab_profile(ticker: str) -> dict:
     return out
 
 
-@st.cache_data(show_spinner=False, ttl=5)
+@st.cache_data(show_spinner=False, ttl=15)
 def _schwab_quote(ticker: str) -> dict:
     """Fetch a live quote snapshot from Schwab.
 
     Returned dict is normalized and includes best-effort timestamps so the UI can show "data age".
+
+    Guardrails:
+      - default quote TTL is 15s
+      - budget cap enforced (60 calls/min default)
+      - on suspected 429, a short cooldown is applied
     """
     tkr = _normalize_ticker(ticker)
     if not tkr:
         return {}
 
+    if _budget_blocked():
+        return {"symbol": tkr, "raw": {}, "_blocked": True}
+
     api = _schwab_api()
     if api is None:
         return {}
 
+    _budget_note_call(1)
     try:
         js = api.quotes([tkr])
-    except Exception:
+    except Exception as e:
+        if _looks_rate_limited(str(e)):
+            # exponential-ish cooldown based on how far over budget we are
+            over = max(0, _budget_calls_last_minute() - _budget_cap_per_minute())
+            _budget_set_cooldown(min(90.0, 10.0 + 5.0 * over))
         return {}
 
     if isinstance(js, dict):
@@ -680,6 +698,52 @@ def _schwab_account_details(account_hash: str, *, fields: str = "positions") -> 
 def _looks_rate_limited(err: str) -> bool:
     e = (err or "").lower()
     return any(x in e for x in ["429", "too many", "rate limit", "ratelimit", "throttle", "temporarily blocked"])
+
+
+def _budget_note_call(n: int = 1) -> None:
+    """Track API call timestamps for a rolling calls/min counter."""
+    now = time.time()
+    st.session_state.setdefault("api_calls_ts", [])
+    ts = st.session_state.get("api_calls_ts")
+    if not isinstance(ts, list):
+        ts = []
+    # add n timestamps
+    for _ in range(max(1, int(n))):
+        ts.append(now)
+    # prune >60s
+    cutoff = now - 60.0
+    ts = [t for t in ts if isinstance(t, (int, float)) and t >= cutoff]
+    st.session_state["api_calls_ts"] = ts
+
+
+def _budget_calls_last_minute() -> int:
+    now = time.time()
+    ts = st.session_state.get("api_calls_ts")
+    if not isinstance(ts, list):
+        return 0
+    cutoff = now - 60.0
+    return int(sum(1 for t in ts if isinstance(t, (int, float)) and t >= cutoff))
+
+
+def _budget_cap_per_minute() -> int:
+    return int(st.session_state.get("api_budget_cap", 60))
+
+
+def _budget_blocked() -> bool:
+    # If we recently hit a rate limit, honor a cooldown.
+    until = st.session_state.get("api_cooldown_until")
+    try:
+        if until is not None and time.time() < float(until):
+            return True
+    except Exception:
+        pass
+
+    # Soft cap: if over cap, treat as blocked.
+    return _budget_calls_last_minute() >= _budget_cap_per_minute()
+
+
+def _budget_set_cooldown(seconds: float) -> None:
+    st.session_state["api_cooldown_until"] = time.time() + float(seconds)
 
 
 @st.cache_data(show_spinner=False, ttl=60 * 10)
@@ -1330,6 +1394,27 @@ with st.sidebar:
             # lightweight refresh loop (useful during market hours)
             st_autorefresh(interval=60 * 1000, key="autorefresh")
 
+    with st.expander("Guardrails", expanded=False):
+        st.caption("Request budget + rate-limit backoff. Default: 60 calls/min soft cap.")
+        st.session_state.setdefault("api_budget_cap", 60)
+        st.session_state["api_budget_cap"] = st.slider(
+            "API soft cap (calls/min)",
+            min_value=20,
+            max_value=240,
+            value=int(st.session_state.get("api_budget_cap", 60)),
+            step=10,
+        )
+
+        calls = _budget_calls_last_minute()
+        cap = _budget_cap_per_minute()
+        blocked = _budget_blocked()
+        st.write({"calls_last_minute": calls, "cap": cap, "blocked": bool(blocked)})
+
+        if st.button("Reset call counter / clear cooldown", key="guardrails_reset"):
+            st.session_state["api_calls_ts"] = []
+            st.session_state["api_cooldown_until"] = None
+            st.rerun()
+
     with st.expander("Secrets", expanded=False):
         # Schwab-only UI.
         secrets = load_schwab_secrets(_data_dir())
@@ -1881,39 +1966,59 @@ with tab_scanner:
         else:
             uni = _parse_symbols(custom)
 
-        max_n = st.slider("Max symbols to scan", 5, 300, min(80, max(5, len(uni) or 80)), 5)
+        max_n = st.slider("Max symbols to scan", 5, 300, 80, 5)
         uni = uni[: int(max_n)]
 
-    # Scan
-    with st.spinner(f"Scanning {len(uni)} symbols via Schwab quotes…"):
-        rows = []
-        for s in uni:
-            q = _schwab_quote(s)
-            rec = q.get("raw") if isinstance(q.get("raw"), dict) else {}
-            px = q.get("mark") or q.get("last")
-            vol = q.get("volume")
-            chg = q.get("netChange")
-            chgp = q.get("netPct")
+    # Scan (manual, by design)
+    st.session_state.setdefault("scanner_ran", False)
 
-            rows.append(
-                {
-                    "symbol": s,
-                    "px": px,
-                    "volume": vol,
-                    "chg": chg,
-                    "chg_%": chgp,
-                    "assetType": rec.get("assetType"),
-                    "exchange": rec.get("exchangeName"),
-                }
-            )
+    scan_cols = st.columns([0.25, 0.75], vertical_alignment="center")
+    if scan_cols[0].button("Scan now", key="scan_now"):
+        st.session_state["scanner_ran"] = True
 
-        sdf = pd.DataFrame(rows)
-        for c in ["px", "volume", "chg", "chg_%"]:
-            if c in sdf.columns:
-                sdf[c] = pd.to_numeric(sdf[c], errors="coerce")
-        if "px" in sdf.columns and "volume" in sdf.columns:
-            sdf["dollar_vol"] = sdf["px"].fillna(0.0) * sdf["volume"].fillna(0.0)
+    if _budget_blocked():
+        st.warning("API budget hit (or cooldown). Scanner is paused. Clear cooldown in Sidebar → Guardrails.")
 
+    sdf = st.session_state.get("scanner_last_sdf")
+    if not isinstance(sdf, pd.DataFrame):
+        sdf = pd.DataFrame()
+
+    if st.session_state.get("scanner_ran") and (not _budget_blocked()):
+        with st.spinner(f"Scanning {len(uni)} symbols via Schwab quotes…"):
+            rows = []
+            for s in uni:
+                q = _schwab_quote(s)
+                rec = q.get("raw") if isinstance(q.get("raw"), dict) else {}
+                px = q.get("mark") or q.get("last")
+                vol = q.get("volume")
+                chg = q.get("netChange")
+                chgp = q.get("netPct")
+
+                rows.append(
+                    {
+                        "symbol": s,
+                        "px": px,
+                        "volume": vol,
+                        "chg": chg,
+                        "chg_%": chgp,
+                        "assetType": rec.get("assetType"),
+                        "exchange": rec.get("exchangeName"),
+                    }
+                )
+
+            sdf = pd.DataFrame(rows)
+            for c in ["px", "volume", "chg", "chg_%"]:
+                if c in sdf.columns:
+                    sdf[c] = pd.to_numeric(sdf[c], errors="coerce")
+            if "px" in sdf.columns and "volume" in sdf.columns:
+                sdf["dollar_vol"] = sdf["px"].fillna(0.0) * sdf["volume"].fillna(0.0)
+
+            st.session_state["scanner_last_sdf"] = sdf
+
+    if sdf.empty:
+        st.info("Scanner is idle. Click 'Scan now' to run a scan.")
+        # Create empty placeholder frame so downstream UI doesn't crash
+        sdf = pd.DataFrame(columns=["symbol", "px", "volume", "chg", "chg_%", "dollar_vol"])
     st.markdown("### Rankings")
     metric = st.selectbox(
         "Rank by",
