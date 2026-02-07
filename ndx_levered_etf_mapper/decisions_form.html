@@ -48,35 +48,42 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "TODO tracker reconciliation: mark DONE + regenerate TODO_STATUS";
-const BLOCK_NOTE = "Right now TODO_STATUS shows 0 DONE. Decide how aggressive to be in auto-marking completed items.";
+const BLOCK_TITLE = "Hot List per Event mode (Normal/Fed/CPI/Earnings)";
+const BLOCK_NOTE = "Currently Hot List is global. This adds separate lists per event mode, with minimal UI friction.";
 
 const DECISIONS = [
   {
-    key: "todo_mark_mode",
-    label: "1) How should we mark DONE in TODO.md?",
-    why: "We can auto-detect from commits/features, but it’s safer to do it in batches.",
-    options: { A: "Auto-mark based on known completed blocks", B: "Manual: you tell me items", C: "Semi-auto: I propose, you approve" },
+    key: "hotlist_mode",
+    label: "1) Storage mode",
+    why: "How should hot list be stored and persisted?",
+    options: { A: "One file with multiple lists keyed by event mode", B: "Separate file per mode" },
+    default: "A",
+  },
+  {
+    key: "hotlist_default_view",
+    label: "2) Default view in Scanner",
+    why: "When you open Scanner, which hot list is shown?",
+    options: { A: "Current event mode", B: "All modes combined", C: "Always Normal" },
+    default: "A",
+  },
+  {
+    key: "hotlist_dashboard",
+    label: "3) Dashboard Hot List tile",
+    why: "What should Dashboard show?",
+    options: { A: "Current event mode", B: "Combined view", C: "Pinned mode selector" },
     default: "C",
   },
   {
-    key: "todo_batch_size",
-    label: "2) Batch size",
-    why: "You prefer 5–15 at a time.",
-    options: { A: "5", B: "10", C: "15" },
-    default: "C",
+    key: "hotlist_migration",
+    label: "4) Migration of existing global hot list",
+    why: "You already have items saved.",
+    options: { A: "Move existing symbols into Normal list", B: "Copy into all modes", C: "Start empty" },
+    default: "A",
   },
   {
-    key: "todo_scope",
-    label: "3) Scope to reconcile first",
-    why: "Pick the most relevant slice.",
-    options: { A: "Signals/Earnings/Macro/News blocks only", B: "Everything completed so far", C: "Only exports/guardrails" },
-    default: "B",
-  },
-  {
-    key: "start_reconcile",
-    label: "4) Start reconciling TODOs now?",
-    why: "If yes, I’ll update TODO.md and regenerate TODO_STATUS.md so % done becomes meaningful.",
+    key: "start_coding_hotlist_modes",
+    label: "5) Start coding this block now?",
+    why: "If yes, I’ll implement storage migration + UI wiring (Scanner + Dashboard).",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
