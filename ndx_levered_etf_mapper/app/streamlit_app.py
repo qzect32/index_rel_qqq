@@ -19,6 +19,7 @@ from etf_mapper.feeds import (
     StubFilingsFeed,
     StubActivesFeed,
     StubInternalsFeed,
+    WebHaltsFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -2482,31 +2483,120 @@ with tab_scanner:
 with tab_halts:
     st.subheader("Trading halts")
 
-    halts_feed = StubHaltsFeed()
-    st.caption(f"Feed status: {halts_feed.status().detail}")
+    # Auto-fetch feed (Nasdaq + NYSE + optional Cboe)
+    st.session_state.setdefault("halts_auto", True)
 
-    st.info(
-        "Scaffold mode: auto-fetch not wired yet. Paste a halts CSV below (or later we'll fetch Nasdaq/NYSE)."
+    # Load URLs from decisions.json / rss_feeds.json if present (best-effort)
+    halts_urls = {
+        "nasdaq": "https://www.nasdaqtrader.com/trader.aspx?id=tradehalts",
+        "nyse": "https://beta.nyse.com/trade/trading-halts",
+        "cboe": "https://www.cboe.com/us/equities/market_statistics/halts/",
+    }
+    try:
+        dec_p = _data_dir() / "decisions.json"
+        if dec_p.exists():
+            dec = json.loads(dec_p.read_text(encoding="utf-8"))
+            pu = (((dec.get("provided_urls") or {}).get("halts")) or {}) if isinstance(dec, dict) else {}
+            if isinstance(pu, dict):
+                if pu.get("nasdaq"):
+                    halts_urls["nasdaq"] = str(pu.get("nasdaq"))
+                if pu.get("nyse"):
+                    halts_urls["nyse"] = str(pu.get("nyse"))
+                if pu.get("cboe_halts"):
+                    halts_urls["cboe"] = str(pu.get("cboe_halts"))
+    except Exception:
+        pass
+
+    # Priority: Cboe → Nasdaq → NYSE (your latest pick)
+    feed = WebHaltsFeed(
+        data_dir=_data_dir(),
+        urls=halts_urls,
+        include_cboe=True,
+        source_priority=["cboe", "nasdaq", "nyse"],
     )
 
-    raw = st.text_area(
-        "Paste halts CSV (columns like: symbol, market, reason, halt_time, resume_time)",
-        value="",
-        height=220,
-        placeholder="symbol,market,reason,halt_time,resume_time\nTICKER,NASDAQ,T1,09:45:01,10:15:00",
-    )
+    topL, topR = st.columns([0.55, 0.45], vertical_alignment="top")
+    with topL:
+        st.caption(f"Feed status: {feed.status().detail}")
+        st.session_state["halts_auto"] = st.toggle("Auto-fetch", value=bool(st.session_state.get("halts_auto", True)))
+        refresh = st.button("Refresh now")
 
-    if raw.strip():
-        try:
-            import io
+    with topR:
+        st.caption("Sources: NasdaqTrader + NYSE + Cboe (best-effort HTML parsing).")
 
-            hdf = pd.read_csv(io.StringIO(raw))
-            st.dataframe(hdf, use_container_width=True, height=420)
-        except Exception as e:
-            st.error(f"Could not parse CSV: {e}")
-            st.caption("Tip: make sure the first line is a header row.")
+    # throttle: only fetch when tab visible and either refresh clicked or 60s elapsed
+    st.session_state.setdefault("halts_last_fetch", 0.0)
+    now = time.time()
+    should_fetch = False
+    if refresh:
+        should_fetch = True
+    elif bool(st.session_state.get("halts_auto", True)):
+        if (now - float(st.session_state.get("halts_last_fetch", 0.0))) >= 60.0:
+            should_fetch = True
+
+    if should_fetch:
+        hdf = feed.fetch_halts()
+        st.session_state["halts_last_fetch"] = time.time()
+        st.session_state["halts_last_df"] = hdf
     else:
-        st.info("No halts pasted yet.")
+        hdf = st.session_state.get("halts_last_df")
+        if not isinstance(hdf, pd.DataFrame):
+            hdf = pd.DataFrame()
+
+    if hdf is None or hdf.empty:
+        st.info("No halts data (yet). Click Refresh now.")
+    else:
+        # Default filter: active halts only
+        st.markdown("### Halts")
+        active_only = st.toggle("Active only", value=True, help="Default ON")
+        show = hdf.copy()
+
+        # Active-only heuristic: missing resume time or not resumed
+        if active_only:
+            if "resumed" in show.columns:
+                show = show[show["resumed"] == False]  # noqa: E712
+            else:
+                show = show[show.get("resume_time_et", "").astype(str).str.strip() == ""]
+
+        # Highlight resumes within 15 minutes (best-effort parse)
+        def _mins_until_resume(s: str) -> float:
+            try:
+                if not s:
+                    return 1e9
+                # Expect formats like '02/07/2026 10:49:38' or '10:49:38'
+                stxt = str(s).strip()
+                if "/" in stxt:
+                    dt = pd.to_datetime(stxt, errors="coerce")
+                else:
+                    # today
+                    dt = pd.to_datetime(pd.Timestamp.now().strftime("%Y-%m-%d") + " " + stxt, errors="coerce")
+                if pd.isna(dt):
+                    return 1e9
+                return float((dt - pd.Timestamp.now()).total_seconds() / 60.0)
+            except Exception:
+                return 1e9
+
+        if "resume_time_et" in show.columns:
+            show["mins_to_resume"] = show["resume_time_et"].astype(str).map(_mins_until_resume)
+
+        st.dataframe(show, use_container_width=True, height=520)
+
+    with st.expander("Legacy paste/parse (fallback)", expanded=False):
+        st.info("If auto-fetch breaks, you can still paste a CSV.")
+        raw = st.text_area(
+            "Paste halts CSV",
+            value="",
+            height=180,
+            placeholder="symbol,market,reason,halt_time,resume_time\nTICKER,NASDAQ,T1,09:45:01,10:15:00",
+        )
+        if raw.strip():
+            try:
+                import io
+
+                hdf2 = pd.read_csv(io.StringIO(raw))
+                st.dataframe(hdf2, use_container_width=True, height=420)
+            except Exception as e:
+                st.error(f"Could not parse CSV: {e}")
 
     st.markdown("### What’s needed next")
     st.write(
