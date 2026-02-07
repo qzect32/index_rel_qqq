@@ -158,6 +158,30 @@ def _scanners_dir() -> Path:
     return _data_dir() / "scanners"
 
 
+def _decisions_path() -> Path:
+    return _data_dir() / "decisions.json"
+
+
+def _load_decisions() -> dict:
+    p = _decisions_path()
+    if not p.exists():
+        return {}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_decisions(obj: dict) -> None:
+    try:
+        p = _decisions_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _settings_defaults() -> dict:
     # Keep this small and non-secret.
     return {
@@ -1753,7 +1777,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
@@ -1766,6 +1790,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
         "Casino Lab",
         "Exposure",
         "Exports",
+        "Decisions",
         "Admin",
     ]
 )
@@ -3757,6 +3782,57 @@ with tab_exports:
                 st.write(p.name)
     except Exception:
         st.write("(could not list exports)")
+
+
+with tab_decisions:
+    st.subheader("Decisions")
+    st.caption("Use this page as a lightweight multiple-choice form. Decisions are saved locally to data/decisions.json")
+
+    decisions = _load_decisions()
+
+    # --- Current decision set: Integrations / Feeds ---
+    st.markdown("### Integrations / Feeds (current block)")
+
+    q = [
+        ("alerts_priority", "1) Schwab-native Alerts priority", {"A": "Do Alerts next (big unlock)", "B": "Do something else first"}),
+        ("alerts_scope", "2) Alerts scope", {"A": "Price alerts only", "B": "Price + % change + time-based (if available)"}),
+        ("outbound_domains", "3) Allowed outbound domains policy", {"A": "Schwab-only (no external HTTP)", "B": "Allow specific public domains (allowlist)"}),
+        ("halts_source", "4) Halts feed source", {"A": "Nasdaq Trader", "B": "NYSE", "C": "Both (merge/dedupe)"}),
+        ("news_mode", "5) News", {"A": "Keep manual paste for now", "B": "Wire a basic RSS/news feed"}),
+        ("macro_calendar", "6) Macro calendar", {"A": "Manual paste stays", "B": "Add an auto calendar feed"}),
+        ("earnings_calendar", "7) Earnings calendar", {"A": "Manual CSV/paste only", "B": "Add an auto earnings feed"}),
+        ("actives_movers", "8) Most active / movers universe", {"A": "Keep curated universe only", "B": "Add actives feed"}),
+        ("balances_now", "9) Exposure balances reliability", {"A": "Positions-only primary; balances best-effort", "B": "Normalize balances across account types now"}),
+        ("oauth_arch", "10) OAuth/token architecture", {"A": "One app/token set if possible", "B": "Separate read-only vs trader scopes/apps"}),
+    ]
+
+    with st.form("decisions_form"):
+        picks = {}
+        for key, label, opts in q:
+            # default to last saved, else first key
+            default = decisions.get(key)
+            if default not in opts:
+                default = list(opts.keys())[0]
+            picks[key] = st.radio(label, list(opts.keys()), index=list(opts.keys()).index(default), format_func=lambda k, o=opts: f"{k}) {o[k]}")
+            st.divider()
+
+        submitted = st.form_submit_button("Save decisions")
+
+    if submitted:
+        for k, v in picks.items():
+            decisions[k] = v
+        decisions["_updated_at"] = _local_timestamp_compact()
+        _save_decisions(decisions)
+        st.success(f"Saved to: {_decisions_path()}")
+
+    st.markdown("### Current saved answers")
+    st.json(decisions)
+
+    st.markdown("### Next step helper")
+    if decisions.get("outbound_domains") == "B":
+        st.info("Next: we need an allowlist of outbound domains (Nasdaq/NYSE, calendar provider, news RSS domains, etc.).")
+    else:
+        st.info("Outbound stays Schwab-only. Next: focus on Schwab Alerts endpoints/scopes.")
 
 
 with tab_admin:
