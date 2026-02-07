@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Market Hub — Decisions Form</title>
+  <style>
+    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 60px; }
+    h1 { margin: 6px 0 6px; font-size: 22px; }
+    p { margin: 6px 0 12px; color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px; margin: 12px 0; }
+    .q { font-weight: 650; margin-bottom: 8px; }
+    .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; cursor:pointer; }
+    .opt input { margin-right: 10px; accent-color: var(--accent); }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 650; }
+    button.primary { background: rgba(51,255,204,0.10); border-color: rgba(51,255,204,0.35); }
+    pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px; }
+    .tiny { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Market Hub — Decisions Form</h1>
+    <p>Pick answers, then click <b>Generate JSON</b>. Paste the JSON back into chat, or save it as <code>data/decisions.json</code>.</p>
+
+    <div id="questions"></div>
+
+    <div class="card">
+      <div class="row">
+        <button class="primary" id="gen">Generate JSON</button>
+        <button id="copy">Copy JSON</button>
+        <button id="download">Download decisions.json</button>
+        <button id="reset">Reset</button>
+      </div>
+      <p class="tiny">Tip: If Copy is blocked by the browser, use Download.</p>
+      <pre id="out">(click Generate JSON)</pre>
+    </div>
+
+    <p class="tiny">This is local-only: it doesn’t send anything anywhere by itself.</p>
+  </div>
+
+<script>
+const DECISIONS = [
+  {
+    key: "halts_nasdaq_source",
+    label: "1) Nasdaq halts URL source",
+    options: { A: "NasdaqTrader RSS (if available)", B: "NasdaqTrader CSV/HTML page parse" },
+    default: "B",
+  },
+  {
+    key: "halts_nyse_source",
+    label: "2) NYSE halts URL source",
+    options: { A: "NYSE CSV/HTML page parse", B: "Skip NYSE for now (Nasdaq only)" },
+    default: "A",
+  },
+  {
+    key: "halts_domains",
+    label: "3) Allowed domains (halts)",
+    options: { A: "nasdaqtrader.com only", B: "nasdaqtrader.com + nyse.com" },
+    default: "B",
+  },
+  {
+    key: "news_feed_type",
+    label: "4) News feed type",
+    options: { A: "RSS only (no API keys)", B: "Vendor news API (key-based)" },
+    default: "A",
+  },
+  {
+    key: "news_allowlist_style",
+    label: "5) News domains allowlist style",
+    options: { A: "Allow RSS from a small list (3–6 domains)", B: "Allow any RSS URL you paste" },
+    default: "A",
+  },
+  {
+    key: "macro_provider",
+    label: "6) Macro calendar provider",
+    options: { A: "Fed calendar + separate econ calendar RSS", B: "Single provider for all macro events" },
+    default: "A",
+  },
+  {
+    key: "earnings_provider",
+    label: "7) Earnings calendar provider",
+    options: { A: "Paid API (best quality)", B: "Free source (scrape/RSS) + expect breakage" },
+    default: "B",
+  },
+  {
+    key: "fetch_cadence",
+    label: "8) Fetch cadence (halts/news/calendar)",
+    options: { A: "Manual refresh buttons only", B: "Auto-refresh every N minutes" },
+    default: "B",
+  },
+  {
+    key: "cache_ttl",
+    label: "9) Caching TTL",
+    options: { A: "Cache 5 minutes", B: "Cache 15 minutes" },
+    default: "A",
+  },
+  {
+    key: "feed_storage",
+    label: "10) Storage",
+    options: { A: "Store last fetched raw text in data/feeds_cache/", B: "Store only parsed normalized tables" },
+    default: "A",
+  },
+];
+
+function el(tag, attrs={}, children=[]) {
+  const e=document.createElement(tag);
+  Object.entries(attrs).forEach(([k,v])=>{
+    if(k==="class") e.className=v;
+    else if(k==="html") e.innerHTML=v;
+    else e.setAttribute(k,v);
+  });
+  (Array.isArray(children)?children:[children]).forEach(c=>{
+    if(typeof c==="string") e.appendChild(document.createTextNode(c));
+    else if(c) e.appendChild(c);
+  });
+  return e;
+}
+
+function render() {
+  const root=document.getElementById('questions');
+  root.innerHTML='';
+  for (const q of DECISIONS) {
+    const card=el('div',{class:'card'});
+    card.appendChild(el('div',{class:'q'}, q.label));
+    const groupName = `q_${q.key}`;
+    for (const [k, txt] of Object.entries(q.options)) {
+      const id = `${groupName}_${k}`;
+      const input=el('input',{type:'radio',name:groupName,id, value:k});
+      if (k === q.default) input.checked = true;
+      const lab=el('label',{class:'opt', for:id}, [input, `${k}) ${txt}`]);
+      card.appendChild(lab);
+    }
+    root.appendChild(card);
+  }
+}
+
+function gather() {
+  const out = { _updated_at: new Date().toISOString() };
+  for (const q of DECISIONS) {
+    const groupName = `q_${q.key}`;
+    const sel = document.querySelector(`input[name='${groupName}']:checked`);
+    out[q.key] = sel ? sel.value : q.default;
+  }
+  return out;
+}
+
+function setOut(obj) {
+  const s = JSON.stringify(obj, null, 2);
+  document.getElementById('out').textContent = s;
+  return s;
+}
+
+render();
+
+document.getElementById('gen').addEventListener('click', () => {
+  setOut(gather());
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const s = document.getElementById('out').textContent;
+  try {
+    await navigator.clipboard.writeText(s);
+    alert('Copied. Paste it back into chat.');
+  } catch (e) {
+    alert('Copy failed (browser blocked it). Use Download instead.');
+  }
+});
+
+document.getElementById('download').addEventListener('click', () => {
+  const s = document.getElementById('out').textContent;
+  const blob = new Blob([s], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'decisions.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
+});
+
+document.getElementById('reset').addEventListener('click', () => {
+  render();
+  document.getElementById('out').textContent = '(click Generate JSON)';
+});
+</script>
+</body>
+</html>
