@@ -23,6 +23,7 @@ from etf_mapper.feeds import (
     WebEarningsCalendarFeed,
     EdgarFilingsFeed,
     FedRssFeed,
+    NewsRssFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -1781,12 +1782,13 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_halts, tab_signals, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
         "Halts",
         "Signals",
+        "News",
         "Earnings",
         "Overview",
         "Relations",
@@ -2938,15 +2940,100 @@ with tab_signals:
 
         st.markdown("---")
         st.caption("Manual note + next-event override")
-        st.text_area("Notes", key="macro_events", height=220, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+        st.text_area("Notes", key="macro_events", height=160, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
         st.session_state.setdefault("next_macro_event", "")
-        st.text_area("Next event", key="next_macro_event", height=120, placeholder="CPI 08:30 ET — notes…")
+        st.text_area("Next event", key="next_macro_event", height=90, placeholder="CPI 08:30 ET — notes…")
+
+        st.markdown("---")
+        st.markdown("#### News (RSS)")
+        st.caption("Auto (15m): cached RSS headlines. Ticker detection is best-effort.")
+
+        try:
+            cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
+            news_urls = ((cfg.get("news") or {}).get("rss_urls")) if isinstance(cfg, dict) else None
+            news_urls = news_urls if isinstance(news_urls, list) else []
+        except Exception:
+            news_urls = []
+
+        nf = NewsRssFeed(data_dir=_data_dir(), urls=[str(u) for u in news_urls])
+        st.session_state.setdefault("news_last_fetch", 0.0)
+        if (time.time() - float(st.session_state.get("news_last_fetch", 0.0))) >= 15 * 60:
+            try:
+                _ = nf.fetch()
+            except Exception:
+                pass
+            st.session_state["news_last_fetch"] = time.time()
+
+        nd = nf.read_cache()
+        if isinstance(nd, pd.DataFrame) and not nd.empty:
+            show = nd.copy()
+            if "published_ts" in show.columns:
+                show = show.sort_values("published_ts", ascending=False)
+            st.dataframe(show[[c for c in ["published", "title"] if c in show.columns]].head(10), use_container_width=True, height=220, hide_index=True)
+        else:
+            st.caption("No news items cached yet.")
 
     # Dashboard highlights driven by cached feeds (best-effort)
     st.session_state.setdefault("signals_drive_dashboard", True)
     if st.session_state.get("signals_drive_dashboard"):
         # Just set the macro tile from the Signals 'Next event'
         pass
+
+with tab_news:
+    st.subheader("News")
+    st.caption("RSS board (cached). Ticker detection is best-effort; quotes are Schwab-only.")
+
+    try:
+        cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
+        news_urls = ((cfg.get("news") or {}).get("rss_urls")) if isinstance(cfg, dict) else None
+        news_urls = news_urls if isinstance(news_urls, list) else []
+    except Exception:
+        news_urls = []
+
+    nf = NewsRssFeed(data_dir=_data_dir(), urls=[str(u) for u in news_urls])
+
+    st.session_state.setdefault("news_last_fetch", 0.0)
+    if (time.time() - float(st.session_state.get("news_last_fetch", 0.0))) >= 15 * 60:
+        try:
+            _ = nf.fetch()
+        except Exception:
+            pass
+        st.session_state["news_last_fetch"] = time.time()
+
+    nd = nf.read_cache()
+    if not isinstance(nd, pd.DataFrame) or nd.empty:
+        st.info("No news cached yet.")
+    else:
+        show = nd.copy()
+        if "published_ts" in show.columns:
+            show = show.sort_values("published_ts", ascending=False)
+        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]].head(40), use_container_width=True, height=520, hide_index=True)
+
+        # Ticker detection (simple regex)
+        import re
+
+        titles = "\n".join([str(x) for x in (show.get("title") or []).tolist()[:60]])
+        found = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", titles.upper())
+        flat = []
+        for a, b in found:
+            t = a or b
+            if t and t not in flat:
+                flat.append(t)
+        tickers = flat[:25]
+
+        if tickers:
+            st.markdown("### Detected tickers")
+            st.write(tickers)
+            qrows = []
+            for t in tickers[:12]:
+                q = _schwab_quote(t)
+                qrows.append({"symbol": t, "px": q.get("mark") or q.get("last"), "chg_%": q.get("netPct")})
+            qdf = pd.DataFrame(qrows)
+            for c in ["px", "chg_%"]:
+                if c in qdf.columns:
+                    qdf[c] = pd.to_numeric(qdf[c], errors="coerce")
+            st.dataframe(qdf, use_container_width=True, hide_index=True, height=260)
+
 
 with tab_earnings:
     st.subheader("Earnings")

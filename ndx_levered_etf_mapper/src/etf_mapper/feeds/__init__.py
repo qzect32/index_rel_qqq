@@ -19,6 +19,7 @@ from .halts import WebHaltsFeed
 from .earnings_calendar import WebEarningsCalendarFeed
 from .filings_edgar import EdgarFilingsFeed
 from .macro_fed_rss import FedRssFeed
+from .news_rss import NewsRssFeed
 
 __all__ = [
     "FeedStatus",
@@ -40,4 +41,5 @@ __all__ = [
     "WebEarningsCalendarFeed",
     "EdgarFilingsFeed",
     "FedRssFeed",
+    "NewsRssFeed",
 ]
