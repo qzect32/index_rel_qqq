@@ -2647,6 +2647,39 @@ with tab_halts:
 with tab_signals:
     st.subheader("Signals")
 
+    # Background filings watcher (daily) — best-effort while app is running
+    try:
+        from etf_mapper.jobs.filings_watcher import maybe_run, WatcherConfig
+
+        syms_watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+        # Hot list
+        syms_hot = []
+        try:
+            p = _data_dir() / "scanner_hotlist.json"
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(obj, dict) and isinstance(obj.get("symbols"), list):
+                    syms_hot = [str(x).upper().strip() for x in obj.get("symbols") if str(x).strip()]
+        except Exception:
+            syms_hot = []
+
+        all_syms = []
+        for s in (syms_watch + syms_hot):
+            s = str(s).upper().strip()
+            if s and s not in all_syms:
+                all_syms.append(s)
+
+        summary = maybe_run(
+            data_dir=_data_dir(),
+            symbols=all_syms,
+            cfg=WatcherConfig(interval_s=24 * 60 * 60, diff_threshold=10, retention_days=30),
+        )
+        if summary.get("ran"):
+            st.session_state["signals_filings_alerts"] = summary.get("alerts", [])
+            st.session_state["signals_filings_last"] = time.time()
+    except Exception:
+        pass
+
     # Decisions applied from your latest submission:
     # - Layout A: 3 panels (Halts | Earnings | Macro)
     # - Default sections: collapse Earnings by default
@@ -2726,9 +2759,15 @@ with tab_signals:
     st.session_state.setdefault("macro_events", "")
 
     # --- Top row status badges ---
+    # Filings badge: show count of alerts (diff score >= threshold)
+    falerts = st.session_state.get("signals_filings_alerts", [])
+    fcount = len(falerts) if isinstance(falerts, list) else 0
+    fdetail = f"{fcount} new" if fcount else "none"
+
     badges = [
         _badge(ok=True, label="Halts", detail=str(st.session_state.get("signals_halts_detail"))),
         _badge(ok=False, label="Earnings", detail=str(st.session_state.get("signals_earnings_detail"))),
+        _badge(ok=(fcount > 0), label="Filings", detail=fdetail),
         _badge(ok=False, label="Macro", detail="placeholder"),
     ]
     st.markdown(" ".join(badges), unsafe_allow_html=True)
