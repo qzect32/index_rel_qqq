@@ -30,6 +30,9 @@ from dotenv import load_dotenv
 from pyvis.network import Network
 from streamlit_autorefresh import st_autorefresh
 
+# PDF exports (reportlab)
+from io import BytesIO
+
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
 from etf_mapper.config import load_schwab_secrets
 from etf_mapper.spade_checks import check_option_chain, check_price_history, summarize
@@ -1055,6 +1058,227 @@ def _net_html(nodes: list[dict], edges: list[dict]) -> str:
     return html
 
 
+def _local_timestamp_compact() -> str:
+    """America/New_York timestamp for filenames."""
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("America/New_York")
+    return datetime.now(tz).strftime("%Y-%m-%d_%H%M")
+
+
+def _pdf_exposure_summary(
+    expo: pd.DataFrame,
+    *,
+    top_n: int = 20,
+    title: str = "Exposure summary",
+) -> bytes:
+    """Generate a 1-page Exposure PDF (redacted: no account ids)."""
+    # Lazy import so app runs even if reportlab missing.
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.graphics.charts.piecharts import Pie
+
+    df = expo.copy() if isinstance(expo, pd.DataFrame) else pd.DataFrame()
+    if df.empty:
+        df = pd.DataFrame(columns=["symbol", "market_value", "pct", "day_pl"])
+
+    # normalize expected columns
+    for c in ["market_value", "pct", "day_pl"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        else:
+            df[c] = None
+    if "symbol" not in df.columns:
+        df["symbol"] = ""
+
+    df = df.sort_values("market_value", ascending=False)
+    total_mv = float(df["market_value"].fillna(0.0).sum())
+
+    top = df.head(int(top_n)).copy()
+    other_mv = float(df.iloc[int(top_n):]["market_value"].fillna(0.0).sum()) if len(df) > int(top_n) else 0.0
+
+    # compute pct if absent/garbage
+    if "pct" not in top.columns or top["pct"].isna().all():
+        top["pct"] = (top["market_value"].fillna(0.0) / total_mv) if total_mv else 0.0
+
+    # build pie dataset
+    pie_labels = list(top["symbol"].astype(str))
+    pie_vals = [float(x) for x in top["market_value"].fillna(0.0).tolist()]
+    if other_mv > 0:
+        pie_labels.append("Other")
+        pie_vals.append(other_mv)
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    w, h = letter
+
+    # header
+    ts = _local_timestamp_compact().replace("_", " ")
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(0.75 * inch, h - 0.75 * inch, title)
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.grey)
+    c.drawRightString(w - 0.75 * inch, h - 0.72 * inch, f"Generated {ts} ET")
+    c.setFillColor(colors.black)
+
+    # totals row
+    c.setFont("Helvetica", 11)
+    c.drawString(0.75 * inch, h - 1.05 * inch, f"Total market value: ${total_mv:,.0f}")
+
+    # pie chart
+    d = Drawing(320, 220)
+    pie = Pie()
+    pie.x = 10
+    pie.y = 10
+    pie.width = 200
+    pie.height = 200
+    pie.data = pie_vals
+    pie.labels = ["" for _ in pie_labels]  # keep clean; labels handled in table
+    pie.slices.strokeWidth = 0.5
+    pie.slices.strokeColor = colors.white
+    d.add(pie)
+
+    from reportlab.graphics import renderPDF
+
+    renderPDF.draw(d, c, 0.75 * inch, h - 3.6 * inch)
+
+    # table (top N)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(3.4 * inch, h - 1.45 * inch, f"Top {min(int(top_n), len(df))} holdings")
+
+    c.setFont("Helvetica", 9)
+    y = h - 1.70 * inch
+    c.setFillColor(colors.grey)
+    c.drawString(3.4 * inch, y, "Symbol")
+    c.drawRightString(w - 1.65 * inch, y, "MV")
+    c.drawRightString(w - 0.90 * inch, y, "%")
+    c.setFillColor(colors.black)
+
+    y -= 0.14 * inch
+    for r in top.itertuples(index=False):
+        sym = str(getattr(r, "symbol", ""))
+        mv = getattr(r, "market_value", 0.0)
+        pct = getattr(r, "pct", 0.0)
+        try:
+            mv_f = float(mv) if mv == mv else 0.0
+        except Exception:
+            mv_f = 0.0
+        try:
+            pct_f = float(pct) * 100.0 if pct == pct else 0.0
+        except Exception:
+            pct_f = 0.0
+
+        c.drawString(3.4 * inch, y, sym)
+        c.drawRightString(w - 1.65 * inch, y, f"${mv_f:,.0f}")
+        c.drawRightString(w - 0.90 * inch, y, f"{pct_f:,.2f}%")
+        y -= 0.14 * inch
+        if y < 0.9 * inch:
+            break
+
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColor(colors.grey)
+    c.drawString(0.75 * inch, 0.65 * inch, "Redacted export: no account numbers/hashes.")
+    c.setFillColor(colors.black)
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _pdf_scanner_snapshot(
+    sdf2: pd.DataFrame,
+    *,
+    title: str = "Scanner snapshot",
+    top_n: int = 30,
+) -> bytes:
+    """Generate a 1-page Scanner PDF (rankings + hot list)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+
+    df = sdf2.copy() if isinstance(sdf2, pd.DataFrame) else pd.DataFrame()
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    w, h = letter
+
+    ts = _local_timestamp_compact().replace("_", " ")
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(0.75 * inch, h - 0.75 * inch, title)
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.grey)
+    c.drawRightString(w - 0.75 * inch, h - 0.72 * inch, f"Generated {ts} ET")
+    c.setFillColor(colors.black)
+
+    if df.empty:
+        c.setFont("Helvetica", 11)
+        c.drawString(0.75 * inch, h - 1.2 * inch, "No scanner data available.")
+        c.showPage()
+        c.save()
+        return buf.getvalue()
+
+    # normalize
+    for ccol in ["px", "chg_%", "dollar_vol", "heat"]:
+        if ccol in df.columns:
+            df[ccol] = pd.to_numeric(df[ccol], errors="coerce")
+
+    # choose top by heat (already pre-sorted in UI often, but be explicit)
+    if "heat" in df.columns:
+        df = df.sort_values("heat", ascending=False)
+
+    top = df.head(int(top_n)).copy()
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(0.75 * inch, h - 1.15 * inch, f"Top {min(int(top_n), len(df))} by heat")
+
+    c.setFont("Helvetica", 8.5)
+    y = h - 1.35 * inch
+    c.setFillColor(colors.grey)
+    c.drawString(0.75 * inch, y, "Symbol")
+    c.drawRightString(2.35 * inch, y, "Px")
+    c.drawRightString(3.25 * inch, y, "%")
+    c.drawRightString(4.65 * inch, y, "$Vol")
+    c.drawRightString(5.60 * inch, y, "Heat")
+    c.setFillColor(colors.black)
+
+    y -= 0.14 * inch
+    for r in top.itertuples(index=False):
+        sym = str(getattr(r, "symbol", ""))
+        px = getattr(r, "px", None)
+        chgp = getattr(r, "chg_%", None)
+        dv = getattr(r, "dollar_vol", None)
+        heat = getattr(r, "heat", None)
+
+        def _f(x, fmt, default="—"):
+            try:
+                if x is None or (isinstance(x, float) and x != x):
+                    return default
+                return fmt.format(float(x))
+            except Exception:
+                return default
+
+        c.drawString(0.75 * inch, y, sym)
+        c.drawRightString(2.35 * inch, y, _f(px, "{:.2f}"))
+        c.drawRightString(3.25 * inch, y, _f(chgp, "{:+.2f}%"))
+        c.drawRightString(4.65 * inch, y, _f(dv, "${:,.0f}"))
+        c.drawRightString(5.60 * inch, y, _f(heat, "{:.1f}"))
+        y -= 0.14 * inch
+        if y < 1.1 * inch:
+            break
+
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColor(colors.grey)
+    c.drawString(0.75 * inch, 0.65 * inch, "Local snapshot export.")
+    c.setFillColor(colors.black)
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
 # ---------- UI ----------
 
 # -------- Sidebar (streamlined) --------
@@ -1354,7 +1578,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_halts, tab_signals, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
@@ -1366,6 +1590,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
         "Position Builder",
         "Casino Lab",
         "Exposure",
+        "Exports",
         "Admin",
     ]
 )
@@ -1698,6 +1923,8 @@ with tab_scanner:
     )
     # Derived columns
     sdf2 = sdf.dropna(subset=["symbol"]).copy()
+    # Save for Exports tab
+    st.session_state["last_scanner"] = sdf2.copy()
 
     sdf2["abs_chg_%"] = sdf2["chg_%"].abs()
 
@@ -3222,6 +3449,9 @@ with tab_exposure:
                                     hide_index=True,
                                 )
 
+                    # Save for Exports tab
+                    st.session_state["last_expo"] = expo.copy()
+
                     st.markdown("### Shareable snapshot (redacted)")
                     st.caption("Markdown format, no account ids/numbers.")
                     snap = expo.copy()
@@ -3242,6 +3472,76 @@ with tab_exposure:
                         st.json(raw_payloads)
 
                     st.caption("PDF export: we can add a one-click PDF once you tell me what format you like (1-page summary vs full tables).")
+
+with tab_exports:
+    st.subheader("Exports")
+    st.caption("Local-first exports. PDFs are generated locally (ReportLab) and saved to data/exports/.")
+
+    export_dir = _data_dir() / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    expL, expR = st.columns([0.5, 0.5], vertical_alignment="top")
+    with expL:
+        st.markdown("### Exposure PDF")
+        st.caption("1-page summary • Top 20 • pie chart • redacted")
+
+        expo = st.session_state.get("last_expo")
+        if not isinstance(expo, pd.DataFrame) or expo.empty:
+            st.info("Open the Exposure tab once to load data, then come back here.")
+        else:
+            if st.button("Generate exposure PDF", key="gen_expo_pdf"):
+                try:
+                    pdf = _pdf_exposure_summary(expo, top_n=20, title="Exposure summary")
+                    fname = f"exposure_{_local_timestamp_compact()}.pdf"
+                    out_path = export_dir / fname
+                    out_path.write_bytes(pdf)
+                    st.success(f"Wrote: {out_path}")
+                    st.download_button(
+                        "Download exposure PDF",
+                        data=pdf,
+                        file_name=fname,
+                        mime="application/pdf",
+                        key="dl_expo_pdf",
+                    )
+                except Exception as e:
+                    st.error(str(e))
+
+    with expR:
+        st.markdown("### Scanner PDF")
+        st.caption("1-page snapshot • rankings + hot list context")
+
+        sdf2 = st.session_state.get("last_scanner")
+        if not isinstance(sdf2, pd.DataFrame) or sdf2.empty:
+            st.info("Open the Scanner tab once to load data, then come back here.")
+        else:
+            if st.button("Generate scanner PDF", key="gen_scan_pdf"):
+                try:
+                    pdf = _pdf_scanner_snapshot(sdf2, title="Scanner snapshot")
+                    fname = f"scanner_{_local_timestamp_compact()}.pdf"
+                    out_path = export_dir / fname
+                    out_path.write_bytes(pdf)
+                    st.success(f"Wrote: {out_path}")
+                    st.download_button(
+                        "Download scanner PDF",
+                        data=pdf,
+                        file_name=fname,
+                        mime="application/pdf",
+                        key="dl_scan_pdf",
+                    )
+                except Exception as e:
+                    st.error(str(e))
+
+    st.markdown("### Recent exports")
+    try:
+        paths = sorted(export_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)[:12]
+        if not paths:
+            st.write("(none yet)")
+        else:
+            for p in paths:
+                st.write(p.name)
+    except Exception:
+        st.write("(could not list exports)")
+
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
