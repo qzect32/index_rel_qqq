@@ -48,42 +48,35 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "News RSS guardrails: rate-limit, failures, and source hygiene";
-const BLOCK_NOTE = "We already fetch RSS. Now decide how aggressive to be and how to handle flaky sources (429s, bad XML).";
+const BLOCK_TITLE = "TODO tracker reconciliation: mark DONE + regenerate TODO_STATUS";
+const BLOCK_NOTE = "Right now TODO_STATUS shows 0 DONE. Decide how aggressive to be in auto-marking completed items.";
 
 const DECISIONS = [
   {
-    key: "news_fetch_mode",
-    label: "1) Fetch mode",
-    why: "Parallel fetch is faster but may trigger rate limits.",
-    options: { A: "Sequential (safer)", B: "Parallel (faster)" },
-    default: "A",
+    key: "todo_mark_mode",
+    label: "1) How should we mark DONE in TODO.md?",
+    why: "We can auto-detect from commits/features, but it’s safer to do it in batches.",
+    options: { A: "Auto-mark based on known completed blocks", B: "Manual: you tell me items", C: "Semi-auto: I propose, you approve" },
+    default: "C",
   },
   {
-    key: "news_fail_policy",
-    label: "2) Failure policy",
-    why: "How to treat feeds that error repeatedly.",
-    options: { A: "Ignore errors (silent)", B: "Show status badge with error count", C: "Auto-disable after N failures" },
+    key: "todo_batch_size",
+    label: "2) Batch size",
+    why: "You prefer 5–15 at a time.",
+    options: { A: "5", B: "10", C: "15" },
     default: "B",
   },
   {
-    key: "news_max_items",
-    label: "3) Max items shown",
-    why: "Keeps UI snappy.",
-    options: { A: "50", B: "100", C: "200" },
-    default: "A",
+    key: "todo_scope",
+    label: "3) Scope to reconcile first",
+    why: "Pick the most relevant slice.",
+    options: { A: "Signals/Earnings/Macro/News blocks only", B: "Everything completed so far", C: "Only exports/guardrails" },
+    default: "B",
   },
   {
-    key: "news_source_whitelist",
-    label: "4) Source hygiene",
-    why: "You can restrict which domains are allowed to fetch.",
-    options: { A: "Use rss_feeds.json only", B: "Add explicit domain allowlist" },
-    default: "A",
-  },
-  {
-    key: "start_coding_news_guardrails",
-    label: "5) Start coding this guardrails block now?",
-    why: "If yes, I’ll add per-feed status, failure counts, and optional disabling.",
+    key: "start_reconcile",
+    label: "4) Start reconciling TODOs now?",
+    why: "If yes, I’ll update TODO.md and regenerate TODO_STATUS.md so % done becomes meaningful.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
