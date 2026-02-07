@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Market Hub — Decisions Form</title>
+  <title>Market Hub — Decisions + URLs</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --warn:#ffd166; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
@@ -23,6 +23,7 @@
     .tiny { font-size: 12px; color: var(--muted); }
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
     .pill.warn { border-color: rgba(255,209,102,0.35); color: var(--warn); }
+    textarea { width:100%; min-height: 110px; resize: vertical; background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     code { color: var(--accent); }
   </style>
 </head>
@@ -33,11 +34,28 @@
       Block: <span class="pill" id="block"></span>
       <span class="pill warn" id="note" style="display:none"></span>
     </p>
-    <p class="tiny">
-      Pick answers → <b>Generate JSON</b> → paste JSON into chat. This page is local-only.
-    </p>
 
     <div id="locked"></div>
+
+    <div class="card">
+      <h2>Paste URLs (one per line)</h2>
+      <p class="tiny">We’ll validate domains later. For now: give exact URLs.</p>
+
+      <div class="q">News RSS URLs</div>
+      <div class="why">Paste 10 RSS URLs (Reuters/Yahoo/SeekingAlpha). One per line.</div>
+      <textarea id="rss_urls" placeholder="https://...\nhttps://..."></textarea>
+
+      <div class="q" style="margin-top:14px;">Fed URLs</div>
+      <div class="why">Paste 3+ Federal Reserve URLs (FOMC calendar, speeches, etc.). One per line.</div>
+      <textarea id="fed_urls" placeholder="https://www.federalreserve.gov/...\nhttps://..."></textarea>
+
+      <div class="q" style="margin-top:14px;">Earnings URLs</div>
+      <div class="why">Paste 3+ URLs for your chosen public earnings calendar source. One per line.</div>
+      <textarea id="earnings_urls" placeholder="https://...\nhttps://..."></textarea>
+
+      <p class="tiny">If you don’t have them yet, leave blank and still Generate JSON (it will output empty arrays).</p>
+    </div>
+
     <div id="questions"></div>
 
     <div class="card">
@@ -51,98 +69,43 @@
       <pre id="out">(click Generate JSON)</pre>
     </div>
 
-    <p class="tiny">If a question feels repetitive, it means we’re trying to lock down something that impacts allowlisting/security or parsing stability. I’m working to remove repeats.</p>
+    <p class="tiny">Local-only: it doesn’t send anything anywhere by itself.</p>
   </div>
 
 <script>
-// ---- CONFIG FOR THIS BLOCK ----
-const BLOCK_TITLE = "Feeds: paste the actual URLs (RSS + Fed + earnings)";
-const BLOCK_NOTE = "This block is mostly collecting URLs so we can implement.";
+const BLOCK_TITLE = "Feeds: paste URLs + confirm we're ready";
+const BLOCK_NOTE = "This block collects URLs so I can start implementing Halts auto-fetch end-to-end.";
 
-// Decisions already locked-in.
 const LOCKED = [
-  { key: "feeds_news_domains", value: "A", label: "News domains allowlisted", detail: "reuters.com + finance.yahoo.com + seekingalpha.com" },
-  { key: "feeds_allowed_domains", value: "B", label: "Allowed domains", detail: "+ federalreserve.gov" },
-  { key: "rss_config_path", value: "A", label: "RSS config path", detail: "data/rss_feeds.json" },
-  { key: "earnings_source_site", value: "A", label: "Earnings source", detail: "you will paste the site/URL" },
-  { key: "fed_urls", value: "C", label: "Fed URLs", detail: "you will paste exact URLs" },
+  { label: "RSS config path", detail: "data/rss_feeds.json" },
+  { label: "Config shape", detail: "news/fed/earnings nested" },
+  { label: "Ready to implement", detail: "Yes" },
 ];
 
-// Only ask NEW questions here.
 const DECISIONS = [
   {
-    key: "rss_urls_payload",
-    label: "1) News RSS URLs — how many?",
-    why: "We need a concrete list to start ingesting headlines.",
-    options: { A: "3", B: "5", C: "10" },
+    key: "confirm_urls_complete",
+    label: "1) Are the URLs pasted above complete enough to implement?",
+    why: "If yes, I start wiring Halts auto-fetch + cache + UI immediately.",
+    options: { A: "Yes", B: "Not yet" },
     default: "B",
   },
   {
-    key: "rss_urls_format",
-    label: "2) RSS URL format",
-    why: "We can accept either per-domain bundles or one flat list.",
-    options: { A: "Flat list of URLs", B: "Grouped by domain" },
+    key: "write_to_rss_feeds_json",
+    label: "2) Should I write these into data/rss_feeds.json automatically?",
+    why: "Keeps everything in one place (your chosen path).",
+    options: { A: "Yes", B: "No (just paste in chat later)" },
     default: "A",
   },
   {
-    key: "rss_urls_delivery",
-    label: "3) RSS URL delivery (you chose both earlier)",
-    why: "Confirm the primary method so implementation targets the right path.",
-    options: { A: "Primary: config file", B: "Primary: paste into chat", C: "Equal support" },
+    key: "start_implementation_now",
+    label: "3) Start implementing now?",
+    why: "If yes, next work is code (no more decisions until a blocker).",
+    options: { A: "Yes", B: "Hold" },
     default: "A",
-  },
-  {
-    key: "fed_urls_count",
-    label: "4) Fed URLs — how many endpoints/pages?",
-    why: "Keeps the allowlist tight and avoids scraping too much.",
-    options: { A: "1", B: "2", C: "3+" },
-    default: "B",
-  },
-  {
-    key: "fed_urls_delivery",
-    label: "5) Fed URLs delivery",
-    why: "Where do you want to paste them?",
-    options: { A: "Paste into chat", B: "Put into data/rss_feeds.json under a 'fed' section" },
-    default: "A",
-  },
-  {
-    key: "earnings_url_count",
-    label: "6) Earnings source URLs",
-    why: "If the site has multiple pages (week/day), we can support more than one.",
-    options: { A: "1 URL", B: "2 URLs", C: "3+ URLs" },
-    default: "A",
-  },
-  {
-    key: "earnings_url_delivery",
-    label: "7) Earnings URLs delivery",
-    why: "Where should we store these?",
-    options: { A: "Paste into chat", B: "Store in data/rss_feeds.json under 'earnings'" },
-    default: "A",
-  },
-  {
-    key: "nyse_beta_fallback",
-    label: "8) NYSE beta URL fallback",
-    why: "If beta.nyse.com changes, should we fall back to another source automatically?",
-    options: { A: "Yes: fall back to Nasdaq/Cboe only", B: "No: show error and keep last good" },
-    default: "A",
-  },
-  {
-    key: "config_file_shape",
-    label: "9) data/rss_feeds.json shape",
-    why: "We want this to be dead-simple to edit.",
-    options: { A: "{rss_urls:[...]} only", B: "{news:{rss_urls:[...]}, fed:{urls:[...]}, earnings:{urls:[...]}}" },
-    default: "B",
-  },
-  {
-    key: "ready_to_implement",
-    label: "10) Ready-to-implement check",
-    why: "If you answer 'Yes', next step is me wiring Halts auto-fetch end-to-end.",
-    options: { A: "Yes — start implementing now", B: "Not yet — I still need to paste URLs" },
-    default: "B",
   },
 ];
 
-// ---- RENDERER ----
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
   Object.entries(attrs).forEach(([k,v])=>{
@@ -162,11 +125,9 @@ function renderLocked() {
   root.innerHTML='';
   if (!LOCKED || !LOCKED.length) return;
   const card=el('div',{class:'card'});
-  card.appendChild(el('h2',{},"Already locked-in (won't ask again)"));
+  card.appendChild(el('h2',{},"Already locked-in"));
   const ul=el('ul',{style:'margin:8px 0 0; color: var(--muted);'});
-  for (const x of LOCKED) {
-    ul.appendChild(el('li',{}, `${x.label}: ${x.detail} (${x.key}=${x.value})`));
-  }
+  for (const x of LOCKED) ul.appendChild(el('li',{}, `${x.label}: ${x.detail}`));
   card.appendChild(ul);
   root.appendChild(card);
 }
@@ -187,9 +148,14 @@ function renderQuestions() {
       const lab=el('label',{class:'opt', for:id}, [input, `${k}) ${txt}`]);
       card.appendChild(lab);
     }
-
     root.appendChild(card);
   });
+}
+
+function lines(id) {
+  const raw = (document.getElementById(id).value || "").trim();
+  if (!raw) return [];
+  return raw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
 }
 
 function gather() {
@@ -199,6 +165,13 @@ function gather() {
     const sel = document.querySelector(`input[name='${groupName}']:checked`);
     out[q.key] = sel ? sel.value : q.default;
   }
+
+  out.urls = {
+    news_rss: lines('rss_urls'),
+    fed: lines('fed_urls'),
+    earnings: lines('earnings_urls'),
+  };
+
   return out;
 }
 
@@ -210,11 +183,9 @@ function setOut(obj) {
 
 // Init header
 document.getElementById('block').textContent = BLOCK_TITLE;
-if (BLOCK_NOTE) {
-  const n = document.getElementById('note');
-  n.style.display = 'inline-block';
-  n.textContent = BLOCK_NOTE;
-}
+const n = document.getElementById('note');
+n.style.display = 'inline-block';
+n.textContent = BLOCK_NOTE;
 
 renderLocked();
 renderQuestions();
@@ -244,6 +215,9 @@ document.getElementById('download').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
+  document.getElementById('rss_urls').value='';
+  document.getElementById('fed_urls').value='';
+  document.getElementById('earnings_urls').value='';
   renderLocked();
   renderQuestions();
   document.getElementById('out').textContent = '(click Generate JSON)';
