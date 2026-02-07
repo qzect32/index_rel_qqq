@@ -5,27 +5,39 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Market Hub — Decisions Form</title>
   <style>
-    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); }
+    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --warn:#ffd166; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
     .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
+    h2 { margin: 0 0 4px; font-size: 16px; }
     p { margin: 6px 0 12px; color: var(--muted); }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px; margin: 12px 0; }
-    .q { font-weight: 650; margin-bottom: 8px; }
+    .q { font-weight: 650; margin-bottom: 6px; }
+    .why { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
     .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; cursor:pointer; }
     .opt input { margin-right: 10px; accent-color: var(--accent); }
-    .row { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items:center; }
     button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 650; }
     button.primary { background: rgba(51,255,204,0.10); border-color: rgba(51,255,204,0.35); }
     pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px; }
     .tiny { font-size: 12px; color: var(--muted); }
+    .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
+    .pill.warn { border-color: rgba(255,209,102,0.35); color: var(--warn); }
+    code { color: var(--accent); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Market Hub — Decisions Form</h1>
-    <p>Pick answers, then click <b>Generate JSON</b>. Paste the JSON back into chat, or save it as <code>data/decisions.json</code>.</p>
+    <p>
+      Block: <span class="pill" id="block"></span>
+      <span class="pill warn" id="note" style="display:none"></span>
+    </p>
+    <p class="tiny">
+      Pick answers → <b>Generate JSON</b> → paste JSON into chat. This page is local-only.
+    </p>
 
+    <div id="locked"></div>
     <div id="questions"></div>
 
     <div class="card">
@@ -39,73 +51,131 @@
       <pre id="out">(click Generate JSON)</pre>
     </div>
 
-    <p class="tiny">This is local-only: it doesn’t send anything anywhere by itself.</p>
+    <p class="tiny">If a question feels repetitive, it means we’re trying to lock down something that impacts allowlisting/security or parsing stability. I’m working to remove repeats.</p>
   </div>
 
 <script>
+// ---- CONFIG FOR THIS BLOCK ----
+const BLOCK_TITLE = "Feeds: provide concrete URLs (RSS + earnings)";
+const BLOCK_NOTE = "No repeats: we won't ask domain-choice again unless it changes.";
+
+// Decisions already locked-in (snapshot). These are shown so we don't keep asking.
+const LOCKED = [
+  { key: "feeds_news_domains", value: "A", label: "News domains allowlisted", detail: "reuters.com + finance.yahoo.com + seekingalpha.com" },
+  { key: "feeds_allowed_domains", value: "B", label: "Allowed domains", detail: "+ federalreserve.gov" },
+  { key: "halts_include_cboe", value: "A", label: "Cboe halts", detail: "included" },
+];
+
+// Only ask NEW questions here.
 const DECISIONS = [
   {
-    key: "halts_include_cboe",
-    label: "1) Include Cboe halts page",
-    options: { A: "Yes (as 3rd source)", B: "No" },
-    default: "A",
-  },
-  {
-    key: "halts_source_priority",
-    label: "2) Halts: priority order",
-    options: { A: "Nasdaq → NYSE → Cboe", B: "NYSE → Nasdaq → Cboe", C: "Cboe → Nasdaq → NYSE" },
-    default: "A",
-  },
-  {
-    key: "halts_reason_mapping",
-    label: "3) Halts: reason mapping",
-    options: { A: "Keep raw reason codes", B: "Map to human labels (T1, LUDP, etc.)", C: "Both" },
+    key: "news_rss_urls_final",
+    label: "Provide RSS URLs (Reuters/Yahoo/SeekingAlpha)",
+    why: "We can’t ship RSS ingestion without exact feed URLs. Domains alone aren’t enough.",
+    options: {
+      A: "I will paste 3–10 exact RSS URLs in chat",
+      B: "I will put RSS URLs in a local config file",
+      C: "Both",
+    },
     default: "C",
   },
   {
-    key: "feeds_allowed_domains",
-    label: "4) Confirm allowed domains list",
-    options: { A: "nasdaqtrader.com, beta.nyse.com, cboe.com, forexfactory.com", B: "A + federalreserve.gov", C: "I will paste final list" },
+    key: "rss_config_path",
+    label: "If using a config file: where should RSS URLs live?",
+    why: "We need one canonical place to read feeds from.",
+    options: {
+      A: "data/rss_feeds.json",
+      B: "data/feeds/rss.json",
+      C: "Hardcode in repo (not recommended)",
+    },
     default: "A",
   },
   {
-    key: "feeds_news_domains",
-    label: "5) News domains (you chose Reuters/Yahoo/SeekingAlpha)",
-    options: { A: "Allow reuters.com + finance.yahoo.com + seekingalpha.com", B: "Allow wsj.com + bloomberg.com + ft.com", C: "URLs only (no domain allowlist)" },
+    key: "earnings_source_site",
+    label: "Earnings: pick a public source site to scrape (best-effort)",
+    why: "You chose hybrid scrape + manual override, but we need the specific site target.",
+    options: {
+      A: "I will paste the site/URL (you don’t pick)",
+      B: "Use a common public earnings calendar site (you pick)",
+    },
     default: "A",
   },
   {
-    key: "feeds_cache_write_mode",
-    label: "6) Cache write mode",
-    options: { A: "Always overwrite last", B: "Keep timestamped history", C: "Both" },
+    key: "earnings_manual_override",
+    label: "Earnings: manual override format",
+    why: "When scraping breaks, we need a stable fallback.",
+    options: {
+      A: "CSV upload",
+      B: "Paste table (CSV text)",
+      C: "Both",
+    },
     default: "C",
   },
   {
-    key: "feeds_cache_max_mb",
-    label: "7) Cache size cap",
-    options: { A: "10 MB", B: "50 MB", C: "200 MB" },
-    default: "B",
+    key: "fed_urls",
+    label: "Fed calendar: which pages are allowed?",
+    why: "You allowlisted federalreserve.gov — now we pick the endpoints/pages we’ll fetch.",
+    options: {
+      A: "FOMC calendar only",
+      B: "FOMC calendar + speeches/testimony",
+      C: "I will paste exact URLs",
+    },
+    default: "C",
   },
   {
-    key: "feeds_fail_behavior",
-    label: "8) If allowlist blocks a feed",
-    options: { A: "Warn banner + skip", B: "Silent skip", C: "Hard error" },
+    key: "halts_accept_beta_nyse",
+    label: "NYSE source is beta.nyse.com — ok to rely on 'beta' subdomain?",
+    why: "Avoid surprises if NYSE changes beta URLs; we can swap to a stable domain if needed.",
+    options: {
+      A: "Yes, ok",
+      B: "Prefer non-beta if available",
+    },
     default: "A",
   },
   {
-    key: "feeds_fetch_user_agent",
-    label: "9) HTTP User-Agent",
-    options: { A: "Generic", B: "Identify as MarketHub", C: "Randomize" },
-    default: "B",
+    key: "cboe_halts_source",
+    label: "Cboe halts: use their halts page as a scrape source?",
+    why: "You pasted a Cboe halts URL; we should decide if it’s data-source or just reference.",
+    options: {
+      A: "Yes, scrape it",
+      B: "No, keep as reference link only",
+    },
+    default: "A",
   },
   {
-    key: "feeds_retry_policy",
-    label: "10) Retry policy",
-    options: { A: "No retries", B: "1 retry", C: "2 retries with backoff" },
-    default: "C",
+    key: "feeds_store_parsed",
+    label: "Store parsed tables",
+    why: "Raw cache is for debugging; parsed tables help fast UI rendering.",
+    options: {
+      A: "Write parsed CSV/JSON alongside raw cache",
+      B: "Parsed in-memory only",
+    },
+    default: "A",
+  },
+  {
+    key: "feeds_key_names",
+    label: "Key naming convention in generated JSON",
+    why: "Keeps your decisions file readable over time.",
+    options: {
+      A: "snake_case keys (current)",
+      B: "grouped nested objects (feeds.halts..., feeds.news...) (bigger change)",
+    },
+    default: "A",
+  },
+  {
+    key: "next_after_urls",
+    label: "After URLs are provided, what do we implement next?",
+    why: "This sets the work order so you can start testing sooner.",
+    options: {
+      A: "Halts auto-fetch end-to-end (parse + UI)",
+      B: "News RSS end-to-end",
+      C: "Earnings calendar end-to-end",
+    },
+    default: "A",
   },
 ];
 
+// ---- RENDERER ----
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
   Object.entries(attrs).forEach(([k,v])=>{
@@ -120,12 +190,28 @@ function el(tag, attrs={}, children=[]) {
   return e;
 }
 
-function render() {
+function renderLocked() {
+  const root=document.getElementById('locked');
+  root.innerHTML='';
+  if (!LOCKED || !LOCKED.length) return;
+  const card=el('div',{class:'card'});
+  card.appendChild(el('h2',{},'Already locked-in (won\'t ask again)'));
+  const ul=el('ul',{style:'margin:8px 0 0; color: var(--muted);'});
+  for (const x of LOCKED) {
+    ul.appendChild(el('li',{}, `${x.label}: ${x.detail} (${x.key}=${x.value})`));
+  }
+  card.appendChild(ul);
+  root.appendChild(card);
+}
+
+function renderQuestions() {
   const root=document.getElementById('questions');
   root.innerHTML='';
-  for (const q of DECISIONS) {
+  DECISIONS.forEach((q, idx) => {
     const card=el('div',{class:'card'});
-    card.appendChild(el('div',{class:'q'}, q.label));
+    card.appendChild(el('div',{class:'q'}, `${idx+1}) ${q.label}`));
+    if (q.why) card.appendChild(el('div',{class:'why'}, q.why));
+
     const groupName = `q_${q.key}`;
     for (const [k, txt] of Object.entries(q.options)) {
       const id = `${groupName}_${k}`;
@@ -134,12 +220,13 @@ function render() {
       const lab=el('label',{class:'opt', for:id}, [input, `${k}) ${txt}`]);
       card.appendChild(lab);
     }
+
     root.appendChild(card);
-  }
+  });
 }
 
 function gather() {
-  const out = { _updated_at: new Date().toISOString() };
+  const out = { _updated_at: new Date().toISOString(), _block: BLOCK_TITLE };
   for (const q of DECISIONS) {
     const groupName = `q_${q.key}`;
     const sel = document.querySelector(`input[name='${groupName}']:checked`);
@@ -154,11 +241,18 @@ function setOut(obj) {
   return s;
 }
 
-render();
+// Init header
+document.getElementById('block').textContent = BLOCK_TITLE;
+if (BLOCK_NOTE) {
+  const n = document.getElementById('note');
+  n.style.display = 'inline-block';
+  n.textContent = BLOCK_NOTE;
+}
 
-document.getElementById('gen').addEventListener('click', () => {
-  setOut(gather());
-});
+renderLocked();
+renderQuestions();
+
+document.getElementById('gen').addEventListener('click', () => setOut(gather()));
 
 document.getElementById('copy').addEventListener('click', async () => {
   const s = document.getElementById('out').textContent;
@@ -183,7 +277,8 @@ document.getElementById('download').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
-  render();
+  renderLocked();
+  renderQuestions();
   document.getElementById('out').textContent = '(click Generate JSON)';
 });
 </script>
