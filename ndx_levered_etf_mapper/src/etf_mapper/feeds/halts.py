@@ -276,15 +276,29 @@ class WebHaltsFeed(HaltsFeed):
         if not fr.ok or not fr.text:
             return pd.DataFrame(), fr.error or "fetch failed"
 
-        tables = _parse_tables_from_html(fr.text)
-        if not tables:
-            # Cboe readability extracted text may still parse badly; in that case, return empty.
-            _write_cache(self.data_dir, kind=f"halts_{key}", url=url, raw_text=fr.text, parsed=None)
-            return pd.DataFrame(), "no tables parsed"
+        txt = fr.text
 
-        # Heuristic: pick the largest table
-        tables = sorted(tables, key=lambda x: x.shape[0] * max(1, x.shape[1]), reverse=True)
-        raw = tables[0]
+        # If it's a CSV-ish endpoint (e.g., NYSE download), parse as CSV first.
+        raw: pd.DataFrame | None = None
+        try:
+            head = (txt or "").lstrip()[:200].lower()
+            if "," in head and ("halt" in head or "symbol" in head) and ("\n" in txt):
+                import io
+
+                raw = pd.read_csv(io.StringIO(txt))
+        except Exception:
+            raw = None
+
+        if raw is None:
+            tables = _parse_tables_from_html(txt)
+            if not tables:
+                _write_cache(self.data_dir, kind=f"halts_{key}", url=url, raw_text=txt, parsed=None)
+                return pd.DataFrame(), "no tables parsed"
+
+            # Heuristic: pick the largest table
+            tables = sorted(tables, key=lambda x: x.shape[0] * max(1, x.shape[1]), reverse=True)
+            raw = tables[0]
+
         norm = _normalize_halts(raw, source=key)
 
         _write_cache(self.data_dir, kind=f"halts_{key}", url=url, raw_text=fr.text, parsed=norm)

@@ -2489,7 +2489,7 @@ with tab_halts:
     # Load URLs from decisions.json / rss_feeds.json if present (best-effort)
     halts_urls = {
         "nasdaq": "https://www.nasdaqtrader.com/trader.aspx?id=tradehalts",
-        "nyse": "https://beta.nyse.com/trade/trading-halts",
+        "nyse": "https://www.nyse.com/api/trade-halts/current/download",
         "cboe": "https://www.cboe.com/us/equities/market_statistics/halts/",
     }
     try:
