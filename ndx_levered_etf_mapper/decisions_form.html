@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Market Hub — Decisions + URLs</title>
+  <title>Market Hub — Decisions Form</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --warn:#ffd166; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
@@ -23,8 +23,6 @@
     .tiny { font-size: 12px; color: var(--muted); }
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
     .pill.warn { border-color: rgba(255,209,102,0.35); color: var(--warn); }
-    textarea { width:100%; min-height: 110px; resize: vertical; background: rgba(0,0,0,0.35); color: var(--text); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    code { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -34,28 +32,9 @@
       Block: <span class="pill" id="block"></span>
       <span class="pill warn" id="note" style="display:none"></span>
     </p>
+    <p class="tiny">Pick answers → <b>Generate JSON</b> → paste JSON into chat. Local-only.</p>
 
     <div id="locked"></div>
-
-    <div class="card">
-      <h2>Paste URLs (one per line)</h2>
-      <p class="tiny">We’ll validate domains later. For now: give exact URLs.</p>
-
-      <div class="q">News RSS URLs</div>
-      <div class="why">Paste 10 RSS URLs (Reuters/Yahoo/SeekingAlpha). One per line.</div>
-      <textarea id="rss_urls" placeholder="https://...\nhttps://..."></textarea>
-
-      <div class="q" style="margin-top:14px;">Fed URLs</div>
-      <div class="why">Paste 3+ Federal Reserve URLs (FOMC calendar, speeches, etc.). One per line.</div>
-      <textarea id="fed_urls" placeholder="https://www.federalreserve.gov/...\nhttps://..."></textarea>
-
-      <div class="q" style="margin-top:14px;">Earnings URLs</div>
-      <div class="why">Paste 3+ URLs for your chosen public earnings calendar source. One per line.</div>
-      <textarea id="earnings_urls" placeholder="https://...\nhttps://..."></textarea>
-
-      <p class="tiny">If you don’t have them yet, leave blank and still Generate JSON (it will output empty arrays).</p>
-    </div>
-
     <div id="questions"></div>
 
     <div class="card">
@@ -68,88 +47,87 @@
       <p class="tiny">Tip: If Copy is blocked by the browser, use Download.</p>
       <pre id="out">(click Generate JSON)</pre>
     </div>
-
-    <p class="tiny">Local-only: it doesn’t send anything anywhere by itself.</p>
   </div>
 
 <script>
-const BLOCK_TITLE = "Next work: Earnings calendar + Feeds tab + Dashboard highlights";
-const BLOCK_NOTE = "This block picks the next implementation targets and how to ingest earnings/macro events.";
+const BLOCK_TITLE = "Signals tab: layout + behavior (no new URLs)";
+const BLOCK_NOTE = "We’re building a seamless Signals hub using existing Halts + placeholder Earnings/Macro.";
 
 const LOCKED = [
+  { label: "No URL work", detail: "acknowledged" },
   { label: "Halts auto-fetch", detail: "implemented" },
-  { label: "Rollout order", detail: "Halts → Earnings" },
-  { label: "Feeds tab name", detail: "Signals" },
+  { label: "Earnings", detail: "UI scaffold (provider blocked)" },
+  { label: "Macro", detail: "tile placeholder on Dashboard" },
 ];
 
 const DECISIONS = [
   {
-    key: "earnings_primary_mode",
-    label: "1) Earnings calendar: primary mode",
-    why: "You chose hybrid scrape+manual, but we need a default workflow.",
-    options: { A: "Manual-first (CSV/paste/import), scrape later", B: "Scrape-first, manual override when needed", C: "Manual-only" },
-    default: "B",
-  },
-  {
-    key: "earnings_scope",
-    label: "2) Earnings scope",
-    why: "Controls how many symbols we track and how heavy it gets.",
-    options: { A: "Mega-caps only", B: "Watchlist + Hot List + Focus", C: "Custom list" },
+    key: "signals_layout",
+    label: "1) Signals layout",
+    why: "How you want to scan intel quickly.",
+    options: { A: "3 panels: Halts | Earnings | Macro", B: "2 panels: Halts+Earnings | Macro", C: "Single column (scroll)" },
     default: "A",
   },
   {
-    key: "earnings_fields",
-    label: "3) Earnings normalized fields",
-    why: "Defines what we store + render.",
-    options: { A: "symbol, date, time, eps_est, eps_act", B: "A + rev_est, rev_act", C: "B + guidance flag + notes" },
-    default: "C",
-  },
-  {
-    key: "earnings_time_normalization",
-    label: "4) Time normalization",
-    why: "Providers vary (BMO/AMC vs exact times).",
-    options: { A: "Store as BMO/AMC only", B: "Store ET datetime when available else BMO/AMC", C: "Store UTC + display ET" },
+    key: "signals_default_sections",
+    label: "2) Default visible sections",
+    why: "Keep it uncluttered.",
+    options: { A: "Show all", B: "Collapse Macro by default", C: "Collapse Earnings by default" },
     default: "B",
   },
   {
-    key: "earnings_ui",
-    label: "5) Earnings UI",
-    why: "Where and how you want to see it.",
-    options: { A: "Signals tab: Upcoming earnings table + countdown tile", B: "New Earnings tab", C: "Both" },
+    key: "signals_auto_refresh",
+    label: "3) Auto-refresh behavior (Signals tab)",
+    why: "Avoid hammering feeds while still staying fresh.",
+    options: { A: "Refresh when tab visible only", B: "Always refresh when app auto-refreshes", C: "Manual refresh only" },
     default: "A",
   },
   {
-    key: "earnings_refresh",
-    label: "6) Earnings refresh cadence",
-    why: "Avoids hammering sources.",
-    options: { A: "Manual refresh only", B: "Auto every 60 min", C: "Auto every 15 min" },
-    default: "B",
-  },
-  {
-    key: "macro_tile",
-    label: "7) Dashboard macro tile",
-    why: "You asked for Next macro event tile.",
-    options: { A: "Show next Fed event only", B: "Show next (Fed + econ) combined", C: "No tile" },
-    default: "B",
-  },
-  {
-    key: "feeds_tab_contents",
-    label: "8) New 'Signals' (Feeds) tab contents (first pass)",
-    why: "We should ship something minimal but useful.",
-    options: { A: "Halts + Macro + Earnings", B: "Halts only", C: "Macro + Earnings" },
+    key: "signals_refresh_interval",
+    label: "4) Refresh interval",
+    why: "You picked 1-min for halts earlier; this applies to Signals hub.",
+    options: { A: "60s", B: "2m", C: "5m" },
     default: "A",
   },
   {
-    key: "news_ingestion_now",
-    label: "9) News ingestion: implement now?",
-    why: "You pasted a big RSS list; we can wire it after earnings.",
-    options: { A: "Not yet (after earnings)", B: "Yes, basic RSS headlines next", C: "Manual paste only" },
+    key: "signals_halts_widget",
+    label: "5) Halts widget view",
+    why: "Fast glance vs full table.",
+    options: { A: "Top active halts + resume countdown column", B: "Full table only", C: "Both" },
     default: "A",
   },
   {
-    key: "start_build",
+    key: "signals_earnings_widget",
+    label: "6) Earnings widget view (while provider blocked)",
+    why: "Seamless UX even before wiring provider.",
+    options: { A: "Show status + last attempted fetch", B: "Hide until provider wired", C: "Show empty table placeholder" },
+    default: "A",
+  },
+  {
+    key: "signals_macro_widget",
+    label: "7) Macro widget view (no URLs right now)",
+    why: "We can show a manual note area + upcoming placeholder.",
+    options: { A: "Manual note + next-event placeholder", B: "Hide macro entirely", C: "Only next-event placeholder" },
+    default: "A",
+  },
+  {
+    key: "signals_status_badges",
+    label: "8) Status badges",
+    why: "You wanted green/yellow/red + last fetch.",
+    options: { A: "Show badges for Halts/Earnings/Macro", B: "Halts only", C: "No badges" },
+    default: "A",
+  },
+  {
+    key: "signals_dashboard_highlights",
+    label: "9) Dashboard highlights",
+    why: "We already added a halts tile + macro placeholder; decide if Signals should drive them.",
+    options: { A: "Signals writes dashboard tiles from cached feeds", B: "Dashboard independent" },
+    default: "A",
+  },
+  {
+    key: "start_coding_signals",
     label: "10) Start coding this block now?",
-    why: "If yes, I’ll implement earnings scaffolding + UI + storage.",
+    why: "If yes, I implement the Signals hub UI and caching hooks next.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
@@ -201,12 +179,6 @@ function renderQuestions() {
   });
 }
 
-function lines(id) {
-  const raw = (document.getElementById(id).value || "").trim();
-  if (!raw) return [];
-  return raw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-}
-
 function gather() {
   const out = { _updated_at: new Date().toISOString(), _block: BLOCK_TITLE };
   for (const q of DECISIONS) {
@@ -214,13 +186,6 @@ function gather() {
     const sel = document.querySelector(`input[name='${groupName}']:checked`);
     out[q.key] = sel ? sel.value : q.default;
   }
-
-  out.urls = {
-    news_rss: lines('rss_urls'),
-    fed: lines('fed_urls'),
-    earnings: lines('earnings_urls'),
-  };
-
   return out;
 }
 
@@ -264,9 +229,6 @@ document.getElementById('download').addEventListener('click', () => {
 });
 
 document.getElementById('reset').addEventListener('click', () => {
-  document.getElementById('rss_urls').value='';
-  document.getElementById('fed_urls').value='';
-  document.getElementById('earnings_urls').value='';
   renderLocked();
   renderQuestions();
   document.getElementById('out').textContent = '(click Generate JSON)';
