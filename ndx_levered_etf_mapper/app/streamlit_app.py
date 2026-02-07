@@ -2988,14 +2988,16 @@ with tab_exposure:
         if not accts:
             st.warning("No accounts returned (Schwab may be down, tokens missing, or app not entitled for trader endpoints).")
         else:
-            # Build label -> hash mapping
+            # Build label -> hash mapping (avoid showing hashes/ids in normal UI)
             opts = []
+            acct_i = 0
             for a in accts:
                 num = str(a.get("accountNumber") or a.get("account") or "")
                 h = str(a.get("hashValue") or a.get("accountHash") or a.get("hash") or "")
                 if h:
-                    label = num[-4:] if num else h[:8]
-                    opts.append((f"…{label}", h, num))
+                    acct_i += 1
+                    label = f"…{num[-4:]}" if num else f"Acct {acct_i}"
+                    opts.append((label, h, num))
 
             if not opts:
                 st.warning("Accounts list did not include hashes. Can't fetch positions.")
