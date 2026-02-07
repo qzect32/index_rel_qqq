@@ -33,6 +33,7 @@ from streamlit_autorefresh import st_autorefresh
 # PDF exports (reportlab)
 from io import BytesIO
 import time
+import zipfile
 
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
 from etf_mapper.config import load_schwab_secrets
@@ -53,6 +54,13 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = make_session_id()
 if "rec" not in st.session_state:
     st.session_state["rec"] = FlightRecorder(_data_dir(), session_id=st.session_state["session_id"])
+
+# Settings load (local-only)
+if "_settings_loaded" not in st.session_state:
+    st.session_state["_settings_loaded"] = True
+    loaded = _settings_defaults() | _load_settings()
+    for k, v in loaded.items():
+        st.session_state.setdefault(k, v)
 
 # Load local .env automatically (kept out of git)
 load_dotenv()
@@ -140,6 +148,85 @@ def _data_dir() -> Path:
 
 def _db_path(name: str) -> Path:
     return _data_dir() / name
+
+
+def _settings_path() -> Path:
+    return _data_dir() / "app_settings.json"
+
+
+def _scanners_dir() -> Path:
+    return _data_dir() / "scanners"
+
+
+def _settings_defaults() -> dict:
+    # Keep this small and non-secret.
+    return {
+        "selected_ticker": "QQQ",
+        "watchlist": "QQQ,SPY,TSLA,AAPL,NVDA,/ES",
+        "event_mode": "Normal",
+        "api_budget_cap": 60,
+        "dash_hot_spark_window": "1h",
+        "heat_rv_on": False,
+        "heat_rv_method": "returns",
+        "heat_rv_k": 0.35,
+        "heat_weights": _default_heat_weights(),
+        # Scanner UI
+        "scanner_preset": "Watchlist",
+        "scanner_custom_symbols": "",
+        "scanner_max_symbols": 80,
+    }
+
+
+def _load_settings() -> dict:
+    p = _settings_path()
+    if not p.exists():
+        return {}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_settings(obj: dict) -> None:
+    try:
+        p = _settings_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _settings_snapshot() -> dict:
+    # Single source of truth: pull from session_state.
+    keys = list(_settings_defaults().keys())
+    snap = {}
+    for k in keys:
+        v = st.session_state.get(k)
+        # Only store JSON-safe items.
+        try:
+            json.dumps(v)
+            snap[k] = v
+        except Exception:
+            pass
+    return snap
+
+
+def _autosave_settings() -> None:
+    """Auto-save settings when they change."""
+    defaults = _settings_defaults()
+    cur = defaults | _settings_snapshot()
+    try:
+        blob = json.dumps(cur, sort_keys=True)
+    except Exception:
+        return
+
+    last = st.session_state.get("_settings_last_blob")
+    if last == blob:
+        return
+
+    _save_settings(cur)
+    st.session_state["_settings_last_blob"] = blob
 
 
 def _schwab_api() -> SchwabAPI | None:
@@ -1351,11 +1438,11 @@ with st.sidebar:
     st.markdown("### Explore")
 
     # Event mode (affects scanner/dashboard defaults)
-    st.session_state.setdefault("event_mode", "Normal")
     st.session_state["event_mode"] = st.selectbox(
         "Event mode",
         ["Normal", "Fed day", "CPI/NFP day", "Earnings week"],
         index=["Normal", "Fed day", "CPI/NFP day", "Earnings week"].index(st.session_state.get("event_mode", "Normal")),
+        key="event_mode",
     )
 
     with st.expander("Calculator", expanded=False):
@@ -1425,6 +1512,9 @@ with st.sidebar:
                 "schwab_tokens_present": (_data_dir() / "schwab_tokens.json").exists(),
             }
         )
+
+# Auto-save settings on change
+_autosave_settings()
 
 # Need data_dir after sidebar inputs are bound
 data_dir = _data_dir()
@@ -1936,7 +2026,15 @@ with tab_scanner:
                 "Market-wide actives (feed stub)",
                 "Custom (paste)",
             ],
-            index=0,
+            index=[
+                "Watchlist",
+                "Core liquid (starter)",
+                "Semis / AI-ish (starter)",
+                "Energy / Oil & Gas (starter)",
+                "Market-wide actives (feed stub)",
+                "Custom (paste)",
+            ].index(st.session_state.get("scanner_preset", "Watchlist")),
+            key="scanner_preset",
         )
         st.caption(f"Actives feed status: {actives_feed.status().detail}")
 
@@ -1944,7 +2042,13 @@ with tab_scanner:
         semis = _parse_symbols("NVDA,AMD,INTC,TSM,AVGO,QCOM,AMAT,LRCX,SMH,SOXL,SOXS")
         energy = _parse_symbols("XLE,CVX,XOM,OXY,SLB,HAL,BKR,UNG,BOIL,KOLD")
 
-        custom = st.text_area("Custom symbols", value="", height=120, placeholder="TSLA, AAPL, /ES, ...")
+        custom = st.text_area(
+            "Custom symbols",
+            value=st.session_state.get("scanner_custom_symbols", ""),
+            height=120,
+            placeholder="TSLA, AAPL, /ES, ...",
+            key="scanner_custom_symbols",
+        )
 
         if preset == "Watchlist":
             uni = base
@@ -1966,7 +2070,14 @@ with tab_scanner:
         else:
             uni = _parse_symbols(custom)
 
-        max_n = st.slider("Max symbols to scan", 5, 300, 80, 5)
+        max_n = st.slider(
+            "Max symbols to scan",
+            5,
+            300,
+            int(st.session_state.get("scanner_max_symbols", 80)),
+            5,
+            key="scanner_max_symbols",
+        )
         uni = uni[: int(max_n)]
 
     # Scan (manual, by design)
@@ -3650,6 +3761,83 @@ with tab_exports:
 
 with tab_admin:
     st.subheader("Admin / Data pipelines")
+
+    st.markdown("### App settings")
+    st.caption("Local-only settings (no secrets). Auto-saved to data/app_settings.json")
+
+    sL, sR = st.columns([0.5, 0.5], vertical_alignment="top")
+    with sL:
+        if st.button("Reset settings to defaults", key="settings_reset"):
+            defaults = _settings_defaults()
+            for k, v in defaults.items():
+                st.session_state[k] = v
+            _save_settings(defaults)
+            st.toast("Settings reset to defaults")
+            st.rerun()
+
+        st.download_button(
+            "Download settings (app_settings.json)",
+            data=json.dumps(_settings_defaults() | _settings_snapshot(), indent=2, sort_keys=True).encode("utf-8"),
+            file_name="app_settings.json",
+            mime="application/json",
+            key="settings_dl_json",
+        )
+
+        # Also offer a zip that includes scanner presets.
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("app_settings.json", json.dumps(_settings_defaults() | _settings_snapshot(), indent=2, sort_keys=True))
+            # include scanner presets if they exist
+            try:
+                sdir = _scanners_dir()
+                if sdir.exists():
+                    for p in sdir.glob("*.json"):
+                        z.writestr(f"scanners/{p.name}", p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        st.download_button(
+            "Download settings bundle (.zip)",
+            data=buf.getvalue(),
+            file_name="market_hub_settings.zip",
+            mime="application/zip",
+            key="settings_dl_zip",
+        )
+
+    with sR:
+        up = st.file_uploader("Import settings (JSON or ZIP)", type=["json", "zip"], key="settings_upload")
+        if up is not None:
+            if st.button("Import now", key="settings_import"):
+                try:
+                    if up.name.lower().endswith(".zip"):
+                        zf = zipfile.ZipFile(BytesIO(up.getvalue()))
+                        if "app_settings.json" in zf.namelist():
+                            settings_obj = json.loads(zf.read("app_settings.json").decode("utf-8"))
+                        else:
+                            settings_obj = {}
+                        # restore scanner presets
+                        sdir = _scanners_dir()
+                        sdir.mkdir(parents=True, exist_ok=True)
+                        for name in zf.namelist():
+                            if name.startswith("scanners/") and name.endswith(".json"):
+                                outp = sdir / Path(name).name
+                                outp.write_text(zf.read(name).decode("utf-8"), encoding="utf-8")
+                    else:
+                        settings_obj = json.loads(up.getvalue().decode("utf-8"))
+
+                    if not isinstance(settings_obj, dict):
+                        raise ValueError("settings file must be a JSON object")
+
+                    merged = _settings_defaults() | settings_obj
+                    _save_settings(merged)
+                    for k, v in merged.items():
+                        st.session_state[k] = v
+                    st.success(f"Imported settings into: {_settings_path()}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+    st.write({"settings_path": str(_settings_path()), "scanners_dir": str(_scanners_dir())})
 
     # Debug bundle
     with st.expander("Support / Debug bundle", expanded=False):
