@@ -45,64 +45,64 @@
 <script>
 const DECISIONS = [
   {
-    key: "exposure_balances_fields",
-    label: "1) Balances normalization approach",
-    options: { A: "Map known fields only (fast)", B: "Build per-account-type adapters (robust)", C: "Defer balances; positions-only" },
-    default: "B",
-  },
-  {
-    key: "exposure_target_fields",
-    label: "2) Must-have balance fields",
-    options: { A: "NetLiq + Cash", B: "A + Buying Power", C: "B + Maintenance Req/Excess" },
-    default: "B",
-  },
-  {
-    key: "exposure_missing_behavior",
-    label: "3) If some fields missing",
-    options: { A: "Show '—' and continue", B: "Show warning banner", C: "Hide balances section entirely" },
-    default: "B",
-  },
-  {
-    key: "exposure_accounts_scope",
-    label: "4) Balances scope",
-    options: { A: "Single account only", B: "All accounts combined + per-account", C: "Combined only" },
-    default: "B",
-  },
-  {
-    key: "exposure_refresh",
-    label: "5) Refresh behavior",
-    options: { A: "Manual refresh button", B: "Auto refresh every 60s", C: "Auto refresh every 15s" },
-    default: "A",
-  },
-  {
-    key: "exposure_cache_ttl",
-    label: "6) Cache TTL for account details",
-    options: { A: "15s", B: "60s", C: "5m" },
-    default: "B",
-  },
-  {
-    key: "exposure_redaction",
-    label: "7) Redaction level",
-    options: { A: "No acct ids anywhere", B: "Allow last-4 in headers only" },
-    default: "B",
-  },
-  {
-    key: "exposure_pdf",
-    label: "8) Exposure PDF content",
-    options: { A: "Top holdings + totals only", B: "A + balances summary", C: "B + per-account pages" },
-    default: "B",
-  },
-  {
-    key: "exposure_short_display",
-    label: "9) Shorts display",
-    options: { A: "Negative qty + show avg price", B: "Separate Short flag column" },
-    default: "A",
-  },
-  {
-    key: "exposure_testing",
-    label: "10) Testing balances",
-    options: { A: "Fixtures only", B: "Live-only manual", C: "Both" },
+    key: "allowed_domains_news_set",
+    label: "1) News RSS domains allowlist (since you picked WSJ/Bloomberg/FT)",
+    options: { A: "Allow wsj.com + bloomberg.com + ft.com", B: "Swap to Reuters/Yahoo/SeekingAlpha", C: "You will paste exact RSS URLs later" },
     default: "C",
+  },
+  {
+    key: "news_rss_urls",
+    label: "2) Provide initial RSS URLs",
+    options: { A: "You paste them into a config file", B: "Hardcode 3 starter URLs", C: "Both" },
+    default: "A",
+  },
+  {
+    key: "calendar_source_detail",
+    label: "3) ForexFactory ingestion method",
+    options: { A: "RSS if available", B: "HTML scrape (best-effort)", C: "Manual import only" },
+    default: "B",
+  },
+  {
+    key: "calendar_impact_mapping",
+    label: "4) Impact mapping",
+    options: { A: "Keep provider impact as-is", B: "Normalize to Low/Med/High", C: "Normalize + tag 'binary days'" },
+    default: "C",
+  },
+  {
+    key: "earnings_source_detail",
+    label: "5) Earnings ingestion method (free source)",
+    options: { A: "Manual CSV import only", B: "Web scrape (best-effort)", C: "Hybrid: scrape + manual override" },
+    default: "C",
+  },
+  {
+    key: "earnings_links",
+    label: "6) Earnings call links",
+    options: { A: "No links", B: "Link to investor relations page", C: "Link to call/webcast if found" },
+    default: "B",
+  },
+  {
+    key: "feeds_refresh_button",
+    label: "7) Add manual refresh buttons",
+    options: { A: "Per-feed refresh buttons", B: "One global Refresh Feeds button", C: "Both" },
+    default: "C",
+  },
+  {
+    key: "feeds_scheduler",
+    label: "8) Auto-fetch implementation (you chose Streamlit loop)",
+    options: { A: "Tie into existing 60s autorefresh", B: "Separate timer per feed", C: "Only fetch when tab visible" },
+    default: "C",
+  },
+  {
+    key: "feeds_visible_scope",
+    label: "9) Where feeds are shown",
+    options: { A: "New Feeds tab only", B: "Also show highlights on Dashboard", C: "Also show alerts badges in Sidebar" },
+    default: "B",
+  },
+  {
+    key: "feeds_rollout_next",
+    label: "10) Next feature to implement after Halts auto-fetch",
+    options: { A: "News RSS", B: "Macro calendar", C: "Earnings calendar" },
+    default: "A",
   },
 ];
 
