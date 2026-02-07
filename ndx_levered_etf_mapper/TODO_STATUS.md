@@ -27,9 +27,9 @@ Generated from TODO.md. Edit TODO.md for canonical tasks; update this file by re
 - BLOCKERS: none
 
 ## 6. (Nice-to-have) Hot list **per Event mode** (separate lists for Normal/Fed/CPI/Earnings)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 7. **Heat score tuning**
 - STATUS: DONE

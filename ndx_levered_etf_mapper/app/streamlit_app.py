@@ -1474,6 +1474,13 @@ with st.sidebar:
         key="event_mode",
     )
 
+    # Keep hot list view synced to current event mode.
+    try:
+        st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
+        st.session_state["scanner_hotlist"] = _hotlist_for_mode(st.session_state.get("event_mode", "Normal"))
+    except Exception:
+        pass
+
     with st.expander("Calculator", expanded=False):
         a = st.number_input("A", value=0.0, step=1.0, format="%.6f")
         op = st.selectbox("Op", ["+", "-", "*", "/", "%"], index=0)
@@ -1890,35 +1897,124 @@ def _hotlist_path() -> Path:
     return _data_dir() / "scanner_hotlist.json"
 
 
-def _load_hotlist() -> list[str]:
+def _event_modes() -> list[str]:
+    # Keep aligned with the sidebar Event mode select.
+    return ["Normal", "Fed day", "CPI/NFP day", "Earnings week"]
+
+
+def _load_hotlist_by_mode() -> dict[str, list[str]]:
+    """Hot list persistence.
+
+    v1 (legacy): JSON list
+    v2: {"version":2,"by_mode": {"Normal": [...], ...}}
+
+    Migration choice: legacy list -> Normal list.
+    """
+    out = {m: [] for m in _event_modes()}
     try:
         p = _hotlist_path()
         if not p.exists():
-            return []
+            return out
         obj = json.loads(p.read_text(encoding="utf-8"))
+
         if isinstance(obj, list):
-            return [str(x).upper().strip() for x in obj if str(x).strip()]
+            # legacy
+            syms = [str(x).upper().strip() for x in obj if str(x).strip()]
+            out["Normal"] = syms
+            return out
+
+        if isinstance(obj, dict):
+            by = obj.get("by_mode")
+            if isinstance(by, dict):
+                for m in _event_modes():
+                    xs = by.get(m)
+                    if isinstance(xs, list):
+                        clean = []
+                        for x in xs:
+                            t = str(x).upper().strip()
+                            if t and t not in clean:
+                                clean.append(t)
+                        out[m] = clean
+                return out
     except Exception:
-        return []
-    return []
+        return out
+
+    return out
 
 
-def _save_hotlist(syms: list[str]) -> None:
+def _save_hotlist_by_mode(by_mode: dict[str, list[str]]) -> None:
     try:
         p = _hotlist_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        clean = []
-        for x in syms:
-            t = str(x).upper().strip()
-            if t and t not in clean:
-                clean.append(t)
-        p.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+        clean_by: dict[str, list[str]] = {}
+        for m in _event_modes():
+            xs = by_mode.get(m, []) if isinstance(by_mode, dict) else []
+            clean = []
+            for x in (xs or []):
+                t = str(x).upper().strip()
+                if t and t not in clean:
+                    clean.append(t)
+            clean_by[m] = clean[:80]
+
+        obj = {"version": 2, "by_mode": clean_by}
+        p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
     except Exception:
         pass
 
 
+def _hotlist_for_mode(event_mode: str) -> list[str]:
+    by = st.session_state.get("scanner_hotlist_by_mode")
+    if not isinstance(by, dict):
+        by = _load_hotlist_by_mode()
+        st.session_state["scanner_hotlist_by_mode"] = by
+
+    m = str(event_mode or "Normal")
+    if m not in _event_modes():
+        m = "Normal"
+    xs = by.get(m, []) if isinstance(by, dict) else []
+    return [str(x).upper().strip() for x in (xs or []) if str(x).strip()]
+
+
+def _hotlist_combined() -> list[str]:
+    by = st.session_state.get("scanner_hotlist_by_mode")
+    if not isinstance(by, dict):
+        by = _load_hotlist_by_mode()
+        st.session_state["scanner_hotlist_by_mode"] = by
+
+    out: list[str] = []
+    for m in _event_modes():
+        for x in (by.get(m, []) if isinstance(by, dict) else []):
+            t = str(x).upper().strip()
+            if t and t not in out:
+                out.append(t)
+    return out
+
+
+def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
+    by = st.session_state.get("scanner_hotlist_by_mode")
+    if not isinstance(by, dict):
+        by = _load_hotlist_by_mode()
+    m = str(event_mode or "Normal")
+    if m not in _event_modes():
+        m = "Normal"
+
+    clean = []
+    for x in (syms or []):
+        t = str(x).upper().strip()
+        if t and t not in clean:
+            clean.append(t)
+
+    by[m] = clean[:50]
+    st.session_state["scanner_hotlist_by_mode"] = by
+    # keep convenience list in sync
+    st.session_state["scanner_hotlist"] = list(by.get(m, []))
+    _save_hotlist_by_mode(by)
+
+
     # Ensure Hot List is available across tabs (Dashboard + Scanner).
-    st.session_state.setdefault("scanner_hotlist", _load_hotlist())
+    st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
+    # Convenience: current mode view
+    st.session_state.setdefault("scanner_hotlist", _hotlist_for_mode(st.session_state.get("event_mode", "Normal")))
 
     # ---- Watchlist tile ----
     dL, dM, dR = st.columns([0.36, 0.40, 0.24], gap="large")
@@ -1954,13 +2050,8 @@ def _save_hotlist(syms: list[str]) -> None:
         st.markdown("### Hot List")
         st.caption("Pins from Scanner (saved locally).")
 
-        # Read from session_state if present; fall back to persisted file.
-        hot = st.session_state.get("scanner_hotlist")
-        if hot is None:
-            hot = _load_hotlist()
-            st.session_state["scanner_hotlist"] = hot
-
-        hot_syms = [s for s in (hot or []) if str(s).strip()][:25]
+        # Decision: Dashboard view = combined.
+        hot_syms = _hotlist_combined()[:25]
         if not hot_syms:
             st.write("(empty)")
         else:
@@ -2361,7 +2452,9 @@ with tab_scanner:
 
     # Hot list controls
     st.markdown("### Hot List")
-    hl = list(st.session_state.get("scanner_hotlist", []))
+    # Current mode hot list
+    hl = _hotlist_for_mode(em)
+    st.session_state["scanner_hotlist"] = hl
     hL, hR = st.columns([0.72, 0.28])
     with hL:
         st.caption("Persistent (saved locally). Use it as your pinboard.")
@@ -2375,13 +2468,11 @@ with tab_scanner:
                 rL.write(sym)
                 if rR.button("Remove", key=f"hot_rm_{sym}"):
                     nxt = [x for x in hl if x != sym]
-                    st.session_state["scanner_hotlist"] = nxt
-                    _save_hotlist(nxt)
+                    _set_hotlist_for_mode(em, nxt)
                     st.rerun()
     with hR:
         if st.button("Clear hot list"):
-            st.session_state["scanner_hotlist"] = []
-            _save_hotlist([])
+            _set_hotlist_for_mode(em, [])
             st.rerun()
 
     # --- Top 5 strip by dollar volume ---
@@ -2428,11 +2519,10 @@ with tab_scanner:
                 st.session_state["scanner_pin"] = True
                 st.rerun()
             if b2.button("Hot+", key=f"scanner_hot_btn_{sym}"):
-                cur = list(st.session_state.get("scanner_hotlist", []))
+                cur = _hotlist_for_mode(em)
                 if sym not in cur:
                     cur.insert(0, sym)
-                st.session_state["scanner_hotlist"] = cur[:50]
-                _save_hotlist(st.session_state["scanner_hotlist"])
+                _set_hotlist_for_mode(em, cur[:50])
                 st.rerun()
     else:
         st.caption("No scan results yet.")
@@ -2497,11 +2587,10 @@ with tab_scanner:
             st.toast(f"Main ticker set: {focus}")
             st.rerun()
         if a2.button("Hot+", key="scanner_hot_focus"):
-            cur = list(st.session_state.get("scanner_hotlist", []))
+            cur = _hotlist_for_mode(em)
             if focus not in cur:
                 cur.insert(0, focus)
-            st.session_state["scanner_hotlist"] = cur[:50]
-            _save_hotlist(st.session_state["scanner_hotlist"])
+            _set_hotlist_for_mode(em, cur[:50])
             st.rerun()
 
         tf = st.selectbox("Focus timeframe", ["1m (4H)", "1m (3D)"], index=0, key="scanner_tf")

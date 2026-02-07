@@ -153,7 +153,7 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
   - [x] Show hot list as a tile on Dashboard
   - [x] Add “remove” buttons per hot list symbol
   - [x] Add mini sparkline (last N 1m bars) for each hot symbol (Schwab)
-  - [ ] (Nice-to-have) Hot list **per Event mode** (separate lists for Normal/Fed/CPI/Earnings)
+  - [x] (Nice-to-have) Hot list **per Event mode** (separate lists for Normal/Fed/CPI/Earnings)
 - [x] **Heat score tuning**
   - [x] Make weights configurable per Event mode
   - [x] Add optional realized-vol component (requires 1m candles; keep throttled)
