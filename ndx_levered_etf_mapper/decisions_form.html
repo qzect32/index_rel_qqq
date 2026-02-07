@@ -9,7 +9,6 @@
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
     .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
-    h2 { margin: 0 0 4px; font-size: 16px; }
     p { margin: 6px 0 12px; color: var(--muted); }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px; margin: 12px 0; }
     .q { font-weight: 650; margin-bottom: 6px; }
@@ -49,79 +48,79 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "EDGAR pipeline: download + extract + diff scoring";
-const BLOCK_NOTE = "Next: store filings under data/filings/... and generate MD&A/Risk Factors diffs.";
+const BLOCK_TITLE = "Schwab earnings/calendar endpoint discovery + safety";
+const BLOCK_NOTE = "We will try Schwab endpoints for earnings calendar; if not available, we fall back to other seamless options.";
 
 const DECISIONS = [
   {
-    key: "edgar_download_format",
-    label: "1) Prefer which document format?",
-    why: "EDGAR filings can be HTML, TXT, or PDFs (sometimes exhibits).",
-    options: { A: "HTML primary document", B: "Full submission TXT", C: "PDF when available" },
+    key: "schwab_endpoints_ok",
+    label: "1) Do you want me to attempt Schwab endpoint discovery in code now?",
+    why: "This may require adjusting Schwab OAuth scopes and handling entitlement errors cleanly.",
+    options: { A: "Yes", B: "Hold until you’re ready to test OAuth" },
+    default: "B",
+  },
+  {
+    key: "schwab_scope_policy",
+    label: "2) OAuth scope policy",
+    why: "Some endpoints may require more than readonly.",
+    options: { A: "Keep readonly only", B: "Allow expanding scopes if needed (you approve)" },
     default: "A",
   },
   {
-    key: "edgar_rate_limit",
-    label: "2) SEC rate limit posture",
-    why: "SEC is strict about scraping volume. We'll be conservative.",
-    options: { A: "Max 1 request/sec", B: "Max 2 requests/sec", C: "Burst ok (not recommended)" },
+    key: "earnings_calendar_fallback",
+    label: "3) If Schwab earnings calendar isn’t available",
+    why: "You want seamless; we need a Plan B.",
+    options: { A: "Use SEC filings timing as proxy for earnings events", B: "Use an external calendar feed later", C: "Show 'blocked' until Schwab works" },
     default: "A",
   },
   {
-    key: "edgar_cache",
-    label: "3) Cache strategy",
-    why: "Avoid re-downloading filings repeatedly.",
-    options: { A: "Never re-download if file exists", B: "Re-download if older than 7d", C: "Always re-download" },
-    default: "A",
+    key: "filings_trigger",
+    label: "4) Auto-trigger filings download",
+    why: "When a new 10-Q/10-K/8-K appears, we can auto-download and run diff.",
+    options: { A: "On-demand only", B: "Auto when new filing detected for watchlist/hotlist", C: "Auto for main ticker only" },
+    default: "B",
   },
   {
-    key: "diff_baseline",
-    label: "4) Diff baseline",
-    why: "What do we compare against?",
-    options: { A: "Previous same form (10-Q vs 10-Q)", B: "Previous quarter regardless of form", C: "Manual choose" },
-    default: "A",
+    key: "filings_check_interval",
+    label: "5) Filing check interval",
+    why: "SEC endpoints have rate limits; keep it reasonable.",
+    options: { A: "15 min", B: "60 min", C: "Daily" },
+    default: "B",
   },
   {
-    key: "diff_output",
-    label: "5) Diff output",
-    why: "How you want to read the changes.",
-    options: { A: "Top added/removed sentences", B: "Keyword + risk phrase deltas", C: "Both" },
+    key: "signals_badge_logic",
+    label: "6) Signals badges",
+    why: "When should Signals show a badge for a new filing/report?",
+    options: { A: "Any new filing", B: "Only when diff score above threshold", C: "Never" },
+    default: "B",
+  },
+  {
+    key: "diff_threshold",
+    label: "7) Diff score threshold",
+    why: "Used when filtering badges/alerts.",
+    options: { A: "5", B: "10", C: "20" },
+    default: "B",
+  },
+  {
+    key: "report_retention",
+    label: "8) Keep reports",
+    why: "Controls disk usage.",
+    options: { A: "Keep all", B: "Keep 30 days", C: "Keep last 20" },
     default: "C",
   },
   {
-    key: "risk_phrase_list",
-    label: "6) Risk phrase list",
-    why: "Scoring uses a phrase list.",
-    options: { A: "Ship with a starter list", B: "Start empty (you add later)" },
+    key: "edgar_contact",
+    label: "9) SEC User-Agent contact string",
+    why: "SEC guidance prefers a real contact method.",
+    options: { A: "Use generic 'contact: user'", B: "You will provide an email to embed" },
     default: "A",
   },
   {
-    key: "sentiment_scoring",
-    label: "7) Sentiment scoring method",
-    why: "Keep it lightweight and reproducible.",
-    options: { A: "Count-based score", B: "TF-IDF change score", C: "LLM summary (later)" },
-    default: "A",
-  },
-  {
-    key: "where_show_results",
-    label: "8) Where show results",
-    why: "You asked for seamless workflow.",
-    options: { A: "Earnings tab only", B: "Earnings tab + Signals panel badge", C: "Export markdown report" },
-    default: "C",
-  },
-  {
-    key: "report_format",
-    label: "9) Report format",
-    why: "So you can archive it.",
-    options: { A: "Markdown", B: "JSON", C: "Both" },
-    default: "C",
-  },
-  {
-    key: "start_build_edgar",
-    label: "10) Start coding this diff/scoring block now?",
-    why: "If yes, I implement download+extract+diff+report end-to-end.",
+    key: "start_background_job",
+    label: "10) Start background filings watcher now?",
+    why: "This will run periodic checks and produce reports automatically.",
     options: { A: "Yes", B: "Hold" },
-    default: "A",
+    default: "B",
   },
 ];
 
@@ -177,9 +176,8 @@ function setOut(obj) {
 
 // Init header
 document.getElementById('block').textContent = BLOCK_TITLE;
-const n = document.getElementById('note');
-n.style.display = 'inline-block';
-n.textContent = BLOCK_NOTE;
+document.getElementById('note').style.display = 'inline-block';
+document.getElementById('note').textContent = BLOCK_NOTE;
 
 renderQuestions();
 
