@@ -159,6 +159,58 @@ def _read_sql(db_path: str, query: str, params: Optional[tuple] = None) -> pd.Da
         return pd.read_sql(query, conn, params=params)
 
 
+@st.cache_data(show_spinner=False, ttl=90)
+def _sparkline_history(ticker: str, *, window: str = "1h") -> pd.DataFrame:
+    """Cached micro-history for sparklines.
+
+    window:
+      - "1h": last 60 x 1m bars
+      - "4h": last 240 x 1m bars
+
+    Cached to reduce Schwab call volume (user preference: 60–120s).
+    """
+    api = _schwab_api()
+    if api is None:
+        return pd.DataFrame()
+
+    tkr = _normalize_ticker(ticker)
+    if not tkr:
+        return pd.DataFrame()
+
+    try:
+        js = api.price_history(
+            tkr,
+            period_type="day",
+            period=1,
+            frequency_type="minute",
+            frequency=1,
+            need_extended_hours_data=True,
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    candles = js.get("candles") or []
+    if not candles:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(candles)
+    if "datetime" in df.columns:
+        df["date"] = pd.to_datetime(df["datetime"], unit="ms", utc=True).dt.tz_convert(None)
+    else:
+        return pd.DataFrame()
+
+    for c in ["open", "high", "low", "close", "volume"]:
+        if c not in df.columns:
+            df[c] = None
+
+    df = df.dropna(subset=["date"])  # type: ignore
+
+    n = 60 if window == "1h" else 240
+    df = df.sort_values("date").tail(int(n))
+
+    return df[["date", "open", "high", "low", "close", "volume"]]
+
+
 def _table_cols(db_path: Path, table: str) -> list[str]:
     with sqlite3.connect(db_path) as conn:
         return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -256,6 +308,36 @@ def _plot_candles(dfp: pd.DataFrame, title: str) -> go.Figure:
     return fig
 
 
+def _plot_sparkline(dfp: pd.DataFrame, *, height: int = 90) -> go.Figure:
+    df = dfp.copy()
+    if df.empty or "date" not in df.columns or "close" not in df.columns:
+        fig = go.Figure()
+        fig.update_layout(height=height, margin=dict(l=4, r=4, t=6, b=6), template="plotly_dark")
+        return fig
+
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=df["date"],
+                y=df["close"].astype(float),
+                mode="lines",
+                line=dict(width=1.6, color="#33ffcc"),
+                fill="tozeroy",
+                fillcolor="rgba(51,255,204,0.10)",
+                hoverinfo="skip",
+            )
+        ]
+    )
+    fig.update_layout(
+        height=height,
+        margin=dict(l=4, r=4, t=6, b=6),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        template="plotly_dark",
+    )
+    return fig
+
+
 def _fetch_history(ticker: str, tos_style: str) -> pd.DataFrame:
     """Live intraday candles via Schwab Market Data.
 
@@ -264,6 +346,9 @@ def _fetch_history(ticker: str, tos_style: str) -> pd.DataFrame:
       - 1m over ~4H (today)
 
     The UI still calls this "TOS-like" but the source is Schwab.
+
+    NOTE: this function is intentionally *not cached* because it is used for
+    interactive focus charts. For tiny sparklines, use `_sparkline_history()`.
     """
     api = _schwab_api()
     if api is None:
@@ -1286,20 +1371,40 @@ def _save_hotlist(syms: list[str]) -> None:
         if not hot_syms:
             st.write("(empty)")
         else:
-            hrows = []
-            for s in hot_syms:
-                q = _schwab_quote(s)
+            spark_window = st.selectbox(
+                "Sparkline window",
+                ["1h", "4h", "off"],
+                index=0,
+                help="Default is 1h. 4h is available if you need more context. Cached ~90s to reduce calls.",
+                key="dash_hot_spark_window",
+            )
+
+            for sym in hot_syms:
+                q = _schwab_quote(sym)
                 px = q.get("mark") or q.get("last")
-                net = q.get("netChange")
                 netp = q.get("netPct")
-                hrows.append({"symbol": s, "px": px, "chg": net, "chg_%": netp})
 
-            hdf = pd.DataFrame(hrows)
-            for c in ["px", "chg", "chg_%"]:
-                if c in hdf.columns:
-                    hdf[c] = pd.to_numeric(hdf[c], errors="coerce")
+                try:
+                    pxs = f"${float(px):,.2f}" if px not in (None, "") else "—"
+                except Exception:
+                    pxs = "—"
 
-            st.dataframe(hdf, use_container_width=True, height=280, hide_index=True)
+                try:
+                    cps = f"{float(netp):+.2f}%" if netp == netp else "—"
+                except Exception:
+                    cps = "—"
+
+                rowL, rowR = st.columns([0.28, 0.72], vertical_alignment="center")
+                rowL.markdown(f"**{sym}**  \\n{pxs}  \\n{cps}")
+
+                if spark_window != "off":
+                    df_s = _sparkline_history(sym, window=spark_window)
+                    if df_s.empty:
+                        rowR.caption("(no 1m candles)")
+                    else:
+                        rowR.plotly_chart(_plot_sparkline(df_s), use_container_width=True)
+                else:
+                    rowR.caption("sparklines off")
 
     # ---- Selected chart tile ----
     with dM:
