@@ -211,6 +211,61 @@ def _sparkline_history(ticker: str, *, window: str = "1h") -> pd.DataFrame:
     return df[["date", "open", "high", "low", "close", "volume"]]
 
 
+def _realized_vol_1m(df1m: pd.DataFrame, *, method: str = "returns", lookback: int = 60) -> Optional[float]:
+    """Compute a small realized-vol proxy from 1m candles.
+
+    method:
+      - returns: stddev of 1m log returns (lookback bars)
+      - atr: ATR-ish using true range / close (lookback bars)
+    Returns a scalar (not annualized)."""
+    if df1m is None or df1m.empty:
+        return None
+
+    df = df1m.dropna(subset=["close"]).copy()
+    df = df.sort_values("date").tail(int(lookback) + 1)
+    if len(df) < max(10, int(lookback) // 3):
+        return None
+
+    try:
+        close = df["close"].astype(float)
+    except Exception:
+        return None
+
+    if method == "atr":
+        # True range, normalized by close
+        for c in ["high", "low"]:
+            if c not in df.columns:
+                return None
+        try:
+            high = df["high"].astype(float)
+            low = df["low"].astype(float)
+        except Exception:
+            return None
+
+        prev_close = close.shift(1)
+        tr = pd.concat([(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        tr = tr.dropna()
+        if tr.empty:
+            return None
+
+        # Mean TR over lookback, normalized by last close
+        tr_mean = float(tr.tail(int(lookback)).mean())
+        last_close = float(close.dropna().iloc[-1])
+        if last_close <= 0:
+            return None
+        return tr_mean / last_close
+
+    # default: returns
+    r = close.astype(float).pct_change().dropna()
+    r = r.tail(int(lookback))
+    if r.empty:
+        return None
+    try:
+        return float(r.std(ddof=0))
+    except Exception:
+        return None
+
+
 def _table_cols(db_path: Path, table: str) -> list[str]:
     with sqlite3.connect(db_path) as conn:
         return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -1655,6 +1710,31 @@ with tab_scanner:
         wd = 1.0 - float(wm)
         st.write({"w_move": round(float(wm), 2), "w_dollar_vol": round(float(wd), 2)})
 
+        # Optional realized-vol multiplier (throttled)
+        st.session_state.setdefault("heat_rv_on", False)
+        rv_on = st.toggle(
+            "Realized-vol boost (uses 1m candles)",
+            value=bool(st.session_state.get("heat_rv_on", False)),
+            help="Default off. When on, we fetch 1m candles ONLY for Focus + Top 5 strip + Hot List.",
+            key="heat_rv_on",
+        )
+        rv_method = st.selectbox(
+            "RV method",
+            ["returns", "atr"],
+            index=0,
+            help="returns = stddev of 1m returns; atr = ATR-ish true range / close.",
+            key="heat_rv_method",
+        )
+        rv_k = st.slider(
+            "RV multiplier strength (k)",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(st.session_state.get("heat_rv_k", 0.35)),
+            step=0.05,
+            help="Final heat = base_heat * (1 + k * rv_rank).",
+            key="heat_rv_k",
+        )
+
         # Persist back into session weights map
         st.session_state.setdefault("heat_weights", _default_heat_weights())
         if isinstance(st.session_state.get("heat_weights"), dict):
@@ -1670,9 +1750,64 @@ with tab_scanner:
         weights = _heat_weights_for_mode(em)
         dv_rank = sdf2["dollar_vol"].rank(pct=True).fillna(0.0)
         mv_rank = sdf2["abs_chg_%"].rank(pct=True).fillna(0.0)
-        sdf2["heat"] = (weights["w_move"] * mv_rank + weights["w_dollar_vol"] * dv_rank) * 100.0
+        sdf2["heat_base"] = (weights["w_move"] * mv_rank + weights["w_dollar_vol"] * dv_rank) * 100.0
     except Exception:
-        sdf2["heat"] = None
+        sdf2["heat_base"] = None
+
+    # Optional realized-vol multiplier (fetch ONLY for Focus + Top5 strip + Hot List)
+    sdf2["rv_ret"] = None
+    sdf2["rv_atr"] = None
+    sdf2["rv"] = None
+    sdf2["rv_rank"] = 0.0
+
+    if bool(st.session_state.get("heat_rv_on", False)) and ("heat_base" in sdf2.columns):
+        try:
+            focus_sym = str(st.session_state.get("scanner_focus") or "").upper().strip()
+            hot_syms = [str(x).upper().strip() for x in st.session_state.get("scanner_hotlist", []) if str(x).strip()]
+            top5_syms = [str(x).upper().strip() for x in strip_syms if str(x).strip()]
+
+            eligible = []
+            for x in [focus_sym] + top5_syms + hot_syms:
+                x = str(x).upper().strip()
+                if x and x not in eligible:
+                    eligible.append(x)
+
+            # compute rv for eligible only
+            rv_map: dict[str, dict] = {}
+            for sym in eligible[:60]:
+                df1m = _sparkline_history(sym, window="1h")  # 60 bars
+                rv_ret = _realized_vol_1m(df1m, method="returns", lookback=60)
+                rv_atr = _realized_vol_1m(df1m, method="atr", lookback=60)
+                if rv_ret is None and rv_atr is None:
+                    continue
+
+                if st.session_state.get("heat_rv_method") == "atr":
+                    rv = rv_atr
+                else:
+                    rv = rv_ret
+
+                if rv is None:
+                    continue
+
+                rv_map[sym] = {"rv_ret": rv_ret, "rv_atr": rv_atr, "rv": rv}
+
+            if rv_map:
+                # rank among the eligible rvs only
+                rv_series = pd.Series({k: v["rv"] for k, v in rv_map.items()}).rank(pct=True)
+                for sym, rec in rv_map.items():
+                    m = sdf2["symbol"] == sym
+                    sdf2.loc[m, "rv_ret"] = rec.get("rv_ret")
+                    sdf2.loc[m, "rv_atr"] = rec.get("rv_atr")
+                    sdf2.loc[m, "rv"] = rec.get("rv")
+                    sdf2.loc[m, "rv_rank"] = float(rv_series.get(sym, 0.0))
+        except Exception:
+            pass
+
+    try:
+        k = float(st.session_state.get("heat_rv_k", 0.35))
+        sdf2["heat"] = sdf2["heat_base"] * (1.0 + k * sdf2["rv_rank"].fillna(0.0))
+    except Exception:
+        sdf2["heat"] = sdf2.get("heat_base")
 
     if metric in sdf2.columns:
         sdf2 = sdf2.sort_values(metric, ascending=False)
