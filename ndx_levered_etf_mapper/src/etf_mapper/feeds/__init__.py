@@ -16,6 +16,7 @@ from .stub import (
 from .actives import ActivesFeed, StubActivesFeed
 from .internals import InternalsFeed, StubInternalsFeed
 from .halts import WebHaltsFeed
+from .earnings_calendar import WebEarningsCalendarFeed
 
 __all__ = [
     "FeedStatus",
@@ -34,4 +35,5 @@ __all__ = [
     "StubActivesFeed",
     "StubInternalsFeed",
     "WebHaltsFeed",
+    "WebEarningsCalendarFeed",
 ]

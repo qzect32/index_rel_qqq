@@ -20,6 +20,7 @@ from etf_mapper.feeds import (
     StubActivesFeed,
     StubInternalsFeed,
     WebHaltsFeed,
+    WebEarningsCalendarFeed,
 )
 
 from ladder_styles import style_ladder_with_changes
@@ -2610,12 +2611,12 @@ with tab_signals:
 
     news_feed = StubNewsFeed()
     cal_feed = StubCalendarFeed()
-    earn_feed = StubEarningsFeed()
     filings_feed = StubFilingsFeed()
 
-    st.caption(
-        "Scaffold mode: feeds are stubbed. Paste or type what you care about now; wire providers later."
-    )
+    # Seamless earnings calendar scaffold (UI + storage are real; provider is BLOCKED until chosen)
+    earn_feed = WebEarningsCalendarFeed(data_dir=_data_dir())
+
+    st.caption("Signals is becoming your intel hub. Some feeds are still stubbed; earnings UI/storage is now wired.")
     st.write(
         {
             "news_feed": news_feed.status().detail,
@@ -2628,10 +2629,33 @@ with tab_signals:
     sL, sR = st.columns([0.55, 0.45], gap="large")
 
     with sL:
-        st.markdown("### Fed / macro calendar (manual)")
-        st.caption("Paste upcoming Fed events / speakers / CPI / NFP. We'll make it prettier later.")
+        st.markdown("### Earnings calendar")
+        st.caption("Seamless mode target: auto-populated upcoming earnings. Provider wiring is next; UI/storage is ready.")
+
+        # Fetch (best-effort). For now this will be empty + status will say BLOCKED.
+        st.session_state.setdefault("earnings_last_fetch", 0.0)
+        st.session_state.setdefault("earnings_df", pd.DataFrame())
+
+        now = time.time()
+        # refresh if older than 15 minutes (per your earlier preference) and tab is visible
+        if (now - float(st.session_state.get("earnings_last_fetch", 0.0))) > 15 * 60:
+            try:
+                edf = earn_feed.fetch_earnings()
+            except Exception:
+                edf = pd.DataFrame()
+            st.session_state["earnings_df"] = edf
+            st.session_state["earnings_last_fetch"] = now
+
+        edf = st.session_state.get("earnings_df")
+        if not isinstance(edf, pd.DataFrame) or edf.empty:
+            st.info("Earnings provider not wired yet (blocked). Once we pick a source, this will auto-populate.")
+        else:
+            st.dataframe(edf, use_container_width=True, height=320, hide_index=True)
+
+        st.markdown("### Fed / macro calendar (manual for now)")
+        st.caption("Macro auto-feed is next. Paste what you care about if needed.")
         st.session_state.setdefault("macro_events", "")
-        st.text_area("Events", key="macro_events", height=260, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+        st.text_area("Events", key="macro_events", height=200, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
 
         st.markdown("### Themes (scaffold)")
         theme = st.selectbox(
