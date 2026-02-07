@@ -48,49 +48,42 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Macro calendar: seamless Fed feeds + dashboard highlight";
-const BLOCK_NOTE = "Use existing Fed RSS endpoints already in local config; no new URLs required.";
+const BLOCK_TITLE = "News RSS: allowlist + cache + Signals board";
+const BLOCK_NOTE = "We will only use existing RSS URLs in data/rss_feeds.json unless you explicitly add more.";
 
 const DECISIONS = [
   {
-    key: "macro_enable_auto",
-    label: "1) Turn on macro auto-feed now?",
-    why: "This will periodically fetch Fed RSS feeds and derive 'next macro event' where possible.",
+    key: "news_enable_auto",
+    label: "1) Turn on News auto-fetch now?",
+    why: "Pulls RSS feeds into cache and shows a board in Signals.",
     options: { A: "Yes", B: "Hold" },
+    default: "B",
+  },
+  {
+    key: "news_refresh",
+    label: "2) News refresh cadence",
+    why: "RSS sources can rate-limit; keep it conservative.",
+    options: { A: "5 min", B: "15 min", C: "60 min" },
+    default: "B",
+  },
+  {
+    key: "news_ui",
+    label: "3) News UI location",
+    why: "Signals is the intel hub.",
+    options: { A: "Signals right panel", B: "New News tab", C: "Both" },
     default: "A",
   },
   {
-    key: "macro_sources",
-    label: "2) Macro sources",
-    why: "We can start with Fed only; later expand.",
-    options: { A: "Fed press releases + speeches", B: "Add FOMC meetings/calendar feed", C: "All Fed feeds in rss_feeds.json" },
-    default: "C",
-  },
-  {
-    key: "macro_refresh",
-    label: "3) Refresh cadence",
-    why: "Avoid noisy background fetches.",
-    options: { A: "15 min", B: "60 min", C: "Daily" },
+    key: "news_ticker_detect",
+    label: "4) Ticker detection",
+    why: "Extract tickers from titles and show Schwab quotes.",
+    options: { A: "Off", B: "On (simple regex)", C: "On + symbol allowlist" },
     default: "B",
   },
   {
-    key: "macro_ui_location",
-    label: "4) Where show macro items",
-    why: "Signals has Macro panel; Dashboard has placeholder tile.",
-    options: { A: "Signals only", B: "Signals + Dashboard highlight", C: "New Macro tab" },
-    default: "B",
-  },
-  {
-    key: "macro_highlight_rule",
-    label: "5) Dashboard highlight rule",
-    why: "What counts as 'next macro event' from RSS?",
-    options: { A: "Most recent item title", B: "Most recent item title + published time", C: "Only scheduled events (if detected)" },
-    default: "B",
-  },
-  {
-    key: "start_coding_macro",
-    label: "6) Start coding macro block now?",
-    why: "If yes, I’ll implement RSS fetch+cache+Signals list+Dashboard tile.",
+    key: "start_coding_news",
+    label: "5) Start coding News block now?",
+    why: "If yes, I’ll add feed fetch+cache + Signals board + basic ticker detect.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
