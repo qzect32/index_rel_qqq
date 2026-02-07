@@ -48,49 +48,49 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Filings watcher UX: surfacing reports + drilldown";
-const BLOCK_NOTE = "Now that the watcher runs daily, decide how you want alerts shown + how deep the drilldown should go.";
+const BLOCK_TITLE = "Macro calendar: seamless Fed feeds + dashboard highlight";
+const BLOCK_NOTE = "Use existing Fed RSS endpoints already in local config; no new URLs required.";
 
 const DECISIONS = [
   {
-    key: "signals_show_filings_panel",
-    label: "1) Add a Filings panel in Signals?",
-    why: "Right now you only see a badge count.",
-    options: { A: "Yes: show a small panel listing alerts", B: "No: badge only" },
+    key: "macro_enable_auto",
+    label: "1) Turn on macro auto-feed now?",
+    why: "This will periodically fetch Fed RSS feeds and derive 'next macro event' where possible.",
+    options: { A: "Yes", B: "Hold" },
     default: "A",
   },
   {
-    key: "signals_filings_panel_location",
-    label: "2) If yes, where?",
-    why: "Signals is currently Halts | Earnings(expander) | Macro.",
-    options: { A: "Under Earnings expander", B: "Under Halts panel", C: "Replace Macro notes" },
-    default: "A",
+    key: "macro_sources",
+    label: "2) Macro sources",
+    why: "We can start with Fed only; later expand.",
+    options: { A: "Fed press releases + speeches", B: "Add FOMC meetings/calendar feed", C: "All Fed feeds in rss_feeds.json" },
+    default: "C",
   },
   {
-    key: "filings_alert_sort",
-    label: "3) Sort alerts by",
-    why: "If multiple tickers trigger.",
-    options: { A: "Score desc", B: "Most recent", C: "Symbol" },
-    default: "A",
+    key: "macro_refresh",
+    label: "3) Refresh cadence",
+    why: "Avoid noisy background fetches.",
+    options: { A: "15 min", B: "60 min", C: "Daily" },
+    default: "B",
   },
   {
-    key: "filings_drilldown",
-    label: "4) Drilldown behavior",
-    why: "How you open/read the report.",
-    options: { A: "Show report.md inline", B: "Show paths only", C: "Add Download buttons" },
-    default: "A",
+    key: "macro_ui_location",
+    label: "4) Where show macro items",
+    why: "Signals has Macro panel; Dashboard has placeholder tile.",
+    options: { A: "Signals only", B: "Signals + Dashboard highlight", C: "New Macro tab" },
+    default: "B",
   },
   {
-    key: "earnings_tab_integration",
-    label: "5) Earnings tab integration",
-    why: "Tie watcher outputs into Earnings tab.",
-    options: { A: "Show recent reports list", B: "No change" },
-    default: "A",
+    key: "macro_highlight_rule",
+    label: "5) Dashboard highlight rule",
+    why: "What counts as 'next macro event' from RSS?",
+    options: { A: "Most recent item title", B: "Most recent item title + published time", C: "Only scheduled events (if detected)" },
+    default: "B",
   },
   {
-    key: "start_coding_filings_ux",
-    label: "6) Start coding this UX block now?",
-    why: "If yes, I’ll implement the panel + drilldown + recent reports list.",
+    key: "start_coding_macro",
+    label: "6) Start coding macro block now?",
+    why: "If yes, I’ll implement RSS fetch+cache+Signals list+Dashboard tile.",
     options: { A: "Yes", B: "Hold" },
     default: "A",
   },
