@@ -32,14 +32,17 @@ BLOCKED_HINTS = [
 
 
 def _iter_items(text: str):
+    """Yield (item_text, is_done, raw_line)."""
     for ln in text.splitlines():
-        m1 = re.match(r"^\s*- \[ \] (.+)$", ln)
+        m1 = re.match(r"^\s*- \[( |x)\] (.+)$", ln)
         if m1:
-            yield m1.group(1).strip(), ln
+            is_done = (m1.group(1) or "").lower() == "x"
+            yield m1.group(2).strip(), is_done, ln
             continue
-        m2 = re.match(r"^\s*(\d+)\. \[ \] (.+)$", ln)
+        m2 = re.match(r"^\s*(\d+)\. \[( |x)\] (.+)$", ln)
         if m2:
-            yield m2.group(2).strip(), ln
+            is_done = (m2.group(2) or "").lower() == "x"
+            yield m2.group(3).strip(), is_done, ln
 
 
 def main() -> int:
@@ -51,17 +54,21 @@ def main() -> int:
     lines.append("Generated from TODO.md. Edit TODO.md for canonical tasks; update this file by rerunning scripts/todo_status_gen.py.\n")
     lines.append("\n")
 
-    for i, (item, raw) in enumerate(items, start=1):
+    for i, (item, is_done, raw) in enumerate(items, start=1):
         low = item.lower()
-        blocked = any(h in low for h in BLOCKED_HINTS)
-        status = "BLOCKED" if blocked else "IN-PROGRESS"
+        blocked = (not is_done) and any(h in low for h in BLOCKED_HINTS)
+        status = "DONE" if is_done else ("BLOCKED" if blocked else "IN-PROGRESS")
         lines.append(f"## {i}. {item}\n")
         lines.append(f"- STATUS: {status}\n")
-        lines.append("- NEXT: (fill)\n")
-        if blocked:
-            lines.append("- BLOCKERS: (fill decision/provider/endpoint)\n")
+        if is_done:
+            lines.append("- NEXT: (none)\n")
+            lines.append("- BLOCKERS: none\n")
         else:
-            lines.append("- BLOCKERS: none (scaffoldable)\n")
+            lines.append("- NEXT: (fill)\n")
+            if blocked:
+                lines.append("- BLOCKERS: (fill decision/provider/endpoint)\n")
+            else:
+                lines.append("- BLOCKERS: none (scaffoldable)\n")
         lines.append("\n")
 
     OUT.write_text("".join(lines), encoding="utf-8")

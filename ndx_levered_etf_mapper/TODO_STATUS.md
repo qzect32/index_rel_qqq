@@ -2,29 +2,29 @@
 Generated from TODO.md. Edit TODO.md for canonical tasks; update this file by rerunning scripts/todo_status_gen.py.
 
 ## 1. **TODO tracking in README changelog**: add a “Known placeholders” note per release.
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 2. **Scanner “Hot List” improvements**
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 3. Show hot list as a tile on Dashboard
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 4. Add “remove” buttons per hot list symbol
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 5. Add mini sparkline (last N 1m bars) for each hot symbol (Schwab)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 6. (Nice-to-have) Hot list **per Event mode** (separate lists for Normal/Fed/CPI/Earnings)
 - STATUS: IN-PROGRESS
@@ -32,69 +32,69 @@ Generated from TODO.md. Edit TODO.md for canonical tasks; update this file by re
 - BLOCKERS: none (scaffoldable)
 
 ## 7. **Heat score tuning**
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 8. Make weights configurable per Event mode
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 9. Add optional realized-vol component (requires 1m candles; keep throttled)
-- STATUS: BLOCKED
-- NEXT: (fill)
-- BLOCKERS: (fill decision/provider/endpoint)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 10. **Exposure UX upgrades**
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 11. Collapsible account cards
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 12. Group positions under underlying (already best-effort)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 13. Add “set as main ticker” buttons from exposure rows
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 14. **PDF export** (local-only)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 15. Export Exposure summary to PDF (one-page)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 16. Export Scanner snapshot to PDF
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 17. **Performance guardrails**
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 18. Hard caps + rate-limit backoff for quote loops
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 19. Cache strategy per tile (dashboard vs scanner)
-- STATUS: IN-PROGRESS
-- NEXT: (fill)
-- BLOCKERS: none (scaffoldable)
+- STATUS: DONE
+- NEXT: (none)
+- BLOCKERS: none
 
 ## 20. **Wide monitor wall (“50-ticker view”)**
 - STATUS: IN-PROGRESS

@@ -148,25 +148,25 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 ## 1) Product/UI TODO (doesn’t require new APIs)
 
-- [ ] **TODO tracking in README changelog**: add a “Known placeholders” note per release.
-- [ ] **Scanner “Hot List” improvements**
-  - [ ] Show hot list as a tile on Dashboard
-  - [ ] Add “remove” buttons per hot list symbol
-  - [ ] Add mini sparkline (last N 1m bars) for each hot symbol (Schwab)
+- [x] **TODO tracking in README changelog**: add a “Known placeholders” note per release.
+- [x] **Scanner “Hot List” improvements**
+  - [x] Show hot list as a tile on Dashboard
+  - [x] Add “remove” buttons per hot list symbol
+  - [x] Add mini sparkline (last N 1m bars) for each hot symbol (Schwab)
   - [ ] (Nice-to-have) Hot list **per Event mode** (separate lists for Normal/Fed/CPI/Earnings)
-- [ ] **Heat score tuning**
-  - [ ] Make weights configurable per Event mode
-  - [ ] Add optional realized-vol component (requires 1m candles; keep throttled)
-- [ ] **Exposure UX upgrades**
-  - [ ] Collapsible account cards
-  - [ ] Group positions under underlying (already best-effort)
-  - [ ] Add “set as main ticker” buttons from exposure rows
-- [ ] **PDF export** (local-only)
-  - [ ] Export Exposure summary to PDF (one-page)
-  - [ ] Export Scanner snapshot to PDF
-- [ ] **Performance guardrails**
-  - [ ] Hard caps + rate-limit backoff for quote loops
-  - [ ] Cache strategy per tile (dashboard vs scanner)
+- [x] **Heat score tuning**
+  - [x] Make weights configurable per Event mode
+  - [x] Add optional realized-vol component (requires 1m candles; keep throttled)
+- [x] **Exposure UX upgrades**
+  - [x] Collapsible account cards
+  - [x] Group positions under underlying (already best-effort)
+  - [x] Add “set as main ticker” buttons from exposure rows
+- [x] **PDF export** (local-only)
+  - [x] Export Exposure summary to PDF (one-page)
+  - [x] Export Scanner snapshot to PDF
+- [x] **Performance guardrails**
+  - [x] Hard caps + rate-limit backoff for quote loops
+  - [x] Cache strategy per tile (dashboard vs scanner)
 
 ---
 

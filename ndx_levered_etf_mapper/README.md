@@ -4,11 +4,18 @@ A local-first **Streamlit trading cockpit** powered by **Charles Schwab Market D
 
 This repo is intentionally practical: fast symbol lookup, live 1‑minute candles, options inspection, portfolio exposure, and a sandbox (“Casino Lab”) for quant toys/backtests.
 
-> Status: actively evolving. The UI is usable today, but some tiles are placeholders until Schwab endpoints/entitlements are confirmed.
+> Status: actively evolving. The UI is usable today; Schwab-only market/trader data is wired, and several intel feeds (halts/macro/news) are now cached locally. Some Schwab endpoints (notably Alerts + potential Schwab earnings/news endpoints) are still unconfirmed.
 
 ---
 
 ## Changelog (running)
+
+### 2026-02-07
+- **Signals hub**: 3-panel layout (Halts | Earnings | Macro) + status badges
+- **Earnings**: new Earnings tab + SEC EDGAR filings list + download → diff → score → report (md+json)
+- **Filings watcher**: daily best-effort watcher while app is running + Signals badge + inline drilldown
+- **Macro**: Fed RSS auto-feed cached locally + Signals panel + Dashboard highlight
+- **News**: RSS auto-feed cached locally + Signals section + News tab + per-feed status + failure counts
 
 ### 2026-02-04
 - Renamed project to **Market Hub** (from ETF Hub)
@@ -16,8 +23,8 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Live quote + **1m candles** with visible data-age indicators
 - New **Dashboard** tab (watchlist + selected chart tiles)
 - New **Scanner** tab (universe scan + Top 5 strip + focus rotation + Heat score + Hot List)
-- New **Halts** tab (paste/parse scaffold)
-- New **Signals** tab (macro/news/theme scaffolds)
+- New **Halts** tab (auto-fetch wired)
+- New **Signals** tab (intel hub scaffold)
 - New **Casino Lab** tab (Bayes module + toy backtests)
 - New **Exposure** tab (accounts/positions, donut chart, redacted snapshot)
 - Added sidebar calculator + watchlist tape
@@ -25,7 +32,7 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Added `TODO.md` to track pending work, especially items requiring additional APIs/providers
 - Known placeholders (not wired yet):
   - Alerts: Schwab-native/TOS alerts (endpoints/scopes not confirmed)
-  - Headlines/News feed (manual placeholder; provider TBD)
+  - Schwab earnings/news endpoints: still unconfirmed (we currently use EDGAR + RSS)
 
 ---
 
@@ -34,8 +41,9 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 ### Dashboard
 - **Watchlist** quotes table (Schwab quotes)
 - **Selected symbol**: big price card + **1m candles** (Schwab price history)
+- **Halts highlight** tile (reads cached halts)
+- **Next macro event** highlight (reads cached Fed RSS; can be overridden manually)
 - **Alerts**: UI placeholder for Schwab-native/TOS alerts (waiting on endpoint docs)
-- **Headlines**: manual placeholder text area (feed wiring later)
 
 ### Trading / Overview (single-symbol)
 - Symbol profile/metadata (Schwab quotes)
@@ -52,6 +60,7 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Aggregates exposure and renders a donut chart + table
 - Groups options/futures **under the underlying** when Schwab provides underlying metadata
 - Generates a **redacted shareable snapshot** (text + download)
+- PDF exports available under **Exports** tab
 
 ### Casino Lab
 - Quant playground (Bayes + toy backtests) using Schwab 1m candles
@@ -60,6 +69,11 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Builds a relationship graph and exports local datasets:
   - Parquet + SQLite (for notebooks, research, and agentic workflows)
   - Graph export (GEXF)
+
+### Signals / News / Earnings
+- **Signals** hub (halts + earnings + macro + filings alerts)
+- **News** tab: cached RSS board + ticker detection (quotes via Schwab)
+- **Earnings** tab: EDGAR filings list + diff/scoring reports (md+json)
 
 ---
 
@@ -122,7 +136,7 @@ Notes:
 python -m streamlit run app/streamlit_app.py
 ```
 
-Then open the **Admin → Schwab OAuth** section and complete OAuth.
+Then open **Admin → Schwab OAuth** and run the OAuth authorization flow.
 
 ---
 
