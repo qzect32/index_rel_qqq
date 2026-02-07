@@ -23,6 +23,9 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - Added sidebar calculator + watchlist tape
 - Added margin discipline **countdown** (currently hard-coded for owner)
 - Added `TODO.md` to track pending work, especially items requiring additional APIs/providers
+- Known placeholders (not wired yet):
+  - Alerts: Schwab-native/TOS alerts (endpoints/scopes not confirmed)
+  - Headlines/News feed (manual placeholder; provider TBD)
 
 ---
 
