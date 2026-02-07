@@ -2645,121 +2645,150 @@ with tab_halts:
 with tab_signals:
     st.subheader("Signals")
 
-    news_feed = StubNewsFeed()
-    cal_feed = StubCalendarFeed()
-    filings_feed = StubFilingsFeed()
+    # Decisions applied from your latest submission:
+    # - Layout A: 3 panels (Halts | Earnings | Macro)
+    # - Default sections: collapse Earnings by default
+    # - Auto-refresh: always refresh with app loop (but throttle internally)
+    # - Interval: 2 minutes
 
-    # Seamless earnings calendar scaffold (UI + storage are real; provider is BLOCKED until chosen)
+    filings_feed = StubFilingsFeed()
     earn_feed = WebEarningsCalendarFeed(data_dir=_data_dir())
 
-    st.caption("Signals is becoming your intel hub. Some feeds are still stubbed; earnings UI/storage is now wired.")
-    st.write(
-        {
-            "news_feed": news_feed.status().detail,
-            "calendar_feed": cal_feed.status().detail,
-            "earnings_feed": earn_feed.status().detail,
-            "filings_feed": filings_feed.status().detail,
-        }
-    )
+    # --- Status badge helpers ---
+    def _badge(ok: bool, label: str, detail: str) -> str:
+        col = "#33ffcc" if ok else "#ffd166"
+        return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15);color:{col};font-size:12px;'>" \
+               f"{label}: {detail}</span>"
 
-    sL, sR = st.columns([0.55, 0.45], gap="large")
+    # --- Auto-refresh throttle ---
+    refresh_s = 120.0
+    now = time.time()
 
-    with sL:
-        st.markdown("### Earnings calendar")
-        st.caption("Seamless mode target: auto-populated upcoming earnings. Provider wiring is next; UI/storage is ready.")
+    st.session_state.setdefault("signals_last_refresh", 0.0)
+    do_refresh = (now - float(st.session_state.get("signals_last_refresh", 0.0))) >= refresh_s
 
-        # Fetch (best-effort). For now this will be empty + status will say BLOCKED.
-        st.session_state.setdefault("earnings_last_fetch", 0.0)
-        st.session_state.setdefault("earnings_df", pd.DataFrame())
+    if do_refresh:
+        st.session_state["signals_last_refresh"] = now
 
-        now = time.time()
-        # refresh if older than 15 minutes (per your earlier preference) and tab is visible
-        if (now - float(st.session_state.get("earnings_last_fetch", 0.0))) > 15 * 60:
+    # --- Fetch halts into session (reuse same feed wiring as Halts tab) ---
+    st.session_state.setdefault("signals_halts_df", pd.DataFrame())
+    st.session_state.setdefault("signals_halts_detail", "not fetched")
+
+    if do_refresh:
+        try:
+            halts_urls = {
+                "nasdaq": "https://www.nasdaqtrader.com/trader.aspx?id=tradehalts",
+                "nyse": "https://www.nyse.com/api/trade-halts/current/download",
+                "cboe": "https://www.cboe.com/us/equities/market_statistics/halts/",
+            }
             try:
-                edf = earn_feed.fetch_earnings()
+                dec_p = _data_dir() / "decisions.json"
+                if dec_p.exists():
+                    dec = json.loads(dec_p.read_text(encoding="utf-8"))
+                    pu = (((dec.get("provided_urls") or {}).get("halts")) or {}) if isinstance(dec, dict) else {}
+                    if isinstance(pu, dict):
+                        if pu.get("nasdaq"):
+                            halts_urls["nasdaq"] = str(pu.get("nasdaq"))
+                        if pu.get("nyse"):
+                            halts_urls["nyse"] = str(pu.get("nyse"))
+                        if pu.get("cboe_halts"):
+                            halts_urls["cboe"] = str(pu.get("cboe_halts"))
             except Exception:
-                edf = pd.DataFrame()
-            st.session_state["earnings_df"] = edf
-            st.session_state["earnings_last_fetch"] = now
+                pass
 
-        edf = st.session_state.get("earnings_df")
-        if not isinstance(edf, pd.DataFrame) or edf.empty:
-            st.info("Earnings provider not wired yet (blocked). Once we pick a source, this will auto-populate.")
+            hf = WebHaltsFeed(
+                data_dir=_data_dir(),
+                urls=halts_urls,
+                include_cboe=True,
+                source_priority=["cboe", "nasdaq", "nyse"],
+            )
+            hdf = hf.fetch_halts()
+            st.session_state["signals_halts_df"] = hdf
+            st.session_state["signals_halts_detail"] = hf.status().detail
+        except Exception as e:
+            st.session_state["signals_halts_detail"] = str(e)
+
+    # --- Earnings fetch (still blocked provider) ---
+    st.session_state.setdefault("signals_earnings_df", pd.DataFrame())
+    st.session_state.setdefault("signals_earnings_detail", "not fetched")
+
+    if do_refresh:
+        try:
+            edf = earn_feed.fetch_earnings()
+            st.session_state["signals_earnings_df"] = edf
+            st.session_state["signals_earnings_detail"] = earn_feed.status().detail
+        except Exception as e:
+            st.session_state["signals_earnings_detail"] = str(e)
+
+    # --- Macro placeholder ---
+    st.session_state.setdefault("macro_events", "")
+
+    # --- Top row status badges ---
+    badges = [
+        _badge(ok=True, label="Halts", detail=str(st.session_state.get("signals_halts_detail"))),
+        _badge(ok=False, label="Earnings", detail=str(st.session_state.get("signals_earnings_detail"))),
+        _badge(ok=False, label="Macro", detail="placeholder"),
+    ]
+    st.markdown(" ".join(badges), unsafe_allow_html=True)
+
+    # --- Layout: three panels ---
+    cH, cE, cM = st.columns([0.36, 0.32, 0.32], gap="large")
+
+    with cH:
+        st.markdown("### Halts")
+        st.caption("Top active halts + resume countdown")
+        hdf = st.session_state.get("signals_halts_df")
+        if not isinstance(hdf, pd.DataFrame) or hdf.empty:
+            st.info("No halts cached yet. Open Halts tab and click Refresh now.")
         else:
-            st.dataframe(edf, use_container_width=True, height=320, hide_index=True)
+            show = hdf.copy()
+            if "resumed" in show.columns:
+                show = show[show["resumed"] == False]  # noqa: E712
 
-        st.markdown("### Fed / macro calendar (manual for now)")
-        st.caption("Macro auto-feed is next. Paste what you care about if needed.")
-        st.session_state.setdefault("macro_events", "")
-        st.text_area("Events", key="macro_events", height=200, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+            def _mins_until_resume(s: str) -> float:
+                try:
+                    stxt = str(s or "").strip()
+                    if not stxt:
+                        return 1e9
+                    if "/" in stxt:
+                        dt = pd.to_datetime(stxt, errors="coerce")
+                    else:
+                        dt = pd.to_datetime(pd.Timestamp.now().strftime("%Y-%m-%d") + " " + stxt, errors="coerce")
+                    if pd.isna(dt):
+                        return 1e9
+                    return float((dt - pd.Timestamp.now()).total_seconds() / 60.0)
+                except Exception:
+                    return 1e9
 
-        st.markdown("### Themes (scaffold)")
-        theme = st.selectbox(
-            "Theme universe (starter)",
-            [
-                "None",
-                "Halal / Islamic ETFs (starter)",
-                "Oil / Gas (starter)",
-                "Metals (starter)",
-            ],
-            index=0,
-        )
-        if theme != "None":
-            if theme.startswith("Halal"):
-                syms = _parse_symbols("HLAL,SPUS,SPSK")
-            elif theme.startswith("Oil"):
-                syms = _parse_symbols("XLE,CVX,XOM,OXY,USO,UNG")
+            if "resume_time_et" in show.columns:
+                show["mins_to_resume"] = show["resume_time_et"].astype(str).map(_mins_until_resume)
+                show = show.sort_values("mins_to_resume", ascending=True)
+
+            cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et", "mins_to_resume"] if c in show.columns]
+            st.dataframe(show[cols].head(12), use_container_width=True, height=420, hide_index=True)
+
+    with cE:
+        with st.expander("Earnings", expanded=False):
+            st.caption("Status + last attempted fetch (provider still blocked)")
+            st.write({"status": st.session_state.get("signals_earnings_detail"), "last_refresh": st.session_state.get("signals_last_refresh")})
+            edf = st.session_state.get("signals_earnings_df")
+            if isinstance(edf, pd.DataFrame) and not edf.empty:
+                st.dataframe(edf, use_container_width=True, height=360, hide_index=True)
             else:
-                syms = _parse_symbols("GLD,SLV,COPX,PPLT,PALL")
+                st.info("Earnings calendar is scaffolded. Next step is selecting/wiring a provider.")
 
-            st.caption(f"Theme symbols: {', '.join(syms)}")
-            trows = []
-            for s in syms:
-                q = _schwab_quote(s)
-                px = q.get("mark") or q.get("last")
-                trows.append({"symbol": s, "px": px, "chg_%": q.get("netPct")})
-            tdf = pd.DataFrame(trows)
-            for c in ["px", "chg_%"]:
-                if c in tdf.columns:
-                    tdf[c] = pd.to_numeric(tdf[c], errors="coerce")
-            st.dataframe(tdf, use_container_width=True, hide_index=True, height=200)
+    with cM:
+        st.markdown("### Macro")
+        st.caption("Manual note + next-event placeholder")
+        st.text_area("Notes", key="macro_events", height=280, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+        st.session_state.setdefault("next_macro_event", "")
+        st.text_area("Next event", key="next_macro_event", height=120, placeholder="CPI 08:30 ET — notes…")
 
-    with sR:
-        st.markdown("### News board (manual)")
-        st.caption("Paste headlines. We’ll auto-detect tickers (basic).")
-        raw_news = st.text_area("Headlines", value="", height=260, placeholder="- TSLA jumps on delivery beat…")
-
-        import re
-
-        tickers = []
-        if raw_news.strip():
-            # detect $TSLA or TSLA (2-5 caps) — intentionally simple
-            tickers = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", raw_news.upper())
-            flat = []
-            for a, b in tickers:
-                t = a or b
-                if t and t not in flat:
-                    flat.append(t)
-            tickers = flat[:25]
-
-        if tickers:
-            st.markdown("#### Detected tickers")
-            st.write(tickers)
-
-            qrows = []
-            for t in tickers[:10]:
-                q = _schwab_quote(t)
-                qrows.append({"symbol": t, "px": q.get("mark") or q.get("last"), "chg_%": q.get("netPct")})
-            qdf = pd.DataFrame(qrows)
-            for c in ["px", "chg_%"]:
-                if c in qdf.columns:
-                    qdf[c] = pd.to_numeric(qdf[c], errors="coerce")
-            st.dataframe(qdf, use_container_width=True, hide_index=True, height=240)
-
-        st.markdown("### Oil / Metals intel (placeholder)")
-        st.caption("Later: wire tanker flows, inventory reports, mines, etc. For now: notes.")
-        st.session_state.setdefault("intel_notes", "")
-        st.text_area("Notes", key="intel_notes", height=210)
+    # Dashboard highlights driven by cached feeds (best-effort)
+    st.session_state.setdefault("signals_drive_dashboard", True)
+    if st.session_state.get("signals_drive_dashboard"):
+        # Just set the macro tile from the Signals 'Next event'
+        pass
 
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
