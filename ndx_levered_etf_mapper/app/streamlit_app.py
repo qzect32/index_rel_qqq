@@ -1238,6 +1238,10 @@ def _save_hotlist(syms: list[str]) -> None:
     except Exception:
         pass
 
+
+    # Ensure Hot List is available across tabs (Dashboard + Scanner).
+    st.session_state.setdefault("scanner_hotlist", _load_hotlist())
+
     # ---- Watchlist tile ----
     dL, dM, dR = st.columns([0.36, 0.40, 0.24], gap="large")
 
@@ -1268,6 +1272,34 @@ def _save_hotlist(syms: list[str]) -> None:
         )
 
         st.caption("Tip: click a row isn't supported by Streamlit dataframe yet; copy symbol into the Ticker box on the left.")
+
+        st.markdown("### Hot List")
+        st.caption("Pins from Scanner (saved locally).")
+
+        # Read from session_state if present; fall back to persisted file.
+        hot = st.session_state.get("scanner_hotlist")
+        if hot is None:
+            hot = _load_hotlist()
+            st.session_state["scanner_hotlist"] = hot
+
+        hot_syms = [s for s in (hot or []) if str(s).strip()][:25]
+        if not hot_syms:
+            st.write("(empty)")
+        else:
+            hrows = []
+            for s in hot_syms:
+                q = _schwab_quote(s)
+                px = q.get("mark") or q.get("last")
+                net = q.get("netChange")
+                netp = q.get("netPct")
+                hrows.append({"symbol": s, "px": px, "chg": net, "chg_%": netp})
+
+            hdf = pd.DataFrame(hrows)
+            for c in ["px", "chg", "chg_%"]:
+                if c in hdf.columns:
+                    hdf[c] = pd.to_numeric(hdf[c], errors="coerce")
+
+            st.dataframe(hdf, use_container_width=True, height=280, hide_index=True)
 
     # ---- Selected chart tile ----
     with dM:
