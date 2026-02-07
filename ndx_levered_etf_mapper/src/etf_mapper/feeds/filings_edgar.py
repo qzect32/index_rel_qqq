@@ -26,8 +26,9 @@ def _filings_root(data_dir: Path) -> Path:
 
 
 def _user_agent() -> str:
-    # SEC requires a descriptive UA with contact.
-    return "MarketHub/0.1 (local research; contact: local-user)"
+    # SEC requires a descriptive UA with contact. Keep generic but descriptive.
+    # You can override later via config.
+    return "MarketHub/0.1 (local research; contact: user)"
 
 
 def _get_json(url: str, *, headers: dict, timeout: float = 15.0) -> dict:
@@ -190,12 +191,18 @@ def download_filing_primary(
     accession_number: str,
     cik: str | int,
     primary_url: str,
+    min_delay_s: float = 1.0,
 ) -> Path:
-    """Download the primary document for a filing and store it under data/filings/..."""
+    """Download the primary document for a filing and store it under data/filings/...
+
+    `min_delay_s` enforces a conservative SEC request rate (default 1 req/sec).
+    """
     sym = _normalize_symbol(symbol)
     acc = str(accession_number or "").strip()
     headers = {"User-Agent": _user_agent(), "Accept-Encoding": "gzip, deflate"}
 
+    # conservative rate limit
+    time.sleep(max(0.0, float(min_delay_s)))
     txt = _get_text(primary_url, headers=headers)
 
     root = _filings_root(_data_dir(data_dir))

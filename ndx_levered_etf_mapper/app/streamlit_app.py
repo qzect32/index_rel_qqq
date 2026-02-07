@@ -2817,7 +2817,91 @@ with tab_earnings:
 
         fdf = st.session_state.get("earnings_filings_df")
         if isinstance(fdf, pd.DataFrame) and not fdf.empty:
-            st.dataframe(fdf, use_container_width=True, height=420, hide_index=True)
+            st.dataframe(fdf, use_container_width=True, height=260, hide_index=True)
+
+            st.markdown("### Download + diff (Risk Factors + MD&A)")
+            st.caption("Baseline: previous filing (regardless of form). Output: added/removed sentences + risk phrase deltas.")
+
+            # Pick latest filing as primary
+            try:
+                fdf2 = fdf.copy()
+                if "filed_at" in fdf2.columns:
+                    fdf2["filed_at"] = pd.to_datetime(fdf2["filed_at"], errors="coerce")
+                    fdf2 = fdf2.sort_values("filed_at", ascending=False)
+                cur = fdf2.iloc[0].to_dict()
+                prev = fdf2.iloc[1].to_dict() if len(fdf2) > 1 else None
+            except Exception:
+                cur = None
+                prev = None
+
+            if cur is None or prev is None:
+                st.info("Need at least 2 filings to diff.")
+            else:
+                st.write({"current": {"form": cur.get("form"), "filed_at": str(cur.get("filed_at")), "accession": cur.get("accessionNumber")},
+                          "baseline": {"form": prev.get("form"), "filed_at": str(prev.get("filed_at")), "accession": prev.get("accessionNumber")}})
+
+                if st.button("Download + generate report", key="edgar_diff_run"):
+                    try:
+                        from etf_mapper.analysis.edgar_diff import (
+                            extract_plain_text,
+                            extract_sections,
+                            load_risk_phrases,
+                            phrase_counts,
+                            diff_sentences,
+                            score_change,
+                            write_report,
+                        )
+                        from etf_mapper.feeds.filings_edgar import (
+                            lookup_cik,
+                            download_filing_primary,
+                        )
+
+                        headers = {"User-Agent": "MarketHub/0.1 (local research; contact: user)", "Accept-Encoding": "gzip, deflate"}
+                        cik = lookup_cik(sym, headers=headers) or ""
+
+                        acc_cur = str(cur.get("accessionNumber") or "")
+                        acc_prev = str(prev.get("accessionNumber") or "")
+                        url_cur = str(cur.get("url") or "")
+                        url_prev = str(prev.get("url") or "")
+
+                        # download (HTML primary)
+                        p_cur = download_filing_primary(data_dir=_data_dir(), symbol=sym, accession_number=acc_cur, cik=cik, primary_url=url_cur, min_delay_s=1.0)
+                        p_prev = download_filing_primary(data_dir=_data_dir(), symbol=sym, accession_number=acc_prev, cik=cik, primary_url=url_prev, min_delay_s=1.0)
+
+                        txt_cur = extract_plain_text(p_cur.read_text(encoding="utf-8", errors="ignore"))
+                        txt_prev = extract_plain_text(p_prev.read_text(encoding="utf-8", errors="ignore"))
+
+                        secs_cur = {s.name: s.text for s in extract_sections(txt_cur)}
+                        secs_prev = {s.name: s.text for s in extract_sections(txt_prev)}
+
+                        phrases = load_risk_phrases(Path(__file__).resolve().parents[1] / "analysis" / "risk_phrases.txt")
+
+                        results = {"sections": {}}
+                        for sec_name in sorted(set(secs_cur.keys()) | set(secs_prev.keys())):
+                            b = secs_prev.get(sec_name, "")
+                            a = secs_cur.get(sec_name, "")
+                            counts_b = phrase_counts(b, phrases)
+                            counts_a = phrase_counts(a, phrases)
+                            sc = score_change(counts_b, counts_a)
+                            ds = diff_sentences(b, a)
+                            results["sections"][sec_name] = {"score": sc, "sentences": ds}
+
+                        out_dir = (Path(_data_dir()) / "filings" / sym / "reports" / f"{acc_cur}_vs_{acc_prev}")
+                        meta = {
+                            "symbol": sym,
+                            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "baseline": f"{acc_prev}",
+                            "current": f"{acc_cur}",
+                            "current_url": url_cur,
+                            "baseline_url": url_prev,
+                        }
+                        md_path, js_path = write_report(out_dir=out_dir, meta=meta, results=results)
+                        st.session_state["edgar_report_md"] = md_path.read_text(encoding="utf-8")
+                        st.session_state["edgar_report_paths"] = {"md": str(md_path), "json": str(js_path)}
+                        st.success(f"Wrote: {md_path}")
+                    except Exception as e:
+                        st.error(str(e))
+
         else:
             st.caption("No filings loaded yet.")
 

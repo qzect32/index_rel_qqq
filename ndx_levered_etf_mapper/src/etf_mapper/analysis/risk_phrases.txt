@@ -1,0 +1,44 @@
+# Starter risk phrases (edit freely)
+# Used for simple count-based risk-language change scoring.
+
+material weakness
+going concern
+substantial doubt
+restatement
+impairment
+adverse
+significant decline
+liquidity
+credit risk
+default
+breach
+covenant
+investigation
+subpoena
+litigation
+lawsuit
+regulatory
+sec inquiry
+doj
+fines
+penalties
+sanctions
+cybersecurity
+data breach
+ransomware
+supply chain
+inflation
+recession
+geopolitical
+war
+tariffs
+headwinds
+uncertainty
+volatile
+weak demand
+lower margins
+margin pressure
+guidance
+withdraw guidance
+miss
+shortfall
