@@ -550,6 +550,46 @@ def _normalize_ticker(ticker: str) -> str:
     return str(ticker or "").upper().strip()
 
 
+def _default_heat_weights() -> dict:
+    # Weighting is per event mode (configurable in Scanner).
+    # Values should sum to 1.0.
+    return {
+        "Normal": {"w_move": 0.62, "w_dollar_vol": 0.38},
+        "Fed day": {"w_move": 0.70, "w_dollar_vol": 0.30},
+        "CPI/NFP day": {"w_move": 0.70, "w_dollar_vol": 0.30},
+        "Earnings week": {"w_move": 0.58, "w_dollar_vol": 0.42},
+    }
+
+
+def _heat_weights_for_mode(event_mode: str) -> dict:
+    w = st.session_state.get("heat_weights")
+    if not isinstance(w, dict):
+        w = _default_heat_weights()
+        st.session_state["heat_weights"] = w
+
+    em = str(event_mode or "Normal")
+    cur = w.get(em)
+    if not isinstance(cur, dict):
+        cur = w.get("Normal") or {"w_move": 0.62, "w_dollar_vol": 0.38}
+
+    # Defensive normalization
+    try:
+        wm = float(cur.get("w_move", 0.62))
+        wd = float(cur.get("w_dollar_vol", 0.38))
+    except Exception:
+        wm, wd = 0.62, 0.38
+
+    tot = wm + wd
+    if tot <= 0:
+        wm, wd = 0.62, 0.38
+        tot = 1.0
+
+    wm /= tot
+    wd /= tot
+
+    return {"w_move": wm, "w_dollar_vol": wd}
+
+
 @st.cache_data(show_spinner=False, ttl=15)
 def _schwab_account_numbers() -> list[dict]:
     """Return Schwab accountNumbers list (best-effort)."""
@@ -1600,12 +1640,37 @@ with tab_scanner:
 
     sdf2["abs_chg_%"] = sdf2["chg_%"].abs()
 
+    with st.expander("Heat score tuning", expanded=False):
+        st.caption("Heat = weighted blend of (abs % move rank) + (dollar volume rank). Per-event-mode weights.")
+
+        w = _heat_weights_for_mode(em)
+        wm = st.slider(
+            f"Move weight ({em})",
+            min_value=0.0,
+            max_value=1.0,
+            value=float(w["w_move"]),
+            step=0.01,
+            key=f"heat_w_move_{em}",
+        )
+        wd = 1.0 - float(wm)
+        st.write({"w_move": round(float(wm), 2), "w_dollar_vol": round(float(wd), 2)})
+
+        # Persist back into session weights map
+        st.session_state.setdefault("heat_weights", _default_heat_weights())
+        if isinstance(st.session_state.get("heat_weights"), dict):
+            st.session_state["heat_weights"][em] = {"w_move": float(wm), "w_dollar_vol": float(wd)}
+
+        if st.button("Reset weights to defaults", key=f"heat_reset_{em}"):
+            st.session_state["heat_weights"] = _default_heat_weights()
+            st.rerun()
+
     # Heat score: blend of abs % move + dollar volume percentile
     # (no candles needed; stays fast)
     try:
+        weights = _heat_weights_for_mode(em)
         dv_rank = sdf2["dollar_vol"].rank(pct=True).fillna(0.0)
         mv_rank = sdf2["abs_chg_%"].rank(pct=True).fillna(0.0)
-        sdf2["heat"] = (0.62 * mv_rank + 0.38 * dv_rank) * 100.0
+        sdf2["heat"] = (weights["w_move"] * mv_rank + weights["w_dollar_vol"] * dv_rank) * 100.0
     except Exception:
         sdf2["heat"] = None
 
