@@ -24,6 +24,7 @@ from pathlib import Path
 import time
 import re
 import subprocess
+from urllib.parse import urlparse, parse_qs
 
 
 def _root(repo: str | None) -> Path:
@@ -61,8 +62,11 @@ def _todo_stats(repo: str | None) -> dict:
     return {"total": int(total), "done": int(done), "pct_done": round(pct, 1)}
 
 
-def _todo_open_items(repo: str | None, *, limit: int = 15) -> list[dict]:
-    """Parse TODO_STATUS.md and return a list of open items (not DONE)."""
+def _todo_open_items(repo: str | None, *, limit: int = 15, answered: set[str] | None = None) -> list[dict]:
+    """Parse TODO_STATUS.md and return a list of open items (not DONE).
+
+    If `answered` is provided, skip items whose key `todo.todo_<n>` has been answered before.
+    """
     p = _todo_status_path(repo)
     if not p.exists():
         return []
@@ -84,6 +88,9 @@ def _todo_open_items(repo: str | None, *, limit: int = 15) -> list[dict]:
             items.append(cur)
     except Exception:
         return []
+
+    if answered:
+        items = [it for it in items if f"todo.todo_{it.get('i')}" not in answered]
 
     return items[: int(limit)]
 
@@ -177,16 +184,41 @@ def _git_velocity(repo: str | None) -> dict:
         return {"since": "", "commits": 0, "insertions": 0, "deletions": 0, "net": 0, "effort_multiplier": 0.0}
 
 
-def _schema_with_todo(repo: str | None) -> dict:
+def _schema_with_todo(repo: str | None, *, include_answered: bool) -> dict:
     sch = _load_schema(repo)
     if not isinstance(sch, dict):
         sch = {}
 
     cats = sch.get("categories") if isinstance(sch.get("categories"), list) else []
 
+    answered = _answered_keys(repo)
+
+    # Filter out any already-answered questions unless explicitly requested.
+    if not include_answered:
+        new_cats = []
+        for c in cats:
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "").strip()
+            items = c.get("items") if isinstance(c.get("items"), list) else []
+            filt = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                k = str(it.get("key") or "").strip()
+                if not k:
+                    continue
+                if f"{cid}.{k}" in answered:
+                    continue
+                filt.append(it)
+            c2 = dict(c)
+            c2["items"] = filt
+            new_cats.append(c2)
+        cats = new_cats
+
     # Inject a TODO progress category (dynamic) so the hub can show progress + next items.
     stats = _todo_stats(repo)
-    open_items = _todo_open_items(repo, limit=15)
+    open_items = _todo_open_items(repo, limit=15, answered=answered if not include_answered else None)
     todo_cat = {
         "id": "todo",
         "name": f"TODO Progress ({stats.get('pct_done', 0)}% done)",
@@ -208,6 +240,10 @@ def _schema_with_todo(repo: str | None) -> dict:
     sch["categories"] = [todo_cat] + list(cats)
     sch.setdefault("meta", {})
     if isinstance(sch.get("meta"), dict):
+        sch["meta"]["answered_keys"] = len(list(answered))
+        sch["meta"]["include_answered"] = bool(include_answered)
+    sch.setdefault("meta", {})
+    if isinstance(sch.get("meta"), dict):
         sch["meta"]["todo"] = stats
 
     return sch
@@ -219,6 +255,50 @@ def _decisions_path(repo: str | None) -> Path:
 
 def _log_path(repo: str | None) -> Path:
     return _data_dir(repo) / "decisions_log.jsonl"
+
+
+def _answered_keys(repo: str | None) -> set[str]:
+    """Return a set of 'category.key' strings ever submitted."""
+    out: set[str] = set()
+
+    def _ingest_obj(obj: dict):
+        cats = obj.get("categories") if isinstance(obj.get("categories"), dict) else {}
+        for cat, payload in cats.items():
+            if not isinstance(payload, dict):
+                continue
+            for k in payload.keys():
+                if k.endswith("_notes") or k == "notes":
+                    continue
+                out.add(f"{cat}.{k}")
+
+    # latest
+    try:
+        p = _decisions_path(repo)
+        if p.exists():
+            obj = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(obj, dict):
+                _ingest_obj(obj)
+    except Exception:
+        pass
+
+    # full log
+    try:
+        lp = _log_path(repo)
+        if lp.exists():
+            for ln in lp.read_text(encoding="utf-8", errors="ignore").splitlines():
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    obj = json.loads(ln)
+                    if isinstance(obj, dict):
+                        _ingest_obj(obj)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return out
 
 
 def _write_latest(obj: dict, *, repo: str | None) -> None:
@@ -288,9 +368,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
-        if self.path in ("/schema", "/schema/"):
+        # Note: supports query param ?includeAnswered=1
+        if self.path.startswith("/schema"):
             try:
-                obj = _schema_with_todo(self.repo)
+                q = parse_qs(urlparse(self.path).query)
+                include_answered = str((q.get("includeAnswered") or [""])[0]).strip() in ("1", "true", "yes")
+                obj = _schema_with_todo(self.repo, include_answered=include_answered)
                 self.send_response(200)
                 self._cors()
                 self.send_header("Content-Type", "application/json")

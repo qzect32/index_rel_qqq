@@ -61,6 +61,7 @@
         <input type="text" id="submitUrl" value="http://127.0.0.1:8765/submit" />
         <button id="ping">Ping</button>
         <button id="reloadSchema">Reload schema</button>
+        <label class="pill"><input type="checkbox" id="showAnswered" style="margin-right:8px;" />Show answered</label>
       </div>
       <p class="tiny">Listener also serves: <code>/status</code> and <code>/schema</code>. Run: <code>python scripts\decisions_listener.py --port 8765 --repo &lt;repo&gt;</code></p>
     </div>
@@ -299,7 +300,8 @@ async function fetchStatus(){
 async function fetchSchema(){
   const ok=await ping();
   if(!ok) return null;
-  const url = baseUrl() + '/schema';
+  const inc = document.getElementById('showAnswered')?.checked;
+  const url = baseUrl() + '/schema' + (inc ? '?includeAnswered=1' : '');
   try{
     const r=await fetch(url,{method:'GET'});
     const j=await r.json();
@@ -378,6 +380,7 @@ async function loadSchemaAndRefresh(){
 // Buttons
 
 document.getElementById('reloadSchema').onclick = loadSchemaAndRefresh;
+document.getElementById('showAnswered').onchange = loadSchemaAndRefresh;
 document.getElementById('submit').onclick = submit;
 document.getElementById('gen').onclick = ()=>setOut(gatherAll());
 document.getElementById('copy').onclick = async ()=>{
