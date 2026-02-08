@@ -251,7 +251,13 @@ function gatherCategory(catId){
 }
 
 function gatherAll(){
-  const out={_updated_at:new Date().toISOString(), _block: BLOCK_TITLE, schema_version: (schema && schema.version!=null ? schema.version : null), categories:{}};
+  const out={
+    _updated_at:new Date().toISOString(),
+    _block: BLOCK_TITLE,
+    schema_version: (schema && schema.version!=null ? schema.version : null),
+    schema_include_answered: !!document.getElementById('showAnswered')?.checked,
+    categories:{}
+  };
   for(const c of schema.categories){
     out.categories[c.id]=gatherCategory(c.id);
   }

@@ -407,9 +407,11 @@ class Handler(BaseHTTPRequestHandler):
 
         obj.setdefault("_received_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
 
-        # Server-side validation: ensure every current schema question is accounted for.
+        # Server-side validation: ensure every question in the *served schema mode* is accounted for.
+        # If the client hid already-answered questions, we validate against include_answered=False.
         try:
-            sch = _schema_with_todo(self.repo, include_answered=True)
+            inc = bool(obj.get("schema_include_answered"))
+            sch = _schema_with_todo(self.repo, include_answered=inc)
             sch_cats = sch.get("categories") if isinstance(sch.get("categories"), list) else []
             cats = obj.get("categories") if isinstance(obj.get("categories"), dict) else {}
             missing: list[str] = []
