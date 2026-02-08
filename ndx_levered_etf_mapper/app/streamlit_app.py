@@ -5311,6 +5311,96 @@ with tab_decisions:
 with tab_admin:
     st.subheader("Admin / Data pipelines")
 
+    st.markdown("### Decisions Inbox (in-app; no copy/paste)")
+    st.caption("Submit decisions here and they are saved to data/decisions.json (plus a jsonl log).")
+
+    def _append_decisions_log(obj: dict) -> None:
+        try:
+            p = _data_dir() / "decisions_log.jsonl"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            pass
+
+    # A compact multi-category hub. Keep questions minimal and avoid repeats.
+    inbox = {
+        "Dashboard": [
+            ("dash_layout_cleanup", "Dashboard layout cleanup", {"A": "Keep", "B": "Tighten spacing", "C": "Add collapsible tiles"}),
+            ("dash_headlines_show_domain", "Headlines: show source domain", {"A": "Yes", "B": "No"}),
+            ("dash_why_moving_buttons", "Why-moving: add Prep buttons", {"A": "Yes", "B": "No"}),
+        ],
+        "Scanner": [
+            ("scanner_focus_intel_default", "Focus intel default", {"A": "Expanded", "B": "Collapsed"}),
+            ("scanner_export_md", "Export scan results to markdown", {"A": "Yes", "B": "No"}),
+            ("scanner_perf", "Scanner performance posture", {"A": "Conservative", "B": "Normal", "C": "Aggressive"}),
+        ],
+        "Signals": [
+            ("signals_refresh_s", "Refresh interval", {"A": "60s", "B": "120s", "C": "300s"}),
+            ("signals_keep_news_small", "Keep small News section", {"A": "Yes", "B": "No"}),
+            ("signals_keep_macro_collapsed", "Keep Macro collapsed", {"A": "Yes", "B": "No"}),
+        ],
+        "Wall": [
+            ("wall_top_n", "Top N", {"A": "32", "B": "50", "C": "80"}),
+            ("wall_sparklines_budget", "Sparklines budget", {"A": "Visible tiles only", "B": "Top 16", "C": "Off"}),
+            ("wall_export_default", "Export default", {"A": "CSV", "B": "PDF", "C": "Both"}),
+        ],
+        "Exposure": [
+            ("exposure_balances_norm", "Balances normalization", {"A": "Start", "B": "Hold"}),
+            ("exposure_export_csv", "Add CSV export", {"A": "Yes", "B": "No"}),
+        ],
+    }
+
+    tab_names = list(inbox.keys())
+    tabs = st.tabs(tab_names)
+
+    st.session_state.setdefault("decisions_inbox_notes", {})
+    for tname, t in zip(tab_names, tabs):
+        with t:
+            items = inbox.get(tname, [])
+            for k, label, opts in items:
+                st.session_state.setdefault(k, list(opts.keys())[0])
+                cur = st.session_state.get(k)
+                if cur not in opts:
+                    cur = list(opts.keys())[0]
+                st.session_state[k] = st.radio(label, list(opts.keys()), index=list(opts.keys()).index(cur), format_func=lambda x, o=opts: f"{x}) {o[x]}")
+
+            notes_key = f"decisions_notes_{tname}"  # local UI state
+            st.session_state.setdefault(notes_key, "")
+            st.text_area("Notes / ideas", key=notes_key, height=140, placeholder=f"Dump ideas for {tname} here…")
+
+    colS1, colS2 = st.columns([0.22, 0.78])
+    with colS1:
+        if st.button("Submit decisions", type="primary"):
+            payload = {"_updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "_block": "Decisions Inbox", "categories": {}}
+            for tname in tab_names:
+                payload["categories"][tname] = {}
+                for k, label, opts in inbox.get(tname, []):
+                    payload["categories"][tname][k] = st.session_state.get(k)
+                payload["categories"][tname]["notes"] = st.session_state.get(f"decisions_notes_{tname}", "")
+
+            _save_decisions(payload)
+            _append_decisions_log(payload)
+            st.success(f"Saved to: {_decisions_path()}")
+            st.rerun()
+
+    with colS2:
+        with st.expander("Advanced: import decisions.json", expanded=False):
+            up2 = st.file_uploader("Upload decisions.json", type=["json"], key="decisions_upload")
+            if up2 is not None and st.button("Import decisions now", key="decisions_import"):
+                try:
+                    obj = json.loads(up2.getvalue().decode("utf-8"))
+                    if not isinstance(obj, dict):
+                        raise ValueError("decisions.json must be a JSON object")
+                    _save_decisions(obj)
+                    _append_decisions_log({"_updated_at": time.time(), "_block": "Imported decisions", "obj": obj})
+                    st.success(f"Imported into: {_decisions_path()}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+
+    st.markdown("---")
+
     st.markdown("### App settings")
     st.caption("Local-only settings (no secrets). Auto-saved to data/app_settings.json")
 
