@@ -42,6 +42,8 @@
       Tabs poll the listener for updates.
       Colors: <span class="dot blue"></span> unread update • <span class="dot green"></span> submitted/clean • <span class="dot orange"></span> edited but unsubmitted.
     </p>
+    <p class="pill" id="todoPct">TODO: (loading…)</p>
+    <p class="tiny">Tip: Reload schema after you submit to get a fresh rotated batch. Listener now injects a dynamic TODO Progress category.</p>
 
     <div class="card">
       <div class="row">
@@ -271,14 +273,17 @@ async function ping(){
 
 async function fetchStatus(){
   const ok=await ping();
-  if(!ok) return null;
+  if(!ok) return {latest:null, todo:null};
   const url = baseUrl() + '/status';
   try{
     const r=await fetch(url,{method:'GET'});
     const j=await r.json();
-    return (j && j.ok) ? j.latest : null;
+    if(j && j.ok){
+      return { latest: j.latest || null, todo: j.todo || null };
+    }
+    return {latest:null, todo:null};
   }catch(e){
-    return null;
+    return {latest:null, todo:null};
   }
 }
 
@@ -323,8 +328,20 @@ async function submit(){
   }
 }
 
+function setTodoPct(todo){
+  const e=document.getElementById('todoPct');
+  if(!e) return;
+  if(!todo || typeof todo.total !== 'number'){
+    e.textContent = 'TODO: (unavailable)';
+    return;
+  }
+  e.textContent = `TODO: ${todo.pct_done||0}% done (${todo.done||0}/${todo.total||0})`;
+}
+
 async function refreshLoop(){
-  const latest = await fetchStatus();
+  const st = await fetchStatus();
+  const latest = st.latest;
+  setTodoPct(st.todo);
   renderTabs(latest);
   renderPanel(latest);
   // don’t overwrite drafts on poll

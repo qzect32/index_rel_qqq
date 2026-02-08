@@ -22,6 +22,7 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import time
+import re
 
 
 def _root(repo: str | None) -> Path:
@@ -32,6 +33,109 @@ def _root(repo: str | None) -> Path:
 
 def _data_dir(repo: str | None) -> Path:
     return (_root(repo) / "data").resolve()
+
+
+def _todo_status_path(repo: str | None) -> Path:
+    return (_root(repo) / "TODO_STATUS.md").resolve()
+
+
+def _todo_stats(repo: str | None) -> dict:
+    """Return {total, done, pct_done} from TODO_STATUS.md if present."""
+    p = _todo_status_path(repo)
+    if not p.exists():
+        return {"total": 0, "done": 0, "pct_done": 0.0}
+
+    total = 0
+    done = 0
+    try:
+        for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if ln.startswith("## "):
+                total += 1
+            if ln.strip() == "- STATUS: DONE":
+                done += 1
+    except Exception:
+        return {"total": 0, "done": 0, "pct_done": 0.0}
+
+    pct = (float(done) / float(total) * 100.0) if total else 0.0
+    return {"total": int(total), "done": int(done), "pct_done": round(pct, 1)}
+
+
+def _todo_open_items(repo: str | None, *, limit: int = 15) -> list[dict]:
+    """Parse TODO_STATUS.md and return a list of open items (not DONE)."""
+    p = _todo_status_path(repo)
+    if not p.exists():
+        return []
+
+    items: list[dict] = []
+    cur = None
+    try:
+        for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            m = re.match(r"^##\s+(\d+)\.\s+(.*)$", ln)
+            if m:
+                if cur and cur.get("status") != "DONE":
+                    items.append(cur)
+                cur = {"i": int(m.group(1)), "title": m.group(2).strip(), "status": "IN-PROGRESS"}
+                continue
+            if ln.strip().startswith("- STATUS:") and cur is not None:
+                cur["status"] = ln.strip().split(":", 1)[1].strip()
+
+        if cur and cur.get("status") != "DONE":
+            items.append(cur)
+    except Exception:
+        return []
+
+    return items[: int(limit)]
+
+
+def _load_schema(repo: str | None) -> dict:
+    """Load schema from config/.. preferred, else data/.., else {}."""
+    repo_root = _root(repo)
+    schema_path = (repo_root / "config" / "decisions_inbox_schema.json").resolve()
+    if not schema_path.exists():
+        schema_path = (repo_root / "data" / "decisions_inbox_schema.json").resolve()
+    if not schema_path.exists():
+        return {}
+    try:
+        obj = json.loads(schema_path.read_text(encoding="utf-8"))
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _schema_with_todo(repo: str | None) -> dict:
+    sch = _load_schema(repo)
+    if not isinstance(sch, dict):
+        sch = {}
+
+    cats = sch.get("categories") if isinstance(sch.get("categories"), list) else []
+
+    # Inject a TODO progress category (dynamic) so the hub can show progress + next items.
+    stats = _todo_stats(repo)
+    open_items = _todo_open_items(repo, limit=15)
+    todo_cat = {
+        "id": "todo",
+        "name": f"TODO Progress ({stats.get('pct_done', 0)}% done)",
+        "notesKey": "todo_notes",
+        "items": [
+            {
+                "key": f"todo_{it.get('i')}",
+                "q": f"{it.get('title')}",
+                "opts": {"A": "Do next", "B": "Skip", "C": "Blocked/Defer"},
+                "default": "B",
+                "meta": {"status": it.get("status")},
+            }
+            for it in open_items
+        ],
+        "meta": stats,
+    }
+
+    # Prepend
+    sch["categories"] = [todo_cat] + list(cats)
+    sch.setdefault("meta", {})
+    if isinstance(sch.get("meta"), dict):
+        sch["meta"]["todo"] = stats
+
+    return sch
 
 
 def _decisions_path(repo: str | None) -> Path:
@@ -76,7 +180,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._cors()
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True, "latest": latest}, ensure_ascii=False, default=str).encode("utf-8"))
+                self.wfile.write(
+                    json.dumps(
+                        {"ok": True, "latest": latest, "todo": _todo_stats(self.repo)},
+                        ensure_ascii=False,
+                        default=str,
+                    ).encode("utf-8")
+                )
             except Exception as e:
                 self.send_response(500)
                 self._cors()
@@ -86,17 +196,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path in ("/schema", "/schema/"):
             try:
-                repo_root = _root(self.repo)
-                obj = {}
-                # Prefer git-tracked config schema; fall back to local data schema
-                schema_path = (repo_root / "config" / "decisions_inbox_schema.json").resolve()
-                if not schema_path.exists():
-                    schema_path = (repo_root / "data" / "decisions_inbox_schema.json").resolve()
-
-                if schema_path.exists():
-                    obj = json.loads(schema_path.read_text(encoding="utf-8"))
-                    if not isinstance(obj, dict):
-                        obj = {}
+                obj = _schema_with_todo(self.repo)
                 self.send_response(200)
                 self._cors()
                 self.send_header("Content-Type", "application/json")
