@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Market Hub — Decisions Hub</title>
   <style>
-    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); }
+    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --ok:#33ffcc; --bad:#ff4d6d; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
@@ -19,28 +19,41 @@
     .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; }
     .opt input { margin-right: 10px; accent-color: var(--accent); }
     textarea { width: 100%; min-height: 120px; border-radius: 12px; padding: 10px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); color: var(--text); }
-    button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 700; }
+    button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 800; }
     button.primary { background: rgba(51,255,204,0.10); border-color: rgba(51,255,204,0.35); }
     pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px; }
     .row { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
+    .pill.ok { border-color: rgba(51,255,204,0.45); color: var(--ok); }
+    .pill.bad { border-color: rgba(255,77,109,0.45); color: var(--bad); }
+    input[type=text] { width: 240px; padding: 8px 10px; border-radius: 12px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); color: var(--text); }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Market Hub — Decisions Hub</h1>
+    <h1>Market Hub — Decisions Hub (Desktop)</h1>
     <p>
-      Goal: go faster by letting you work multiple categories in parallel. Each tab gives you <b>~15 items</b> + a freeform box.
-      The output is one JSON blob.
+      This version can <b>submit directly</b> to a local listener (no copy/paste) if you run it.
+      Listener URL default: <code>http://127.0.0.1:8765/submit</code>
     </p>
-    <p class="pill">Note: this HTML file can’t send data directly to the assistant without a local server/webhook. Best frictionless option is embedding this as a Streamlit “Decisions Inbox” inside the app. (I can build that next.)</p>
+
+    <div class="card">
+      <div class="row">
+        <span class="pill" id="status">Listener: unknown</span>
+        <label class="pill">Submit URL:</label>
+        <input type="text" id="submitUrl" value="http://127.0.0.1:8765/submit" />
+        <button id="ping">Ping</button>
+      </div>
+      <p class="tiny">Run: <code>python scripts\decisions_listener.py --port 8765</code> from the repo.</p>
+    </div>
 
     <div class="tabs" id="tabs"></div>
     <div id="panel"></div>
 
     <div class="card">
       <div class="row">
-        <button class="primary" id="gen">Generate JSON</button>
+        <button class="primary" id="submit">Submit (to listener)</button>
+        <button id="gen">Generate JSON</button>
         <button id="copy">Copy JSON</button>
         <button id="download">Download decisions.json</button>
       </div>
@@ -49,83 +62,37 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Decisions Hub (multi-category, ~15 each)";
+const BLOCK_TITLE = "Decisions Hub (desktop submit)";
 
-// Each category: ~15 quick decisions + a freeform box.
-// These are intentionally NOT exhaustive; they’re a high-throughput triage list.
 const CATS = [
-  {
-    id: "dashboard",
-    name: "Dashboard",
-    items: [
-      {key:"dash_layout_cleanup", q:"1) Dashboard layout: too crowded?", opts:{A:"Keep",B:"Tighten spacing",C:"Add collapsible tiles"}, d:"B"},
-      {key:"dash_headlines_more", q:"2) Headlines: show source domain?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"dash_why_moving_click", q:"3) Why-moving: add 'Prep News tab' button?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"dash_why_moving_click2", q:"4) Why-moving: add 'Prep Earnings tab' button?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"dash_alerts_tile", q:"5) Alerts tile: keep as scaffold?", opts:{A:"Yes",B:"Hide until endpoints"}, d:"A"},
-    ],
-    notesKey: "dashboard_notes",
-  },
-  {
-    id: "scanner",
-    name: "Scanner",
-    items: [
-      {key:"scanner_related_auto", q:"1) Related headlines auto-fill: keep ON?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"scanner_focus_intel", q:"2) Focus intel panel: keep expanded?", opts:{A:"Expanded",B:"Collapsed"}, d:"A"},
-      {key:"scanner_universe_presets", q:"3) Add more universe presets?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"scanner_export_md", q:"4) Export scan results to markdown?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"scanner_perf", q:"5) Scanner performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"B"},
-    ],
-    notesKey: "scanner_notes",
-  },
-  {
-    id: "signals",
-    name: "Signals",
-    items: [
-      {key:"signals_news_keep", q:"1) Keep small News section in Signals?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"signals_macro_collapse", q:"2) Macro: keep collapsed expander?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"signals_filings_rows", q:"3) Filings alerts rows", opts:{A:"5",B:"10",C:"20"}, d:"B"},
-      {key:"signals_actions", q:"4) Keep Set-main/Focus quick actions?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"signals_refresh", q:"5) Refresh interval", opts:{A:"60s",B:"120s",C:"300s"}, d:"B"},
-    ],
-    notesKey: "signals_notes",
-  },
-  {
-    id: "wall",
-    name: "Wall",
-    items: [
-      {key:"wall_topn", q:"1) Wall Top-N", opts:{A:"32",B:"50",C:"80"}, d:"A"},
-      {key:"wall_spark_budget", q:"2) Sparklines budget", opts:{A:"Visible tiles only",B:"Top 16",C:"Off"}, d:"A"},
-      {key:"wall_badges", q:"3) Badges", opts:{A:"HALT/FIL/STALE",B:"HALT only",C:"None"}, d:"A"},
-      {key:"wall_export", q:"4) Export default", opts:{A:"CSV",B:"PDF",C:"Both"}, d:"C"},
-      {key:"wall_perf", q:"5) Performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"C"},
-    ],
-    notesKey: "wall_notes",
-  },
-  {
-    id: "exposure",
-    name: "Exposure",
-    items: [
-      {key:"exposure_balances", q:"1) Add balances normalization now?", opts:{A:"Yes",B:"Hold"}, d:"B"},
-      {key:"exposure_groups", q:"2) Grouping default", opts:{A:"Group under underlying",B:"Flat list"}, d:"A"},
-      {key:"exposure_export", q:"3) Add CSV export?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"exposure_perf", q:"4) Performance posture", opts:{A:"Conservative",B:"Normal"}, d:"A"},
-      {key:"exposure_notes_md", q:"5) Keep redacted snapshot?", opts:{A:"Yes",B:"No"}, d:"A"},
-    ],
-    notesKey: "exposure_notes",
-  },
-  {
-    id: "admin",
-    name: "Admin",
-    items: [
-      {key:"decisions_in_app", q:"1) Build in-app Decisions Inbox (no copy/paste)?", opts:{A:"Yes",B:"Hold"}, d:"A"},
-      {key:"decisions_queue", q:"2) Queue mode", opts:{A:"Multi-category tabs",B:"Single backlog"}, d:"A"},
-      {key:"decisions_apply", q:"3) Apply mode", opts:{A:"Apply immediately",B:"Apply next rerun"}, d:"A"},
-      {key:"decisions_log", q:"4) Keep JSONL log of submissions?", opts:{A:"Yes",B:"No"}, d:"A"},
-      {key:"decisions_15", q:"5) Keep max 15 per category per screen?", opts:{A:"Yes",B:"No"}, d:"A"},
-    ],
-    notesKey: "admin_notes",
-  },
+  { id:"dashboard", name:"Dashboard", items:[
+    {key:"dash_layout_cleanup", q:"1) Dashboard layout: too crowded?", opts:{A:"Keep",B:"Tighten spacing",C:"Add collapsible tiles"}, d:"B"},
+    {key:"dash_headlines_show_domain", q:"2) Headlines: show source domain?", opts:{A:"Yes",B:"No"}, d:"A"},
+    {key:"dash_why_moving_buttons", q:"3) Why-moving: add Prep buttons?", opts:{A:"Yes",B:"No"}, d:"A"},
+  ], notesKey:"dashboard_notes" },
+
+  { id:"scanner", name:"Scanner", items:[
+    {key:"scanner_related_auto", q:"1) Related headlines auto-fill: keep ON?", opts:{A:"Yes",B:"No"}, d:"A"},
+    {key:"scanner_focus_intel_default", q:"2) Focus intel default", opts:{A:"Expanded",B:"Collapsed"}, d:"A"},
+    {key:"scanner_perf", q:"3) Scanner performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"B"},
+  ], notesKey:"scanner_notes" },
+
+  { id:"signals", name:"Signals", items:[
+    {key:"signals_refresh", q:"1) Refresh interval", opts:{A:"60s",B:"120s",C:"300s"}, d:"B"},
+    {key:"signals_keep_news_small", q:"2) Keep small News section", opts:{A:"Yes",B:"No"}, d:"A"},
+    {key:"signals_keep_macro_collapsed", q:"3) Keep Macro collapsed", opts:{A:"Yes",B:"No"}, d:"A"},
+  ], notesKey:"signals_notes" },
+
+  { id:"wall", name:"Wall", items:[
+    {key:"wall_top_n", q:"1) Wall Top-N", opts:{A:"32",B:"50",C:"80"}, d:"A"},
+    {key:"wall_spark_budget", q:"2) Sparklines budget", opts:{A:"Visible tiles only",B:"Top 16",C:"Off"}, d:"A"},
+    {key:"wall_export", q:"3) Export default", opts:{A:"CSV",B:"PDF",C:"Both"}, d:"C"},
+  ], notesKey:"wall_notes" },
+
+  { id:"exposure", name:"Exposure", items:[
+    {key:"exposure_balances_norm", q:"1) Add balances normalization now?", opts:{A:"Start",B:"Hold"}, d:"B"},
+    {key:"exposure_export_csv", q:"2) Add CSV export?", opts:{A:"Yes",B:"No"}, d:"A"},
+  ], notesKey:"exposure_notes" },
 ];
 
 let active = CATS[0].id;
@@ -160,9 +127,9 @@ function renderPanel(){
   root.innerHTML='';
   const card=el('div',{class:'card'});
   card.appendChild(el('div',{class:'q'}, `${c.name} — quick decisions`));
-  card.appendChild(el('div',{class:'why'}, `~${c.items.length} items + freeform. We'll carry forward previous defaults unless changed here.`));
+  card.appendChild(el('div',{class:'why'}, `~${c.items.length} items + freeform. Defaults carry forward.`));
 
-  c.items.forEach((it, idx)=>{
+  c.items.forEach((it)=>{
     const q=el('div',{class:'q'}, it.q);
     card.appendChild(q);
     const group=`q_${c.id}_${it.key}`;
@@ -178,7 +145,6 @@ function renderPanel(){
   card.appendChild(el('div',{class:'q'}, 'Freeform suggestions / ideas (optional)'));
   const ta=el('textarea',{id:`notes_${c.id}`, placeholder:`Dump ideas for ${c.name} here...`});
   card.appendChild(ta);
-
   root.appendChild(card);
 }
 
@@ -203,8 +169,43 @@ function setOut(obj){
   return s;
 }
 
-document.getElementById('gen').onclick=()=>setOut(gather());
+function status(ok, msg){
+  const elx=document.getElementById('status');
+  elx.className = `pill ${ok?'ok':'bad'}`;
+  elx.textContent = msg;
+}
 
+async function ping(){
+  const url=document.getElementById('submitUrl').value;
+  try{
+    // OPTIONS preflight acts as a ping
+    await fetch(url,{method:'OPTIONS'});
+    status(true, 'Listener: reachable');
+  }catch(e){
+    status(false, 'Listener: not reachable');
+  }
+}
+
+async function submit(){
+  const url=document.getElementById('submitUrl').value;
+  const payload=gather();
+  setOut(payload);
+  try{
+    const r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok && j.ok){
+      status(true, 'Submitted ✅ saved decisions.json');
+    }else{
+      status(false, 'Submit failed: ' + (j.error||r.status));
+      alert('Submit failed. See status; you can still Download decisions.json.');
+    }
+  }catch(e){
+    status(false, 'Submit failed (listener down)');
+    alert('Submit failed (listener down). Run decisions_listener.py or use Download.');
+  }
+}
+
+document.getElementById('gen').onclick=()=>setOut(gather());
 document.getElementById('copy').onclick=async ()=>{
   const s=document.getElementById('out').textContent;
   try{ await navigator.clipboard.writeText(s); alert('Copied.'); }
@@ -212,7 +213,7 @@ document.getElementById('copy').onclick=async ()=>{
 };
 
 document.getElementById('download').onclick=()=>{
-  const s=document.getElementById('out').textContent;
+  const s=document.getElementById('out').textContent || JSON.stringify(gather(),null,2);
   const blob=new Blob([s],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
@@ -223,8 +224,12 @@ document.getElementById('download').onclick=()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
 };
 
+document.getElementById('submit').onclick=submit;
+document.getElementById('ping').onclick=ping;
+
 renderTabs();
 renderPanel();
+ping();
 </script>
 </body>
 </html>
