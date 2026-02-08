@@ -27,7 +27,7 @@
   <div class="wrap">
     <h1>Market Hub — Decisions Form</h1>
     <p>Block: <span class="pill" id="block"></span></p>
-    <p class="tiny">Minimal-duplication form: only new decisions. (We carry forward previous defaults unless asked.)</p>
+    <p class="tiny">Minimal-duplication form: only new decisions.</p>
 
     <div id="questions"></div>
 
@@ -43,14 +43,13 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Next: dashboard/watchlist tape polish (no duplicated questions)";
+const BLOCK_TITLE = "Next: Scanner 'Related headlines' auto-fill from RSS (minimal)";
 
 const DECISIONS = [
-  { key:"tape_colorize", label:"1) Watchlist tape: colorize by % change?", why:"Higher scanability.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"tape_flash", label:"2) Tape: flash on threshold crossings?", why:"Only if you want motion.", options:{A:"Yes",B:"No"}, default:"B" },
-  { key:"tape_threshold", label:"3) Threshold", why:"Used only if flash is on.", options:{A:"0.5%",B:"1%",C:"2%"}, default:"B" },
-  { key:"tape_speed", label:"4) Tape speed", why:"How fast it scrolls.", options:{A:"Slow",B:"Normal",C:"Fast"}, default:"B" },
-  { key:"start_coding_tape_polish", label:"5) Start coding this tape polish block now?", why:"If yes, I’ll implement color/flash/speed.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"scanner_headlines_auto", label:"1) Auto-fill 'Related headlines' from RSS?", why:"Replaces manual paste by default (still editable).", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"scanner_headlines_count", label:"2) How many headlines?", why:"Keeps it tight.", options:{A:"3",B:"5",C:"10"}, default:"B" },
+  { key:"scanner_headlines_match", label:"3) Match rule", why:"How to decide a headline matches Focus.", options:{A:"$SYM or word boundary",B:"Any substring",C:"Manual only"}, default:"A" },
+  { key:"start_coding_scanner_headlines", label:"4) Start coding this now?", why:"If yes, I’ll wire it into Scanner Focus right panel.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
@@ -73,7 +72,6 @@ function renderQuestions() {
     const card=el('div',{class:'card'});
     card.appendChild(el('div',{class:'q'}, `${idx+1}) ${q.label}`));
     if (q.why) card.appendChild(el('div',{class:'why'}, q.why));
-
     const groupName = `q_${q.key}`;
     for (const [k, txt] of Object.entries(q.options)) {
       const id = `${groupName}_${k}`;
