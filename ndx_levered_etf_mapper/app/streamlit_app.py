@@ -3020,9 +3020,61 @@ with tab_scanner:
         st.markdown("#### Why is it moving? (placeholder)")
         st.caption("Paste a headline or catalyst here for now. Later we’ll wire a news source.")
         note = st.text_area("Catalyst", value="", height=160, key="scanner_catalyst")
-        st.markdown("#### Related headlines (manual)")
+        st.markdown("#### Related headlines")
+        st.caption("Auto-filled from cached RSS when available (still editable).")
+
+        # Decisions: auto=yes, count=5, match=$SYM or word boundary
+        st.session_state.setdefault("scanner_headlines_auto", True)
+        st.session_state.setdefault("scanner_headlines_count", 5)
+
+        focus_sym2 = str(focus).upper().strip()
+        auto_lines = []
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                rows = obj.get("rows") if isinstance(obj, dict) else None
+                dfn = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+            else:
+                dfn = pd.DataFrame()
+
+            if not dfn.empty and "title" in dfn.columns and focus_sym2:
+                show = dfn.copy()
+                if "published_ts" in show.columns:
+                    show["published_ts"] = pd.to_datetime(show["published_ts"], errors="coerce", utc=True)
+                    show = show.sort_values("published_ts", ascending=False)
+
+                # Match
+                pat = rf"(\${focus_sym2}\b|\b{focus_sym2}\b)"
+                m = show["title"].astype(str).str.upper().str.contains(pat, regex=True, na=False)
+                hits = show[m].copy()
+
+                # Dedupe by title
+                if not hits.empty:
+                    hits["title_norm"] = hits["title"].astype(str).str.strip().str.lower()
+                    hits = hits.drop_duplicates(subset=["title_norm"], keep="first")
+
+                n = int(st.session_state.get("scanner_headlines_count", 5) or 5)
+                hits = hits.head(max(1, min(15, n)))
+
+                for _, r in hits.iterrows():
+                    pub = str(r.get("published") or "").strip()
+                    title = str(r.get("title") or "").strip()
+                    link = str(r.get("link") or "").strip()
+                    if link:
+                        auto_lines.append(f"- {pub} — {title} ({link})")
+                    else:
+                        auto_lines.append(f"- {pub} — {title}")
+        except Exception:
+            auto_lines = []
+
         st.session_state.setdefault("scanner_headlines", "")
-        st.text_area("Headlines", key="scanner_headlines", height=220, placeholder="Paste bullet headlines here…")
+        if bool(st.session_state.get("scanner_headlines_auto", True)):
+            # Only overwrite if empty to respect edits
+            if not str(st.session_state.get("scanner_headlines") or "").strip() and auto_lines:
+                st.session_state["scanner_headlines"] = "\n".join(auto_lines)
+
+        st.text_area("Headlines", key="scanner_headlines", height=220, placeholder="Auto headlines appear here…")
 
 with tab_wall:
     st.subheader("Wall")
