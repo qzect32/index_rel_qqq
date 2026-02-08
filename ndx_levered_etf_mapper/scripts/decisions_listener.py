@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import time
 import re
+import subprocess
 
 
 def _root(repo: str | None) -> Path:
@@ -102,6 +103,80 @@ def _load_schema(repo: str | None) -> dict:
         return {}
 
 
+def _todo_md(repo: str | None) -> dict:
+    """Return markdown contents for TODO.md and TODO_STATUS.md (best-effort)."""
+    repo_root = _root(repo)
+    out: dict = {"todo_md": "", "todo_status_md": ""}
+    try:
+        p1 = (repo_root / "TODO.md").resolve()
+        if p1.exists():
+            out["todo_md"] = p1.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        pass
+    try:
+        p2 = (repo_root / "TODO_STATUS.md").resolve()
+        if p2.exists():
+            out["todo_status_md"] = p2.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        pass
+    return out
+
+
+def _git_velocity(repo: str | None) -> dict:
+    """Best-effort git stats since local midnight."""
+    repo_root = _root(repo)
+    try:
+        since = time.strftime("%Y-%m-%d 00:00")
+        # commits
+        r1 = subprocess.run(
+            ["git", "log", f"--since={since}", "--pretty=oneline", "--no-merges"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        commits = 0
+        if r1.returncode == 0:
+            commits = len([ln for ln in (r1.stdout or "").splitlines() if ln.strip()])
+
+        # numstat
+        r2 = subprocess.run(
+            ["git", "log", f"--since={since}", "--pretty=tformat:", "--numstat"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        ins = dels = 0
+        if r2.returncode == 0:
+            for ln in (r2.stdout or "").splitlines():
+                ln = ln.strip()
+                if not ln:
+                    continue
+                parts = ln.split("\t")
+                if len(parts) < 3:
+                    continue
+                a, b, _ = parts[0], parts[1], parts[2]
+                if a.isdigit():
+                    ins += int(a)
+                if b.isdigit():
+                    dels += int(b)
+
+        net = ins - dels
+        # Simple "effort multiplier" heuristic: net_kLOC + commits/10
+        mult = round((net / 1000.0) + (commits / 10.0), 2)
+        return {
+            "since": since,
+            "commits": int(commits),
+            "insertions": int(ins),
+            "deletions": int(dels),
+            "net": int(net),
+            "effort_multiplier": float(mult),
+        }
+    except Exception:
+        return {"since": "", "commits": 0, "insertions": 0, "deletions": 0, "net": 0, "effort_multiplier": 0.0}
+
+
 def _schema_with_todo(repo: str | None) -> dict:
     sch = _load_schema(repo)
     if not isinstance(sch, dict):
@@ -176,17 +251,36 @@ class Handler(BaseHTTPRequestHandler):
                     latest = json.loads(p.read_text(encoding="utf-8"))
                     if not isinstance(latest, dict):
                         latest = {}
+
+                todo = _todo_stats(self.repo)
+                vel = _git_velocity(self.repo)
+
                 self.send_response(200)
                 self._cors()
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(
                     json.dumps(
-                        {"ok": True, "latest": latest, "todo": _todo_stats(self.repo)},
+                        {"ok": True, "latest": latest, "todo": todo, "velocity": vel},
                         ensure_ascii=False,
                         default=str,
                     ).encode("utf-8")
                 )
+            except Exception as e:
+                self.send_response(500)
+                self._cors()
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        if self.path in ("/todo", "/todo/"):
+            try:
+                obj = _todo_md(self.repo)
+                self.send_response(200)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, **obj}, ensure_ascii=False, default=str).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self._cors()

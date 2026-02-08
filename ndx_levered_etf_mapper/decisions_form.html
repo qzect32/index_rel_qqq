@@ -43,6 +43,15 @@
       Colors: <span class="dot blue"></span> unread update • <span class="dot green"></span> submitted/clean • <span class="dot orange"></span> edited but unsubmitted.
     </p>
     <p class="pill" id="todoPct">TODO: (loading…)</p>
+    <p class="pill" id="effortMult">Effort: (loading…)</p>
+    <details class="card" style="margin-top:10px;">
+      <summary style="cursor:pointer;font-weight:800;">TODO full text (read-only)</summary>
+      <div class="row" style="margin-top:10px;">
+        <button id="loadTodo">Load TODO.md</button>
+        <button id="loadTodoStatus">Load TODO_STATUS.md</button>
+      </div>
+      <pre id="todoText" style="max-height:420px; overflow:auto;">(click Load)</pre>
+    </details>
     <p class="tiny">Tip: Reload schema after you submit to get a fresh rotated batch. Listener now injects a dynamic TODO Progress category.</p>
 
     <div class="card">
@@ -338,10 +347,19 @@ function setTodoPct(todo){
   e.textContent = `TODO: ${todo.pct_done||0}% done (${todo.done||0}/${todo.total||0})`;
 }
 
+function setEffort(vel){
+  const e=document.getElementById('effortMult');
+  if(!e) return;
+  if(!vel){ e.textContent = 'Effort: (unavailable)'; return; }
+  const m = (vel.effort_multiplier!=null) ? vel.effort_multiplier : 0;
+  e.textContent = `Effort: x${m} (today: ${vel.commits||0} commits, net ${vel.net||0} loc)`;
+}
+
 async function refreshLoop(){
   const st = await fetchStatus();
   const latest = st.latest;
   setTodoPct(st.todo);
+  setEffort(st.velocity);
   renderTabs(latest);
   renderPanel(latest);
   // don’t overwrite drafts on poll
@@ -379,6 +397,25 @@ document.getElementById('download').onclick = ()=>{
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
 };
+
+async function loadTodo(which){
+  const ok = await ping();
+  if(!ok) return;
+  const url = baseUrl() + '/todo';
+  try{
+    const r = await fetch(url,{method:'GET'});
+    const j = await r.json();
+    if(j && j.ok){
+      const txt = (which==='status') ? (j.todo_status_md||'') : (j.todo_md||'');
+      document.getElementById('todoText').textContent = txt || '(empty)';
+    }
+  }catch(e){
+    document.getElementById('todoText').textContent = '(failed to load)';
+  }
+}
+
+document.getElementById('loadTodo').onclick = ()=>loadTodo('todo');
+document.getElementById('loadTodoStatus').onclick = ()=>loadTodo('status');
 
 document.getElementById('ping').onclick = refreshLoop;
 
