@@ -87,8 +87,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/schema", "/schema/"):
             try:
                 repo_root = _root(self.repo)
-                schema_path = (repo_root / "data" / "decisions_inbox_schema.json").resolve()
                 obj = {}
+                # Prefer git-tracked config schema; fall back to local data schema
+                schema_path = (repo_root / "config" / "decisions_inbox_schema.json").resolve()
+                if not schema_path.exists():
+                    schema_path = (repo_root / "data" / "decisions_inbox_schema.json").resolve()
+
                 if schema_path.exists():
                     obj = json.loads(schema_path.read_text(encoding="utf-8"))
                     if not isinstance(obj, dict):

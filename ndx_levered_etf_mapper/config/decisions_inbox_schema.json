@@ -1,0 +1,108 @@
+{
+  "version": 2,
+  "title": "Decisions Hub (desktop submit)",
+  "note": "Expanded question bank. Try to avoid duplicates; defaults carry forward unless you change them.",
+  "categories": [
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "notesKey": "dashboard_notes",
+      "items": [
+        {"key": "dash_layout_cleanup", "q": "Layout cleanup", "opts": {"A": "Keep", "B": "Tighten spacing", "C": "Add collapsible tiles"}, "default": "B"},
+        {"key": "dash_headlines_show_domain", "q": "Headlines: show source domain", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "dash_headlines_filter_mode", "q": "Headlines default filter", "opts": {"A": "Latest overall", "B": "Main ticker", "C": "Scanner focus"}, "default": "A"},
+        {"key": "dash_headlines_count", "q": "Headlines count", "opts": {"A": "5", "B": "10", "C": "15"}, "default": "B"},
+        {"key": "dash_why_moving_buttons", "q": "Why-moving: add Prep buttons", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "dash_why_moving_detail", "q": "Why-moving detail", "opts": {"A": "1 line", "B": "3 bullets", "C": "Table"}, "default": "B"},
+        {"key": "dash_tiles_collapse", "q": "Allow collapsing tiles", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "dash_perf_posture", "q": "Dashboard performance posture", "opts": {"A": "Cache-only", "B": "Allow refresh buttons"}, "default": "A"}
+      ]
+    },
+    {
+      "id": "scanner",
+      "name": "Scanner",
+      "notesKey": "scanner_notes",
+      "items": [
+        {"key": "scanner_related_auto", "q": "Related headlines auto-fill", "opts": {"A": "On", "B": "Off"}, "default": "A"},
+        {"key": "scanner_related_count", "q": "Related headlines count", "opts": {"A": "3", "B": "5", "C": "10"}, "default": "B"},
+        {"key": "scanner_focus_intel_default", "q": "Focus intel default", "opts": {"A": "Expanded", "B": "Collapsed"}, "default": "A"},
+        {"key": "scanner_focus_freeze_on_pin", "q": "Freeze intel when pinned", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "scanner_hotlist_modes", "q": "Hot list per event-mode", "opts": {"A": "On", "B": "Off"}, "default": "A"},
+        {"key": "scanner_universe_default", "q": "Universe default", "opts": {"A": "80", "B": "120", "C": "200"}, "default": "A"},
+        {"key": "scanner_perf", "q": "Performance posture", "opts": {"A": "Conservative", "B": "Normal", "C": "Aggressive"}, "default": "B"},
+        {"key": "scanner_exports", "q": "Exports", "opts": {"A": "Keep PDF only", "B": "Add CSV", "C": "Both"}, "default": "C"}
+      ]
+    },
+    {
+      "id": "signals",
+      "name": "Signals",
+      "notesKey": "signals_notes",
+      "items": [
+        {"key": "signals_refresh", "q": "Refresh interval", "opts": {"A": "60s", "B": "120s", "C": "300s"}, "default": "B"},
+        {"key": "signals_keep_news_small", "q": "Keep small News section", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "signals_keep_macro_collapsed", "q": "Keep Macro collapsed", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "signals_keep_badges", "q": "Keep badges row", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "signals_halts_rows", "q": "Halts rows", "opts": {"A": "8", "B": "12", "C": "20"}, "default": "B"},
+        {"key": "signals_filings_rows", "q": "Filings rows", "opts": {"A": "5", "B": "10", "C": "20"}, "default": "B"},
+        {"key": "signals_actions", "q": "Keep Set-main/Focus actions", "opts": {"A": "Yes", "B": "No"}, "default": "A"}
+      ]
+    },
+    {
+      "id": "news",
+      "name": "News",
+      "notesKey": "news_notes",
+      "items": [
+        {"key": "news_refresh", "q": "Refresh cadence", "opts": {"A": "5m", "B": "15m", "C": "60m"}, "default": "B"},
+        {"key": "news_max_show", "q": "Max headlines shown", "opts": {"A": "50", "B": "100", "C": "200"}, "default": "A"},
+        {"key": "news_parallel", "q": "Fetch mode", "opts": {"A": "Parallel", "B": "Sequential"}, "default": "A"},
+        {"key": "news_status_table", "q": "Show per-feed status table", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "news_ticker_detect", "q": "Ticker detection", "opts": {"A": "Off", "B": "On"}, "default": "B"},
+        {"key": "news_dedupe", "q": "Deduplicate", "opts": {"A": "By title", "B": "By link", "C": "None"}, "default": "A"}
+      ]
+    },
+    {
+      "id": "earnings",
+      "name": "Earnings/Filings",
+      "notesKey": "earnings_notes",
+      "items": [
+        {"key": "filings_forms", "q": "Forms to track", "opts": {"A": "10-Q/10-K", "B": "Add 8-K", "C": "All"}, "default": "B"},
+        {"key": "filings_diff_sections", "q": "Diff sections", "opts": {"A": "Risk + MD&A", "B": "All major sections", "C": "Custom"}, "default": "A"},
+        {"key": "filings_watcher_interval", "q": "Watcher interval", "opts": {"A": "Daily", "B": "Hourly", "C": "15m"}, "default": "A"},
+        {"key": "filings_threshold", "q": "Alert threshold score", "opts": {"A": "5", "B": "10", "C": "20"}, "default": "B"},
+        {"key": "filings_retention", "q": "Retention", "opts": {"A": "Keep all", "B": "30 days", "C": "Last 20"}, "default": "B"}
+      ]
+    },
+    {
+      "id": "wall",
+      "name": "Wall",
+      "notesKey": "wall_notes",
+      "items": [
+        {"key": "wall_top_n", "q": "Top N", "opts": {"A": "32", "B": "50", "C": "80"}, "default": "A"},
+        {"key": "wall_max_universe", "q": "Max candidate pool", "opts": {"A": "60", "B": "120", "C": "200"}, "default": "B"},
+        {"key": "wall_quote_ttl", "q": "Quote TTL", "opts": {"A": "15s", "B": "30s", "C": "60s"}, "default": "B"},
+        {"key": "wall_spark_budget", "q": "Sparklines budget", "opts": {"A": "Visible only", "B": "Top 16", "C": "Off"}, "default": "A"},
+        {"key": "wall_export", "q": "Export", "opts": {"A": "CSV", "B": "PDF", "C": "Both"}, "default": "C"}
+      ]
+    },
+    {
+      "id": "exposure",
+      "name": "Exposure",
+      "notesKey": "exposure_notes",
+      "items": [
+        {"key": "exposure_balances_norm", "q": "Balances normalization", "opts": {"A": "Start", "B": "Hold"}, "default": "B"},
+        {"key": "exposure_export_csv", "q": "Add CSV export", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "exposure_group_default", "q": "Grouping default", "opts": {"A": "Group under underlying", "B": "Flat"}, "default": "A"}
+      ]
+    },
+    {
+      "id": "alerts",
+      "name": "Alerts",
+      "notesKey": "alerts_notes",
+      "items": [
+        {"key": "alerts_discovery", "q": "Endpoint discovery", "opts": {"A": "Probe now", "B": "Hold"}, "default": "B"},
+        {"key": "alerts_dry_run", "q": "Keep dry-run mode", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "alerts_rate_limit", "q": "Rate limit", "opts": {"A": "2/min", "B": "10/min"}, "default": "A"}
+      ]
+    }
+  ]
+}
