@@ -3,59 +3,138 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Market Hub — Decisions Form</title>
+  <title>Market Hub — Decisions Hub</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
-    .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 60px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
     p { margin: 6px 0 12px; color: var(--muted); }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 14px; margin: 12px 0; }
-    .q { font-weight: 650; margin-bottom: 6px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin: 12px 0; }
+    .tabs { display:flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    .tab { cursor:pointer; user-select:none; padding: 8px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,0.12); color: var(--muted); }
+    .tab.active { border-color: rgba(51,255,204,0.45); color: var(--text); background: rgba(51,255,204,0.08); }
+    .q { font-weight: 700; margin: 10px 0 6px; }
     .why { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
-    .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; cursor:pointer; }
+    .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; }
     .opt input { margin-right: 10px; accent-color: var(--accent); }
-    .row { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; align-items:center; }
-    button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 650; }
+    textarea { width: 100%; min-height: 120px; border-radius: 12px; padding: 10px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); color: var(--text); }
+    button { cursor:pointer; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: var(--text); padding: 10px 12px; font-weight: 700; }
     button.primary { background: rgba(51,255,204,0.10); border-color: rgba(51,255,204,0.35); }
     pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px; }
-    .tiny { font-size: 12px; color: var(--muted); }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Market Hub — Decisions Form</h1>
-    <p>Block: <span class="pill" id="block"></span></p>
-    <p class="tiny">Minimal-duplication form: only new decisions.</p>
+    <h1>Market Hub — Decisions Hub</h1>
+    <p>
+      Goal: go faster by letting you work multiple categories in parallel. Each tab gives you <b>~15 items</b> + a freeform box.
+      The output is one JSON blob.
+    </p>
+    <p class="pill">Note: this HTML file can’t send data directly to the assistant without a local server/webhook. Best frictionless option is embedding this as a Streamlit “Decisions Inbox” inside the app. (I can build that next.)</p>
 
-    <div id="questions"></div>
+    <div class="tabs" id="tabs"></div>
+    <div id="panel"></div>
 
     <div class="card">
       <div class="row">
         <button class="primary" id="gen">Generate JSON</button>
         <button id="copy">Copy JSON</button>
         <button id="download">Download decisions.json</button>
-        <button id="reset">Reset</button>
       </div>
       <pre id="out">(click Generate JSON)</pre>
     </div>
   </div>
 
 <script>
-const BLOCK_TITLE = "Next: Scanner 'Related headlines' auto-fill from RSS (minimal)";
+const BLOCK_TITLE = "Decisions Hub (multi-category, ~15 each)";
 
-const DECISIONS = [
-  { key:"scanner_headlines_auto", label:"1) Auto-fill 'Related headlines' from RSS?", why:"Replaces manual paste by default (still editable).", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"scanner_headlines_count", label:"2) How many headlines?", why:"Keeps it tight.", options:{A:"3",B:"5",C:"10"}, default:"B" },
-  { key:"scanner_headlines_match", label:"3) Match rule", why:"How to decide a headline matches Focus.", options:{A:"$SYM or word boundary",B:"Any substring",C:"Manual only"}, default:"A" },
-  { key:"start_coding_scanner_headlines", label:"4) Start coding this now?", why:"If yes, I’ll wire it into Scanner Focus right panel.", options:{A:"Yes",B:"Hold"}, default:"A" },
+// Each category: ~15 quick decisions + a freeform box.
+// These are intentionally NOT exhaustive; they’re a high-throughput triage list.
+const CATS = [
+  {
+    id: "dashboard",
+    name: "Dashboard",
+    items: [
+      {key:"dash_layout_cleanup", q:"1) Dashboard layout: too crowded?", opts:{A:"Keep",B:"Tighten spacing",C:"Add collapsible tiles"}, d:"B"},
+      {key:"dash_headlines_more", q:"2) Headlines: show source domain?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"dash_why_moving_click", q:"3) Why-moving: add 'Prep News tab' button?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"dash_why_moving_click2", q:"4) Why-moving: add 'Prep Earnings tab' button?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"dash_alerts_tile", q:"5) Alerts tile: keep as scaffold?", opts:{A:"Yes",B:"Hide until endpoints"}, d:"A"},
+    ],
+    notesKey: "dashboard_notes",
+  },
+  {
+    id: "scanner",
+    name: "Scanner",
+    items: [
+      {key:"scanner_related_auto", q:"1) Related headlines auto-fill: keep ON?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"scanner_focus_intel", q:"2) Focus intel panel: keep expanded?", opts:{A:"Expanded",B:"Collapsed"}, d:"A"},
+      {key:"scanner_universe_presets", q:"3) Add more universe presets?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"scanner_export_md", q:"4) Export scan results to markdown?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"scanner_perf", q:"5) Scanner performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"B"},
+    ],
+    notesKey: "scanner_notes",
+  },
+  {
+    id: "signals",
+    name: "Signals",
+    items: [
+      {key:"signals_news_keep", q:"1) Keep small News section in Signals?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"signals_macro_collapse", q:"2) Macro: keep collapsed expander?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"signals_filings_rows", q:"3) Filings alerts rows", opts:{A:"5",B:"10",C:"20"}, d:"B"},
+      {key:"signals_actions", q:"4) Keep Set-main/Focus quick actions?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"signals_refresh", q:"5) Refresh interval", opts:{A:"60s",B:"120s",C:"300s"}, d:"B"},
+    ],
+    notesKey: "signals_notes",
+  },
+  {
+    id: "wall",
+    name: "Wall",
+    items: [
+      {key:"wall_topn", q:"1) Wall Top-N", opts:{A:"32",B:"50",C:"80"}, d:"A"},
+      {key:"wall_spark_budget", q:"2) Sparklines budget", opts:{A:"Visible tiles only",B:"Top 16",C:"Off"}, d:"A"},
+      {key:"wall_badges", q:"3) Badges", opts:{A:"HALT/FIL/STALE",B:"HALT only",C:"None"}, d:"A"},
+      {key:"wall_export", q:"4) Export default", opts:{A:"CSV",B:"PDF",C:"Both"}, d:"C"},
+      {key:"wall_perf", q:"5) Performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"C"},
+    ],
+    notesKey: "wall_notes",
+  },
+  {
+    id: "exposure",
+    name: "Exposure",
+    items: [
+      {key:"exposure_balances", q:"1) Add balances normalization now?", opts:{A:"Yes",B:"Hold"}, d:"B"},
+      {key:"exposure_groups", q:"2) Grouping default", opts:{A:"Group under underlying",B:"Flat list"}, d:"A"},
+      {key:"exposure_export", q:"3) Add CSV export?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"exposure_perf", q:"4) Performance posture", opts:{A:"Conservative",B:"Normal"}, d:"A"},
+      {key:"exposure_notes_md", q:"5) Keep redacted snapshot?", opts:{A:"Yes",B:"No"}, d:"A"},
+    ],
+    notesKey: "exposure_notes",
+  },
+  {
+    id: "admin",
+    name: "Admin",
+    items: [
+      {key:"decisions_in_app", q:"1) Build in-app Decisions Inbox (no copy/paste)?", opts:{A:"Yes",B:"Hold"}, d:"A"},
+      {key:"decisions_queue", q:"2) Queue mode", opts:{A:"Multi-category tabs",B:"Single backlog"}, d:"A"},
+      {key:"decisions_apply", q:"3) Apply mode", opts:{A:"Apply immediately",B:"Apply next rerun"}, d:"A"},
+      {key:"decisions_log", q:"4) Keep JSONL log of submissions?", opts:{A:"Yes",B:"No"}, d:"A"},
+      {key:"decisions_15", q:"5) Keep max 15 per category per screen?", opts:{A:"Yes",B:"No"}, d:"A"},
+    ],
+    notesKey: "admin_notes",
+  },
 ];
+
+let active = CATS[0].id;
 
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
   Object.entries(attrs).forEach(([k,v])=>{
     if(k==="class") e.className=v;
+    else if(k==="html") e.innerHTML=v;
     else e.setAttribute(k,v);
   });
   (Array.isArray(children)?children:[children]).forEach(c=>{
@@ -65,67 +144,87 @@ function el(tag, attrs={}, children=[]) {
   return e;
 }
 
-function renderQuestions() {
-  const root=document.getElementById('questions');
+function renderTabs(){
+  const root=document.getElementById('tabs');
   root.innerHTML='';
-  DECISIONS.forEach((q, idx) => {
-    const card=el('div',{class:'card'});
-    card.appendChild(el('div',{class:'q'}, `${idx+1}) ${q.label}`));
-    if (q.why) card.appendChild(el('div',{class:'why'}, q.why));
-    const groupName = `q_${q.key}`;
-    for (const [k, txt] of Object.entries(q.options)) {
-      const id = `${groupName}_${k}`;
-      const input=el('input',{type:'radio',name:groupName,id, value:k});
-      if (k === q.default) input.checked = true;
-      const lab=el('label',{class:'opt', for:id}, [input, `${k}) ${txt}`]);
-      card.appendChild(lab);
-    }
-    root.appendChild(card);
-  });
+  for(const c of CATS){
+    const t=el('div',{class:`tab ${c.id===active?'active':''}`}, c.name);
+    t.onclick=()=>{active=c.id; renderTabs(); renderPanel();};
+    root.appendChild(t);
+  }
 }
 
-function gather() {
-  const out = { _updated_at: new Date().toISOString(), _block: BLOCK_TITLE };
-  for (const q of DECISIONS) {
-    const sel = document.querySelector(`input[name='q_${q.key}']:checked`);
-    out[q.key] = sel ? sel.value : q.default;
+function renderPanel(){
+  const c=CATS.find(x=>x.id===active);
+  const root=document.getElementById('panel');
+  root.innerHTML='';
+  const card=el('div',{class:'card'});
+  card.appendChild(el('div',{class:'q'}, `${c.name} — quick decisions`));
+  card.appendChild(el('div',{class:'why'}, `~${c.items.length} items + freeform. We'll carry forward previous defaults unless changed here.`));
+
+  c.items.forEach((it, idx)=>{
+    const q=el('div',{class:'q'}, it.q);
+    card.appendChild(q);
+    const group=`q_${c.id}_${it.key}`;
+    Object.entries(it.opts).forEach(([k,txt])=>{
+      const id=`${group}_${k}`;
+      const input=el('input',{type:'radio',name:group,id,value:k});
+      if(k===it.d) input.checked=true;
+      const lab=el('label',{class:'opt',for:id}, [input, `${k}) ${txt}`]);
+      card.appendChild(lab);
+    });
+  });
+
+  card.appendChild(el('div',{class:'q'}, 'Freeform suggestions / ideas (optional)'));
+  const ta=el('textarea',{id:`notes_${c.id}`, placeholder:`Dump ideas for ${c.name} here...`});
+  card.appendChild(ta);
+
+  root.appendChild(card);
+}
+
+function gather(){
+  const out={_updated_at:new Date().toISOString(), _block: BLOCK_TITLE, categories:{}};
+  for(const c of CATS){
+    const cat={};
+    for(const it of c.items){
+      const sel=document.querySelector(`input[name='q_${c.id}_${it.key}']:checked`);
+      cat[it.key]= sel ? sel.value : it.d;
+    }
+    const ta=document.getElementById(`notes_${c.id}`);
+    cat[c.notesKey]= ta ? (ta.value||'') : '';
+    out.categories[c.id]=cat;
   }
   return out;
 }
 
-function setOut(obj) {
-  const s = JSON.stringify(obj, null, 2);
-  document.getElementById('out').textContent = s;
+function setOut(obj){
+  const s=JSON.stringify(obj,null,2);
+  document.getElementById('out').textContent=s;
   return s;
 }
 
-document.getElementById('block').textContent = BLOCK_TITLE;
-renderQuestions();
+document.getElementById('gen').onclick=()=>setOut(gather());
 
-document.getElementById('gen').addEventListener('click', () => setOut(gather()));
+document.getElementById('copy').onclick=async ()=>{
+  const s=document.getElementById('out').textContent;
+  try{ await navigator.clipboard.writeText(s); alert('Copied.'); }
+  catch(e){ alert('Copy failed. Use Download.'); }
+};
 
-document.getElementById('copy').addEventListener('click', async () => {
-  const s = document.getElementById('out').textContent;
-  try { await navigator.clipboard.writeText(s); alert('Copied. Paste it back into chat.'); }
-  catch (e) { alert('Copy failed. Use Download instead.'); }
-});
-
-document.getElementById('download').addEventListener('click', () => {
-  const s = document.getElementById('out').textContent;
-  const blob = new Blob([s], {type:'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'decisions.json';
+document.getElementById('download').onclick=()=>{
+  const s=document.getElementById('out').textContent;
+  const blob=new Blob([s],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='decisions.json';
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
-});
+};
 
-document.getElementById('reset').addEventListener('click', () => {
-  renderQuestions();
-  document.getElementById('out').textContent = '(click Generate JSON)';
-});
+renderTabs();
+renderPanel();
 </script>
 </body>
 </html>
