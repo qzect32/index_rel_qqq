@@ -47,25 +47,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Dashboard headlines tile (from RSS) + 'why moving' quick view";
-const BLOCK_NOTE = "Now that RSS is wired, decide how Dashboard should surface headlines and whether to pin by symbol.";
+const BLOCK_TITLE = "Signals hub next: reduce clutter + refresh policy";
+const BLOCK_NOTE = "Now that Dashboard/Wall/Signals are busy, choose how Signals collapses/refreshes and what moves where.";
 
 const DECISIONS = [
-  { key:"dash_headlines_enable", label:"1) Enable Dashboard headlines tile?", why:"Shows latest RSS headlines without going to News tab.", options:{A:"Yes",B:"Hold"}, default:"A" },
-  { key:"dash_headlines_mode", label:"2) Headlines mode", why:"What should it show?", options:{A:"Latest overall",B:"Filtered to main ticker",C:"Filtered to Focus"}, default:"A" },
-  { key:"dash_headlines_count", label:"3) Headline count", why:"Keep it readable.", options:{A:"5",B:"10",C:"15"}, default:"B" },
-  { key:"dash_headlines_links", label:"4) Clickable links", why:"Open article directly.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"dash_headlines_dedupe", label:"5) Deduplicate", why:"Same headline across feeds.", options:{A:"By title",B:"By link",C:"No"}, default:"A" },
-  { key:"dash_headlines_refresh", label:"6) Refresh behavior", why:"Uses cached RSS.", options:{A:"Use cache only",B:"Force refresh on Dashboard"}, default:"A" },
-  { key:"dash_why_moving_enable", label:"7) Add 'Why moving' mini tile?", why:"One-liner from Focus intel sources.", options:{A:"Yes",B:"Hold"}, default:"A" },
-  { key:"dash_why_moving_symbol", label:"8) Which symbol?", why:"Source for the mini tile.", options:{A:"Main ticker",B:"Scanner Focus",C:"Both"}, default:"A" },
-  { key:"dash_why_moving_sources", label:"9) Sources", why:"What feeds drive it.", options:{A:"Halts + Filings + News",B:"News only",C:"Filings only"}, default:"A" },
-  { key:"dash_why_moving_detail", label:"10) Detail level", why:"How verbose.", options:{A:"1 line",B:"3 bullets",C:"Inline table"}, default:"B" },
-  { key:"dash_why_moving_export", label:"11) Export", why:"Local record.", options:{A:"None",B:"Markdown",C:"JSON"}, default:"A" },
-  { key:"dash_layout", label:"12) Where place tiles", why:"Dashboard is crowded.", options:{A:"Replace old Headlines placeholder",B:"New row under highlights",C:"Sidebar only"}, default:"A" },
-  { key:"dash_guardrails", label:"13) Guardrails", why:"Avoid extra API calls.", options:{A:"No extra calls (cache only)",B:"Allow refresh button"}, default:"A" },
-  { key:"dash_notes", label:"14) Notes field", why:"Quick notes.", options:{A:"Keep manual notes area",B:"Remove"}, default:"A" },
-  { key:"start_coding_dash_headlines", label:"15) Start coding this Dashboard headlines block now?", why:"If yes, I’ll wire the tile(s) into Dashboard.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"signals_collapse_defaults", label:"1) Default collapsed sections", why:"Reduce clutter.", options:{A:"Collapse Earnings only",B:"Collapse Earnings + News",C:"Collapse everything"}, default:"A" },
+  { key:"signals_show_news", label:"2) Show News inside Signals?", why:"You now have a News tab.", options:{A:"Keep small section",B:"Remove from Signals",C:"Replace Macro"}, default:"B" },
+  { key:"signals_show_macro", label:"3) Show Macro inside Signals?", why:"You also have Dashboard highlight.", options:{A:"Keep",B:"Remove",C:"Keep but collapse"}, default:"C" },
+  { key:"signals_show_filings", label:"4) Show Filings alerts inside Signals?", why:"You have Earnings tab too.", options:{A:"Keep inside Earnings expander",B:"Move to its own expander",C:"Remove"}, default:"A" },
+  { key:"signals_refresh_policy", label:"5) Refresh policy", why:"Avoid waste.", options:{A:"Refresh only on interval if tab visible",B:"Always refresh in background",C:"Manual only"}, default:"A" },
+  { key:"signals_refresh_s", label:"6) Interval", why:"If interval-based.", options:{A:"60s",B:"120s",C:"300s"}, default:"B" },
+  { key:"signals_badges", label:"7) Badges row", why:"Keep at top?", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"signals_badge_fields", label:"8) Badge fields", why:"What to show.", options:{A:"Halts/Earnings/Filings/Macro",B:"Halts/Filings only",C:"Custom"}, default:"A" },
+  { key:"signals_halts_table_rows", label:"9) Halts rows", why:"Table height.", options:{A:"8",B:"12",C:"20"}, default:"B" },
+  { key:"signals_macro_rows", label:"10) Macro rows", why:"How many feed items.", options:{A:"5",B:"12",C:"20"}, default:"B" },
+  { key:"signals_filings_rows", label:"11) Filings alerts rows", why:"How many alerts.", options:{A:"5",B:"10",C:"20"}, default:"B" },
+  { key:"signals_drive_dashboard", label:"12) Drive Dashboard highlights", why:"Should Signals override Dashboard tiles?", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"signals_keyboard", label:"13) Keyboard flow", why:"Any quick actions?", options:{A:"None",B:"Add 'Set main ticker' buttons",C:"Add hotkeys (later)"}, default:"B" },
+  { key:"signals_perf", label:"14) Performance posture", why:"How aggressive?", options:{A:"Conservative",B:"Normal",C:"Aggressive"}, default:"B" },
+  { key:"start_coding_signals_polish", label:"15) Start coding this Signals polish block now?", why:"If yes, I’ll implement collapse + refresh visibility + move/remove sections.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
