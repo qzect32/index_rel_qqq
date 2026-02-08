@@ -251,7 +251,7 @@ function gatherCategory(catId){
 }
 
 function gatherAll(){
-  const out={_updated_at:new Date().toISOString(), _block: BLOCK_TITLE, categories:{}};
+  const out={_updated_at:new Date().toISOString(), _block: BLOCK_TITLE, schema_version: (schema && schema.version!=null ? schema.version : null), categories:{}};
   for(const c of schema.categories){
     out.categories[c.id]=gatherCategory(c.id);
   }
@@ -314,8 +314,32 @@ async function fetchSchema(){
   }
 }
 
+function validateComplete(){
+  // Require every item in current schema to be present in payload.
+  const missing=[];
+  for(const c of (schema.categories||[])){
+    for(const it of (c.items||[])){
+      const k=it.key;
+      const v=getDraftValue(c.id, k);
+      const sel=document.querySelector(`input[name='q_${c.id}_${k}']:checked`);
+      const has = !!sel || (v!=null && String(v).trim().length>0);
+      // If neither selected nor drafted, gatherCategory will fall back to default.
+      // That's acceptable as an answer, so we don't treat it as missing.
+      // But if the element doesn't exist at all, something is wrong.
+      const elExists = !!document.querySelector(`input[name='q_${c.id}_${k}']`);
+      if(!elExists){ missing.push(`${c.id}.${k}`); }
+    }
+  }
+  return missing;
+}
+
 async function submit(){
   const url=document.getElementById('submitUrl').value;
+  const missing = validateComplete();
+  if(missing.length){
+    alert('Submit blocked: some questions were not rendered. Try Reload schema.\n\nMissing:\n' + missing.slice(0,50).join('\n'));
+    return;
+  }
   const payload=gatherAll();
   setOut(payload);
   try{

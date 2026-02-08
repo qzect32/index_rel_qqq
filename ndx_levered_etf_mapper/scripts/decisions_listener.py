@@ -418,6 +418,40 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         obj.setdefault("_received_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
+
+        # Server-side validation: ensure every current schema question is accounted for.
+        try:
+            sch = _schema_with_todo(self.repo, include_answered=True)
+            sch_cats = sch.get("categories") if isinstance(sch.get("categories"), list) else []
+            cats = obj.get("categories") if isinstance(obj.get("categories"), dict) else {}
+            missing: list[str] = []
+            for c in sch_cats:
+                if not isinstance(c, dict):
+                    continue
+                cid = str(c.get("id") or "").strip()
+                items = c.get("items") if isinstance(c.get("items"), list) else []
+                got = cats.get(cid)
+                if not isinstance(got, dict):
+                    got = {}
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    k = str(it.get("key") or "").strip()
+                    if not k:
+                        continue
+                    if k not in got:
+                        missing.append(f"{cid}.{k}")
+            if missing:
+                self.send_response(400)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": "missing schema keys", "missing": missing[:200]}, ensure_ascii=False).encode("utf-8"))
+                return
+        except Exception:
+            # best-effort only
+            pass
+
         try:
             _write_latest(obj, repo=self.repo)
             _append_log(obj, repo=self.repo)
