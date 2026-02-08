@@ -2243,9 +2243,129 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
                 st.success("Logged dry-run delete to data/alerts_log.jsonl")
 
         st.markdown("### Headlines")
-        st.caption("Placeholder for now (fastest path). Paste headlines you care about; later we’ll wire a feed.")
+        st.caption("Cached RSS headlines (no extra calls from Dashboard).")
+
+        # Read cached news RSS
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                rows = obj.get("rows") if isinstance(obj, dict) else None
+                dfn = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+            else:
+                dfn = pd.DataFrame()
+        except Exception:
+            dfn = pd.DataFrame()
+
+        if isinstance(dfn, pd.DataFrame) and not dfn.empty and "title" in dfn.columns:
+            show = dfn.copy()
+            if "published_ts" in show.columns:
+                show["published_ts"] = pd.to_datetime(show["published_ts"], errors="coerce", utc=True)
+                show = show.sort_values("published_ts", ascending=False)
+
+            # Dedup by title
+            try:
+                show["title_norm"] = show["title"].astype(str).str.strip().str.lower()
+                show = show.drop_duplicates(subset=["title_norm"], keep="first")
+            except Exception:
+                pass
+
+            # Latest overall (top 10)
+            show = show.head(10)
+            for _, r in show.iterrows():
+                pub = str(r.get("published") or "").strip()
+                title = str(r.get("title") or "").strip()
+                link = str(r.get("link") or "").strip()
+                if link:
+                    st.markdown(f"- {pub} — [{title}]({link})")
+                else:
+                    st.write(f"- {pub} — {title}")
+        else:
+            st.caption("No news cache yet. Open News tab once to fetch.")
+
+        st.markdown("### Why moving (quick view)")
+        st.caption("Main ticker: halts + filings + news (cache only).")
+
+        sym0 = str(st.session_state.get("selected_ticker") or "").upper().strip()
+        bullets = []
+
+        # HALT
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_halts_cboe.json"
+            if not p.exists():
+                p = _data_dir() / "feeds_cache" / "latest_halts_nasdaq.json"
+            if not p.exists():
+                p = _data_dir() / "feeds_cache" / "latest_halts_nyse.json"
+            if p.exists():
+                obj = json.loads(p.read_text(encoding="utf-8"))
+                rows = obj.get("rows") if isinstance(obj, dict) else None
+                dfh = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+                if not dfh.empty and "symbol" in dfh.columns:
+                    if "resumed" in dfh.columns:
+                        dfh = dfh[dfh["resumed"] == False]  # noqa: E712
+                    dfm = dfh[dfh["symbol"].astype(str).str.upper().str.strip() == sym0]
+                    if not dfm.empty:
+                        h = dfm.iloc[0].to_dict()
+                        bullets.append(f"HALT: {h.get('reason','')} — resume {h.get('resume_time_et','')}")
+        except Exception:
+            pass
+
+        # FILINGS
+        try:
+            best = None
+            alerts = st.session_state.get("signals_filings_alerts", [])
+            if isinstance(alerts, list):
+                for a in alerts:
+                    if isinstance(a, dict) and str(a.get("symbol") or "").upper().strip() == sym0:
+                        best = a
+                        break
+            if best is None:
+                rep_root = (Path(_data_dir()) / "filings" / sym0 / "reports")
+                md_paths = []
+                if rep_root.exists():
+                    for md in rep_root.glob("*/report.md"):
+                        try:
+                            md_paths.append((md.stat().st_mtime, md))
+                        except Exception:
+                            pass
+                md_paths.sort(reverse=True)
+                if md_paths:
+                    best = {"symbol": sym0, "report_md": str(md_paths[0][1])}
+
+            if isinstance(best, dict):
+                sc = best.get("score")
+                bullets.append(f"FILINGS: recent report" + (f" (score {sc})" if sc is not None else ""))
+        except Exception:
+            pass
+
+        # NEWS
+        try:
+            if isinstance(dfn, pd.DataFrame) and not dfn.empty and "title" in dfn.columns and sym0:
+                titles = dfn["title"].astype(str)
+                pat = rf"(\${sym0}\b|\b{sym0}\b)"
+                m = titles.str.upper().str.contains(pat, regex=True, na=False)
+                hits = dfn[m].copy()
+                if not hits.empty:
+                    hits["title_norm"] = hits["title"].astype(str).str.strip().str.lower()
+                    hits = hits.drop_duplicates(subset=["title_norm"], keep="first")
+                if "published_ts" in hits.columns:
+                    hits["published_ts"] = pd.to_datetime(hits["published_ts"], errors="coerce", utc=True)
+                    hits = hits.sort_values("published_ts", ascending=False)
+                if not hits.empty:
+                    top = hits.iloc[0].to_dict()
+                    bullets.append(f"NEWS: {top.get('title','')}")
+        except Exception:
+            pass
+
+        if bullets:
+            for b in bullets[:3]:
+                st.write(f"- {b}")
+        else:
+            st.caption("No cached intel hits for main ticker yet.")
+
+        st.markdown("### Notes")
         st.session_state.setdefault("headlines", "")
-        st.text_area("Headlines", key="headlines", height=180)
+        st.text_area("Notes", key="headlines", height=140, placeholder="Freeform notes…")
 
 with tab_scanner:
     st.subheader("Scanner")
