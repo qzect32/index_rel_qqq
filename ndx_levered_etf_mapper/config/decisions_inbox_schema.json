@@ -1,55 +1,55 @@
 {
-  "version": 12,
+  "version": 13,
   "title": "Decisions Hub (desktop submit)",
-  "note": "Batch 10: Feed quality (News + Halts + Filings/EDGAR + Macro). TODO triage injected dynamically.",
+  "note": "Batch 11: UI/UX polish — Navigation/speed, Clarity, Actions, and Debug UX (priority: debugging). TODO triage injected dynamically.",
   "categories": [
     {
-      "id": "news_quality10",
-      "name": "News quality — batch 10",
-      "notesKey": "news_quality10_notes",
+      "id": "nav11",
+      "name": "Navigation & speed — batch 11",
+      "notesKey": "nav11_notes",
       "items": [
-        {"key": "news_source_strategy", "q": "News sources strategy", "opts": {"A": "Few high-quality sources", "B": "Broad coverage"}, "default": "A"},
-        {"key": "news_dedupe_strategy", "q": "Dedupe strategy", "opts": {"A": "By URL only", "B": "By (title+domain) fuzzy", "C": "By (title+symbol) fuzzy"}, "default": "B"},
-        {"key": "news_summary_policy", "q": "Summary/snippet policy", "opts": {"A": "Show if available", "B": "Generate locally (best-effort)", "C": "No snippets"}, "default": "A"},
-        {"key": "news_low_quality_list_owner", "q": "Low-quality sources list should be", "opts": {"A": "Hardcoded + occasional edits", "B": "User-editable in UI", "C": "Auto-learned over time"}, "default": "B"},
-        {"key": "news_error_visibility", "q": "When a news fetch fails", "opts": {"A": "Show inline error row", "B": "Hide failure unless > threshold", "C": "Only show in debug panel"}, "default": "B"},
-        {"key": "start_coding_news_quality_batch10", "q": "Start coding News quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "kb_shortcuts", "q": "Enable keyboard shortcuts across app (j/k, / search, g then tab)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "global_command_palette", "q": "Add command palette (Ctrl+K) for jump/search/actions", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "prefetch_on_hover", "q": "Prefetch on hover (lightweight) for links/buttons", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "reduce_polling_when_idle", "q": "Reduce polling when tab is hidden/idle", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_nav_batch11", "q": "Start coding Nav/speed batch 11 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "halts_quality10",
-      "name": "Halts quality — batch 10",
-      "notesKey": "halts_quality10_notes",
+      "id": "clarity11",
+      "name": "Clarity — batch 11",
+      "notesKey": "clarity11_notes",
       "items": [
-        {"key": "halts_time_window", "q": "Show resumed halts within", "opts": {"A": "30m", "B": "2h", "C": "Today"}, "default": "B"},
-        {"key": "halts_grouping", "q": "Halts grouping", "opts": {"A": "By symbol", "B": "By time", "C": "By reason"}, "default": "A"},
-        {"key": "halts_highlight_rules", "q": "Highlight rules", "opts": {"A": "Active only", "B": "Active + just resumed", "C": "Active + resumed + repeated"}, "default": "B"},
-        {"key": "halts_alert_policy", "q": "Alerts policy", "opts": {"A": "No alerts", "B": "Alert on new halt", "C": "Alert on halt + resume"}, "default": "B"},
-        {"key": "start_coding_halts_quality_batch10", "q": "Start coding Halts quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "unify_status_language", "q": "Unify status language (OK/WARN/BLOCKED/ERROR) across all panels", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "inline_error_details", "q": "Inline error details (click-to-expand) instead of silent failures", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "why_moving_explanations", "q": "Add clearer 'why moving' explanations (source + confidence)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "tooltips_for_badges", "q": "Tooltips for badges (cache age, stale, budget, latency)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_clarity_batch11", "q": "Start coding Clarity batch 11 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "filings_quality10",
-      "name": "Filings/EDGAR quality — batch 10",
-      "notesKey": "filings_quality10_notes",
+      "id": "actions11",
+      "name": "Actions — batch 11",
+      "notesKey": "actions11_notes",
       "items": [
-        {"key": "filings_universe", "q": "Filings universe", "opts": {"A": "Main ticker only", "B": "Watchlist + main", "C": "Market-wide (capped)"}, "default": "B"},
-        {"key": "filings_forms_focus", "q": "Forms to prioritize", "opts": {"A": "8-K/10-Q/10-K", "B": "Include DEF 14A/13D/13G", "C": "All forms"}, "default": "B"},
-        {"key": "filings_diff_mode", "q": "EDGAR diff mode", "opts": {"A": "Section-level (risk factors/MD&A)", "B": "Whole-doc hash (simple)", "C": "No diff"}, "default": "A"},
-        {"key": "filings_score_threshold", "q": "Badge/notify threshold", "opts": {"A": "Score ≥10", "B": "Score ≥5", "C": "Any"}, "default": "B"},
-        {"key": "start_coding_filings_quality_batch10", "q": "Start coding Filings quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "one_click_copy_bundle", "q": "1-click copy bundle (md + key metrics + recent headlines) for current symbol", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "one_click_export_bundle", "q": "1-click export bundle (md+json) for current view", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "pin_symbols", "q": "Allow pinning multiple symbols (quick-switch list)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "batch_actions", "q": "Add batch actions (refresh all / clear caches / reset state) in one place", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_actions_batch11", "q": "Start coding Actions batch 11 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "macro_quality10",
-      "name": "Macro quality — batch 10",
-      "notesKey": "macro_quality10_notes",
+      "id": "debug11",
+      "name": "Debug UX (priority) — batch 11",
+      "notesKey": "debug11_notes",
       "items": [
-        {"key": "macro_sources", "q": "Macro sources", "opts": {"A": "Fed RSS only", "B": "Fed RSS + calendar events", "C": "Add curated headlines"}, "default": "B"},
-        {"key": "macro_relevance_filter", "q": "Relevance filtering", "opts": {"A": "Show everything", "B": "Show high-signal only", "C": "Two-tier (important + misc)"}, "default": "C"},
-        {"key": "macro_event_countdown", "q": "Event countdown widgets", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "macro_max_items", "q": "Max macro items shown", "opts": {"A": "3", "B": "5", "C": "10"}, "default": "B"},
-        {"key": "start_coding_macro_quality_batch10", "q": "Start coding Macro quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "debug_panel", "q": "Add dedicated Debug panel (single page) with budgets/latency/caches/feed health", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "request_log_ring", "q": "Keep a ring buffer request log (last N calls) viewable in Debug panel", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "per_section_latency", "q": "Show per-section latency + last success time inline", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "cache_inspector", "q": "Add cache inspector (keys, TTL, size) + 1-click clear", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "debug_bundle", "q": "Add 1-click debug bundle export (config + recent logs + snapshots)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_debug_batch11", "q": "Start coding Debug UX batch 11 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     }
   ]
