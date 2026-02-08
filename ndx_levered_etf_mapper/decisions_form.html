@@ -47,25 +47,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Wall tab: guardrails + polish (post-v1)";
-const BLOCK_NOTE = "Now that Wall exists, choose guardrails (API budget), thresholds, and small UX polish.";
+const BLOCK_TITLE = "Schwab-native Alerts (TOS/Mobile): scope + UX + safe testing";
+const BLOCK_NOTE = "No ToS clicking. We’ll only implement if Schwab endpoints are confirmed; otherwise keep scaffold + safe probes.";
 
 const DECISIONS = [
-  { key:"wall_movers_threshold", label:"1) Movers threshold", why:"Defines 'movers only' cutoff.", options:{A:"abs % >= 1%",B:"abs % >= 2%",C:"Top N only (ignore threshold)"}, default:"C" },
-  { key:"wall_top_n", label:"2) If Top N, N= ?", why:"Used when movers filter is Top-N.", options:{A:"32",B:"50",C:"80"}, default:"A" },
-  { key:"wall_max_universe", label:"3) Max candidate symbols to fetch", why:"Caps API usage.", options:{A:"60",B:"120",C:"200"}, default:"B" },
-  { key:"wall_spark_budget", label:"4) Sparkline budget", why:"Sparklines can be expensive.", options:{A:"Only for visible tiles",B:"Only for top 16",C:"Off by default"}, default:"A" },
-  { key:"wall_badge_style", label:"5) Badge style", why:"Compact vs loud.", options:{A:"Text (HALT/FIL)",B:"Icons",C:"No badges"}, default:"A" },
-  { key:"wall_heat_scale", label:"6) Heat scale", why:"How to show heat.", options:{A:"Number only",B:"Number + color",C:"Hidden"}, default:"A" },
-  { key:"wall_csv_columns", label:"7) CSV columns", why:"What goes into export.", options:{A:"sym,px,%",B:"A + vol",C:"A + vol + heat"}, default:"C" },
-  { key:"wall_pdf_detail", label:"8) PDF detail", why:"PDF can be compact or verbose.", options:{A:"Table only",B:"Table + timestamp + mode",C:"Add top movers summary"}, default:"B" },
-  { key:"wall_tile_buttons", label:"9) Tile buttons", why:"Two buttons per tile adds clutter.", options:{A:"Keep Main+Focus",B:"Single button (menu)",C:"Buttons only on hover (not really possible)"}, default:"A" },
-  { key:"wall_link_out", label:"10) Link-outs", why:"Open news/filings quickly.", options:{A:"None",B:"Link to News tab filter",C:"Link to EDGAR report"}, default:"A" },
-  { key:"wall_error_display", label:"11) Errors", why:"How to show quote failures.", options:{A:"Silent",B:"Show small red 'stale' marker",C:"Show toast"}, default:"B" },
-  { key:"wall_refresh_control", label:"12) Refresh control", why:"Override autorefresh.", options:{A:"No control",B:"Toggle autorefresh",C:"Manual refresh button"}, default:"B" },
-  { key:"wall_dark_mode", label:"13) Theme", why:"Any tweaks?", options:{A:"Keep current",B:"Higher contrast",C:"Minimal"}, default:"A" },
-  { key:"wall_store_prefs", label:"14) Persist wall settings", why:"Save settings in app settings JSON.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"start_coding_wall_polish", label:"15) Start coding this polish/guardrails block now?", why:"If yes, I implement thresholds + budgets + toggles + persistence.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"alerts_discovery", label:"1) Endpoint discovery now?", why:"This may require testing OAuth scopes in your environment.", options:{A:"Yes (probe endpoints)",B:"Hold (scaffold only)"}, default:"B" },
+  { key:"alerts_scope_policy", label:"2) OAuth scope expansion", why:"Some alert endpoints may require more than readonly.", options:{A:"Readonly only",B:"Allow expanding scopes (you approve)"}, default:"B" },
+  { key:"alerts_ui_location", label:"3) Where should Alerts live?", why:"So it’s quick.", options:{A:"Dashboard tile",B:"Signals panel",C:"New Alerts tab"}, default:"A" },
+  { key:"alerts_types", label:"4) Alert types", why:"Keep it minimal first.", options:{A:"Price above/below",B:"Add % move",C:"All supported types"}, default:"A" },
+  { key:"alerts_default_expiry", label:"5) Default expiry", why:"Avoid stale alerts.", options:{A:"End of day",B:"1 week",C:"No expiry"}, default:"A" },
+  { key:"alerts_dedup", label:"6) Dedup behavior", why:"Prevent duplicates.", options:{A:"One alert per symbol+direction",B:"Allow duplicates",C:"Replace existing"}, default:"C" },
+  { key:"alerts_test_mode", label:"7) Safe testing mode", why:"No accidental spam.", options:{A:"Dry-run (show payload only)",B:"Create real alerts",C:"Create then auto-delete"}, default:"A" },
+  { key:"alerts_list", label:"8) List existing alerts", why:"So you can manage.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"alerts_delete", label:"9) Delete/disable controls", why:"Cleanup.", options:{A:"Delete",B:"Disable if supported",C:"Both"}, default:"C" },
+  { key:"alerts_symbol_source", label:"10) Symbol picker", why:"Which symbols quick-add uses.", options:{A:"Main ticker",B:"Watchlist",C:"Hot list"}, default:"B" },
+  { key:"alerts_threshold_ui", label:"11) Threshold UI", why:"Fast entry.", options:{A:"Manual price",B:"% from current",C:"Both"}, default:"C" },
+  { key:"alerts_rate_limit", label:"12) Rate limiting", why:"Don’t hammer Schwab.", options:{A:"Max 2 creates/min",B:"Max 10/min",C:"No limit"}, default:"A" },
+  { key:"alerts_audit_log", label:"13) Audit log", why:"Keep a local record.", options:{A:"Write jsonl to data/alerts_log.jsonl",B:"No"}, default:"A" },
+  { key:"alerts_entitlement_errors", label:"14) If not entitled", why:"What should UI do?", options:{A:"Show BLOCKED status + explanation",B:"Hide alerts UI",C:"Keep retrying"}, default:"A" },
+  { key:"start_coding_alerts", label:"15) Start coding Alerts block now?", why:"If yes, I’ll implement scaffold + probe hooks + dry-run payload builder.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
