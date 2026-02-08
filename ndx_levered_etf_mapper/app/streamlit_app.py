@@ -115,12 +115,22 @@ st.markdown(
   .ticker-tape .marquee {
     display: inline-block;
     padding-left: 100%;
-    animation: marquee 18s linear infinite;
+    animation: marquee 10s linear infinite; /* default = FAST */
   }
 
   @keyframes marquee {
     0% { transform: translateX(0); }
     100% { transform: translateX(-100%); }
+  }
+
+  .tape-item { margin-right: 14px; }
+  .tape-flash {
+    animation: tapePulse 0.9s ease-in-out infinite;
+  }
+  @keyframes tapePulse {
+    0% { opacity: 1.0; }
+    50% { opacity: 0.45; }
+    100% { opacity: 1.0; }
   }
 
   .neon-green { color: #33ffcc; text-shadow: 0 0 12px rgba(51,255,204,0.35); }
@@ -1640,23 +1650,40 @@ watch_syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()]
 watch_syms = watch_syms[:12]
 if watch_syms:
     bits = []
+    thr = 2.0  # decisions: flash threshold 2%
     for s in watch_syms:
         q = _schwab_quote(s)
         px = q.get("mark") or q.get("last")
+        netp = q.get("netPct")
+
         try:
             pxs = f"{float(px):,.2f}" if px not in (None, "") else "—"
         except Exception:
             pxs = str(px) if px is not None else "—"
-        bits.append(f"{s} ${pxs}")
+
+        try:
+            cps = f"{float(netp):+.2f}%" if netp == netp else "—"
+            v = float(netp)
+        except Exception:
+            cps = "—"
+            v = 0.0
+
+        col = "neon-green" if v > 0 else ("neon-red" if v < 0 else "muted")
+        flash = "tape-flash" if abs(v) >= thr else ""
+
+        bits.append(
+            f"<span class='tape-item {flash} {col}'><b>{s}</b> ${pxs} ({cps})</span>"
+        )
 
     st.markdown(
-        f"""
+        """
 <div class='ticker-tape'>
   <span class='marquee'>
-    <span class='neon-gold'>TAPE</span> • {'  •  '.join(bits)}
+    <span class='neon-gold'>TAPE</span> • %s
   </span>
 </div>
-""",
+"""
+        % ("  •  ".join(bits)),
         unsafe_allow_html=True,
     )
 
