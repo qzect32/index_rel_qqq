@@ -60,8 +60,55 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS, GET")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_GET(self):  # noqa: N802
+        if self.path in ("/status", "/status/"):
+            try:
+                latest = {}
+                p = _decisions_path(self.repo)
+                if p.exists():
+                    latest = json.loads(p.read_text(encoding="utf-8"))
+                    if not isinstance(latest, dict):
+                        latest = {}
+                self.send_response(200)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "latest": latest}, ensure_ascii=False, default=str).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self._cors()
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        if self.path in ("/schema", "/schema/"):
+            try:
+                repo_root = _root(self.repo)
+                schema_path = (repo_root / "data" / "decisions_inbox_schema.json").resolve()
+                obj = {}
+                if schema_path.exists():
+                    obj = json.loads(schema_path.read_text(encoding="utf-8"))
+                    if not isinstance(obj, dict):
+                        obj = {}
+                self.send_response(200)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "schema": obj}, ensure_ascii=False, default=str).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self._cors()
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        self.send_response(404)
+        self._cors()
+        self.end_headers()
+        self.wfile.write(b"not found")
 
     def do_OPTIONS(self):  # noqa: N802
         self.send_response(204)

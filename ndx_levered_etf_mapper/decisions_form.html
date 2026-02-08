@@ -5,15 +5,20 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Market Hub — Decisions Hub</title>
   <style>
-    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --ok:#33ffcc; --bad:#ff4d6d; }
+    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --ok:#33ffcc; --bad:#ff4d6d; --warn:#ffd166; --unread:#74c0fc; }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
     p { margin: 6px 0 12px; color: var(--muted); }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin: 12px 0; }
     .tabs { display:flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-    .tab { cursor:pointer; user-select:none; padding: 8px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,0.12); color: var(--muted); }
+    .tab { cursor:pointer; user-select:none; padding: 8px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,0.12); color: var(--muted); display:flex; gap:8px; align-items:center; }
     .tab.active { border-color: rgba(51,255,204,0.45); color: var(--text); background: rgba(51,255,204,0.08); }
+    .dot { width:10px; height:10px; border-radius:999px; background: rgba(255,255,255,0.20); border:1px solid rgba(255,255,255,0.16); }
+    .dot.green { background: rgba(51,255,204,0.40); border-color: rgba(51,255,204,0.65); }
+    .dot.orange { background: rgba(255,209,102,0.35); border-color: rgba(255,209,102,0.65); }
+    .dot.blue { background: rgba(116,192,252,0.35); border-color: rgba(116,192,252,0.70); }
+
     .q { font-weight: 700; margin: 10px 0 6px; }
     .why { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
     .opt { display:block; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; margin: 8px 0; }
@@ -26,15 +31,16 @@
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
     .pill.ok { border-color: rgba(51,255,204,0.45); color: var(--ok); }
     .pill.bad { border-color: rgba(255,77,109,0.45); color: var(--bad); }
-    input[type=text] { width: 240px; padding: 8px 10px; border-radius: 12px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); color: var(--text); }
+    input[type=text] { width: 280px; padding: 8px 10px; border-radius: 12px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.12); color: var(--text); }
+    .tiny { font-size: 12px; color: var(--muted); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Market Hub — Decisions Hub (Desktop)</h1>
     <p>
-      This version can <b>submit directly</b> to a local listener (no copy/paste) if you run it.
-      Listener URL default: <code>http://127.0.0.1:8765/submit</code>
+      Tabs poll the listener for updates.
+      Colors: <span class="dot blue"></span> unread update • <span class="dot green"></span> submitted/clean • <span class="dot orange"></span> edited but unsubmitted.
     </p>
 
     <div class="card">
@@ -43,8 +49,9 @@
         <label class="pill">Submit URL:</label>
         <input type="text" id="submitUrl" value="http://127.0.0.1:8765/submit" />
         <button id="ping">Ping</button>
+        <button id="reloadSchema">Reload schema</button>
       </div>
-      <p class="tiny">Run: <code>python scripts\decisions_listener.py --port 8765</code> from the repo.</p>
+      <p class="tiny">Listener also serves: <code>/status</code> and <code>/schema</code>. Run: <code>python scripts\decisions_listener.py --port 8765 --repo &lt;repo&gt;</code></p>
     </div>
 
     <div class="tabs" id="tabs"></div>
@@ -64,38 +71,39 @@
 <script>
 const BLOCK_TITLE = "Decisions Hub (desktop submit)";
 
-const CATS = [
-  { id:"dashboard", name:"Dashboard", items:[
-    {key:"dash_layout_cleanup", q:"1) Dashboard layout: too crowded?", opts:{A:"Keep",B:"Tighten spacing",C:"Add collapsible tiles"}, d:"B"},
-    {key:"dash_headlines_show_domain", q:"2) Headlines: show source domain?", opts:{A:"Yes",B:"No"}, d:"A"},
-    {key:"dash_why_moving_buttons", q:"3) Why-moving: add Prep buttons?", opts:{A:"Yes",B:"No"}, d:"A"},
-  ], notesKey:"dashboard_notes" },
+// Fallback schema if listener schema isn't available
+const FALLBACK_SCHEMA = {
+  version: 1,
+  categories: [
+    { id:"dashboard", name:"Dashboard", notesKey:"dashboard_notes", items:[
+      {key:"dash_layout_cleanup", q:"Dashboard layout: too crowded?", opts:{A:"Keep",B:"Tighten spacing",C:"Add collapsible tiles"}, default:"B"},
+      {key:"dash_headlines_show_domain", q:"Headlines: show source domain?", opts:{A:"Yes",B:"No"}, default:"A"},
+      {key:"dash_why_moving_buttons", q:"Why-moving: add Prep buttons?", opts:{A:"Yes",B:"No"}, default:"A"},
+    ]},
+    { id:"scanner", name:"Scanner", notesKey:"scanner_notes", items:[
+      {key:"scanner_related_auto", q:"Related headlines auto-fill: keep ON?", opts:{A:"Yes",B:"No"}, default:"A"},
+      {key:"scanner_focus_intel_default", q:"Focus intel default", opts:{A:"Expanded",B:"Collapsed"}, default:"A"},
+      {key:"scanner_perf", q:"Scanner performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, default:"B"},
+    ]},
+    { id:"signals", name:"Signals", notesKey:"signals_notes", items:[
+      {key:"signals_refresh", q:"Refresh interval", opts:{A:"60s",B:"120s",C:"300s"}, default:"B"},
+      {key:"signals_keep_news_small", q:"Keep small News section", opts:{A:"Yes",B:"No"}, default:"A"},
+      {key:"signals_keep_macro_collapsed", q:"Keep Macro collapsed", opts:{A:"Yes",B:"No"}, default:"A"},
+    ]},
+    { id:"wall", name:"Wall", notesKey:"wall_notes", items:[
+      {key:"wall_top_n", q:"Wall Top-N", opts:{A:"32",B:"50",C:"80"}, default:"A"},
+      {key:"wall_spark_budget", q:"Sparklines budget", opts:{A:"Visible tiles only",B:"Top 16",C:"Off"}, default:"A"},
+      {key:"wall_export", q:"Export default", opts:{A:"CSV",B:"PDF",C:"Both"}, default:"C"},
+    ]},
+    { id:"exposure", name:"Exposure", notesKey:"exposure_notes", items:[
+      {key:"exposure_balances_norm", q:"Add balances normalization now?", opts:{A:"Start",B:"Hold"}, default:"B"},
+      {key:"exposure_export_csv", q:"Add CSV export?", opts:{A:"Yes",B:"No"}, default:"A"},
+    ]},
+  ]
+};
 
-  { id:"scanner", name:"Scanner", items:[
-    {key:"scanner_related_auto", q:"1) Related headlines auto-fill: keep ON?", opts:{A:"Yes",B:"No"}, d:"A"},
-    {key:"scanner_focus_intel_default", q:"2) Focus intel default", opts:{A:"Expanded",B:"Collapsed"}, d:"A"},
-    {key:"scanner_perf", q:"3) Scanner performance posture", opts:{A:"Conservative",B:"Normal",C:"Aggressive"}, d:"B"},
-  ], notesKey:"scanner_notes" },
-
-  { id:"signals", name:"Signals", items:[
-    {key:"signals_refresh", q:"1) Refresh interval", opts:{A:"60s",B:"120s",C:"300s"}, d:"B"},
-    {key:"signals_keep_news_small", q:"2) Keep small News section", opts:{A:"Yes",B:"No"}, d:"A"},
-    {key:"signals_keep_macro_collapsed", q:"3) Keep Macro collapsed", opts:{A:"Yes",B:"No"}, d:"A"},
-  ], notesKey:"signals_notes" },
-
-  { id:"wall", name:"Wall", items:[
-    {key:"wall_top_n", q:"1) Wall Top-N", opts:{A:"32",B:"50",C:"80"}, d:"A"},
-    {key:"wall_spark_budget", q:"2) Sparklines budget", opts:{A:"Visible tiles only",B:"Top 16",C:"Off"}, d:"A"},
-    {key:"wall_export", q:"3) Export default", opts:{A:"CSV",B:"PDF",C:"Both"}, d:"C"},
-  ], notesKey:"wall_notes" },
-
-  { id:"exposure", name:"Exposure", items:[
-    {key:"exposure_balances_norm", q:"1) Add balances normalization now?", opts:{A:"Start",B:"Hold"}, d:"B"},
-    {key:"exposure_export_csv", q:"2) Add CSV export?", opts:{A:"Yes",B:"No"}, d:"A"},
-  ], notesKey:"exposure_notes" },
-];
-
-let active = CATS[0].id;
+let schema = FALLBACK_SCHEMA;
+let active = schema.categories[0].id;
 
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
@@ -111,54 +119,129 @@ function el(tag, attrs={}, children=[]) {
   return e;
 }
 
-function renderTabs(){
+function statusPill(ok, msg){
+  const e=document.getElementById('status');
+  e.className = `pill ${ok?'ok':'bad'}`;
+  e.textContent = msg;
+}
+
+function catStateKey(catId){ return `mh_decisions_state_${catId}`; }
+function catSeenKey(catId){ return `mh_decisions_seen_${catId}`; }
+
+function getLocalCatState(catId){
+  try{ return JSON.parse(localStorage.getItem(catStateKey(catId))||'{}'); }catch(e){ return {}; }
+}
+function setLocalCatState(catId, obj){
+  try{ localStorage.setItem(catStateKey(catId), JSON.stringify(obj||{})); }catch(e){}
+}
+function getSeenStamp(catId){
+  try{ return localStorage.getItem(catSeenKey(catId)) || ""; }catch(e){ return ""; }
+}
+function setSeenStamp(catId, stamp){
+  try{ localStorage.setItem(catSeenKey(catId), stamp||""); }catch(e){}
+}
+
+function computeDotClass(catId, latestCat){
+  // orange = local dirty vs last submitted
+  const local = gatherCategory(catId);
+  const last = getLocalCatState(catId); // last submitted snapshot
+  const localBlob = JSON.stringify(local);
+  const lastBlob = JSON.stringify(last);
+  if(localBlob !== lastBlob){
+    return 'orange';
+  }
+
+  // blue = listener has newer unseen category
+  const seen = getSeenStamp(catId);
+  const stamp = (latestCat && latestCat._received_at) ? String(latestCat._received_at) : "";
+  if(stamp && stamp !== seen){
+    return 'blue';
+  }
+
+  // green = clean
+  return 'green';
+}
+
+function renderTabs(latest){
   const root=document.getElementById('tabs');
   root.innerHTML='';
-  for(const c of CATS){
-    const t=el('div',{class:`tab ${c.id===active?'active':''}`}, c.name);
-    t.onclick=()=>{active=c.id; renderTabs(); renderPanel();};
+  for(const c of schema.categories){
+    const latestCat = (latest && latest.categories && latest.categories[c.id]) ? latest.categories[c.id] : null;
+    const dot = el('span',{class:`dot ${computeDotClass(c.id, latest)}`});
+    const t=el('div',{class:`tab ${c.id===active?'active':''}`}, [dot, c.name]);
+    t.onclick=()=>{ active=c.id; renderTabs(latest); renderPanel(latest); markSeen(c.id, latest); };
     root.appendChild(t);
   }
 }
 
-function renderPanel(){
-  const c=CATS.find(x=>x.id===active);
+function markSeen(catId, latest){
+  try{
+    if(latest && latest._received_at){
+      setSeenStamp(catId, String(latest._received_at));
+    }
+  }catch(e){}
+}
+
+function renderPanel(latest){
+  const c=schema.categories.find(x=>x.id===active);
   const root=document.getElementById('panel');
   root.innerHTML='';
   const card=el('div',{class:'card'});
-  card.appendChild(el('div',{class:'q'}, `${c.name} — quick decisions`));
-  card.appendChild(el('div',{class:'why'}, `~${c.items.length} items + freeform. Defaults carry forward.`));
+  card.appendChild(el('div',{class:'q'}, `${c.name} — decisions`));
+  card.appendChild(el('div',{class:'why'}, `Edits mark orange until you Submit. New listener updates mark blue until you open the tab.`));
 
+  // Build questions
   c.items.forEach((it)=>{
     const q=el('div',{class:'q'}, it.q);
     card.appendChild(q);
     const group=`q_${c.id}_${it.key}`;
+
+    // restore draft from localStorage (if present)
+    const draft = getDraftValue(c.id, it.key);
+
     Object.entries(it.opts).forEach(([k,txt])=>{
       const id=`${group}_${k}`;
       const input=el('input',{type:'radio',name:group,id,value:k});
-      if(k===it.d) input.checked=true;
+      const initial = draft || it.default;
+      if(k===initial) input.checked=true;
+      input.onchange = ()=>{ setDraftValue(c.id, it.key, k); };
       const lab=el('label',{class:'opt',for:id}, [input, `${k}) ${txt}`]);
       card.appendChild(lab);
     });
   });
 
-  card.appendChild(el('div',{class:'q'}, 'Freeform suggestions / ideas (optional)'));
-  const ta=el('textarea',{id:`notes_${c.id}`, placeholder:`Dump ideas for ${c.name} here...`});
+  card.appendChild(el('div',{class:'q'}, 'Notes / ideas (optional)'));
+  const taId=`notes_${c.id}`;
+  const ta=el('textarea',{id:taId, placeholder:`Dump ideas for ${c.name} here...`});
+  ta.value = getDraftNotes(c.id);
+  ta.oninput = ()=> setDraftNotes(c.id, ta.value);
   card.appendChild(ta);
+
   root.appendChild(card);
 }
 
-function gather(){
+function draftKey(catId, key){ return `mh_decisions_draft_${catId}_${key}`; }
+function notesDraftKey(catId){ return `mh_decisions_draft_notes_${catId}`; }
+function getDraftValue(catId, key){ try{ return localStorage.getItem(draftKey(catId,key))||""; }catch(e){ return ""; } }
+function setDraftValue(catId, key, val){ try{ localStorage.setItem(draftKey(catId,key), val); }catch(e){} }
+function getDraftNotes(catId){ try{ return localStorage.getItem(notesDraftKey(catId))||""; }catch(e){ return ""; } }
+function setDraftNotes(catId, val){ try{ localStorage.setItem(notesDraftKey(catId), val||""); }catch(e){} }
+
+function gatherCategory(catId){
+  const c=schema.categories.find(x=>x.id===catId);
+  const cat={};
+  for(const it of c.items){
+    const sel=document.querySelector(`input[name='q_${c.id}_${it.key}']:checked`);
+    cat[it.key]= sel ? sel.value : (getDraftValue(c.id,it.key) || it.default);
+  }
+  cat[c.notesKey] = (document.getElementById(`notes_${c.id}`)?.value) || getDraftNotes(c.id) || "";
+  return cat;
+}
+
+function gatherAll(){
   const out={_updated_at:new Date().toISOString(), _block: BLOCK_TITLE, categories:{}};
-  for(const c of CATS){
-    const cat={};
-    for(const it of c.items){
-      const sel=document.querySelector(`input[name='q_${c.id}_${it.key}']:checked`);
-      cat[it.key]= sel ? sel.value : it.d;
-    }
-    const ta=document.getElementById(`notes_${c.id}`);
-    cat[c.notesKey]= ta ? (ta.value||'') : '';
-    out.categories[c.id]=cat;
+  for(const c of schema.categories){
+    out.categories[c.id]=gatherCategory(c.id);
   }
   return out;
 }
@@ -169,51 +252,107 @@ function setOut(obj){
   return s;
 }
 
-function status(ok, msg){
-  const elx=document.getElementById('status');
-  elx.className = `pill ${ok?'ok':'bad'}`;
-  elx.textContent = msg;
+function baseUrl(){
+  const submitUrl=document.getElementById('submitUrl').value.trim();
+  return submitUrl.replace(/\/+submit\/?$/,'');
 }
 
 async function ping(){
   const url=document.getElementById('submitUrl').value;
   try{
-    // OPTIONS preflight acts as a ping
     await fetch(url,{method:'OPTIONS'});
-    status(true, 'Listener: reachable');
+    statusPill(true, 'Listener: reachable');
+    return true;
   }catch(e){
-    status(false, 'Listener: not reachable');
+    statusPill(false, 'Listener: not reachable');
+    return false;
+  }
+}
+
+async function fetchStatus(){
+  const ok=await ping();
+  if(!ok) return null;
+  const url = baseUrl() + '/status';
+  try{
+    const r=await fetch(url,{method:'GET'});
+    const j=await r.json();
+    return (j && j.ok) ? j.latest : null;
+  }catch(e){
+    return null;
+  }
+}
+
+async function fetchSchema(){
+  const ok=await ping();
+  if(!ok) return null;
+  const url = baseUrl() + '/schema';
+  try{
+    const r=await fetch(url,{method:'GET'});
+    const j=await r.json();
+    if(j && j.ok && j.schema && j.schema.categories){
+      return j.schema;
+    }
+    return null;
+  }catch(e){
+    return null;
   }
 }
 
 async function submit(){
   const url=document.getElementById('submitUrl').value;
-  const payload=gather();
+  const payload=gatherAll();
   setOut(payload);
   try{
     const r=await fetch(url,{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const j=await r.json().catch(()=>({}));
     if(r.ok && j.ok){
-      status(true, 'Submitted ✅ saved decisions.json');
+      statusPill(true, 'Submitted ✅ saved decisions.json');
+      // mark local categories as submitted
+      for(const c of schema.categories){
+        setLocalCatState(c.id, gatherCategory(c.id));
+        // consider the just-submitted payload as seen
+        setSeenStamp(c.id, payload._updated_at);
+      }
     }else{
-      status(false, 'Submit failed: ' + (j.error||r.status));
-      alert('Submit failed. See status; you can still Download decisions.json.');
+      statusPill(false, 'Submit failed: ' + (j.error||r.status));
+      alert('Submit failed. You can still Download decisions.json.');
     }
   }catch(e){
-    status(false, 'Submit failed (listener down)');
+    statusPill(false, 'Submit failed (listener down)');
     alert('Submit failed (listener down). Run decisions_listener.py or use Download.');
   }
 }
 
-document.getElementById('gen').onclick=()=>setOut(gather());
-document.getElementById('copy').onclick=async ()=>{
-  const s=document.getElementById('out').textContent;
+async function refreshLoop(){
+  const latest = await fetchStatus();
+  renderTabs(latest);
+  renderPanel(latest);
+  // don’t overwrite drafts on poll
+}
+
+async function loadSchemaAndRefresh(){
+  const s = await fetchSchema();
+  if(s){
+    schema = s;
+    if(!schema.categories || !schema.categories.length){ schema = FALLBACK_SCHEMA; }
+    active = schema.categories[0].id;
+  }
+  await refreshLoop();
+}
+
+// Buttons
+
+document.getElementById('reloadSchema').onclick = loadSchemaAndRefresh;
+document.getElementById('submit').onclick = submit;
+document.getElementById('gen').onclick = ()=>setOut(gatherAll());
+document.getElementById('copy').onclick = async ()=>{
+  const s=document.getElementById('out').textContent || JSON.stringify(gatherAll(),null,2);
   try{ await navigator.clipboard.writeText(s); alert('Copied.'); }
   catch(e){ alert('Copy failed. Use Download.'); }
 };
 
-document.getElementById('download').onclick=()=>{
-  const s=document.getElementById('out').textContent || JSON.stringify(gather(),null,2);
+document.getElementById('download').onclick = ()=>{
+  const s=document.getElementById('out').textContent || JSON.stringify(gatherAll(),null,2);
   const blob=new Blob([s],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
@@ -224,12 +363,14 @@ document.getElementById('download').onclick=()=>{
   setTimeout(()=>URL.revokeObjectURL(a.href), 2500);
 };
 
-document.getElementById('submit').onclick=submit;
-document.getElementById('ping').onclick=ping;
+document.getElementById('ping').onclick = refreshLoop;
 
-renderTabs();
-renderPanel();
-ping();
+// Start
+loadSchemaAndRefresh();
+setInterval(async ()=>{
+  const latest = await fetchStatus();
+  renderTabs(latest);
+}, 3000);
 </script>
 </body>
 </html>
