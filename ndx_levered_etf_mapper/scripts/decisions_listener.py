@@ -1,4 +1,4 @@
-"""Local Decisions Listener (no copy/paste).
+r"""Local Decisions Listener (no copy/paste).
 
 Runs a tiny HTTP server on localhost that accepts POST /submit with JSON body.
 Writes the payload to data/decisions.json and appends to data/decisions_log.jsonl.
@@ -6,6 +6,9 @@ Writes the payload to data/decisions.json and appends to data/decisions_log.json
 Usage (PowerShell):
   cd <repo>
   python scripts\decisions_listener.py --port 8765
+
+Or run from anywhere:
+  python scripts\decisions_listener.py --port 8765 --repo <repo>
 
 Then open decisions_form.html and click Submit.
 
@@ -21,30 +24,40 @@ from pathlib import Path
 import time
 
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data"
+def _root(repo: str | None) -> Path:
+    if repo:
+        return Path(repo).resolve()
+    return Path(__file__).resolve().parents[1]
 
 
-def _decisions_path() -> Path:
-    return DATA / "decisions.json"
+def _data_dir(repo: str | None) -> Path:
+    return (_root(repo) / "data").resolve()
 
 
-def _log_path() -> Path:
-    return DATA / "decisions_log.jsonl"
+def _decisions_path(repo: str | None) -> Path:
+    return _data_dir(repo) / "decisions.json"
 
 
-def _write_latest(obj: dict) -> None:
-    DATA.mkdir(parents=True, exist_ok=True)
-    _decisions_path().write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+def _log_path(repo: str | None) -> Path:
+    return _data_dir(repo) / "decisions_log.jsonl"
 
 
-def _append_log(obj: dict) -> None:
-    DATA.mkdir(parents=True, exist_ok=True)
-    with _log_path().open("a", encoding="utf-8") as f:
+def _write_latest(obj: dict, *, repo: str | None) -> None:
+    d = _data_dir(repo)
+    d.mkdir(parents=True, exist_ok=True)
+    _decisions_path(repo).write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _append_log(obj: dict, *, repo: str | None) -> None:
+    d = _data_dir(repo)
+    d.mkdir(parents=True, exist_ok=True)
+    with _log_path(repo).open("a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
 
 
 class Handler(BaseHTTPRequestHandler):
+    repo: str | None = None
+
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -78,8 +91,8 @@ class Handler(BaseHTTPRequestHandler):
 
         obj.setdefault("_received_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
         try:
-            _write_latest(obj)
-            _append_log(obj)
+            _write_latest(obj, repo=self.repo)
+            _append_log(obj, repo=self.repo)
         except Exception as e:
             self.send_response(500)
             self._cors()
@@ -95,8 +108,8 @@ class Handler(BaseHTTPRequestHandler):
             json.dumps(
                 {
                     "ok": True,
-                    "saved": str(_decisions_path()),
-                    "logged": str(_log_path()),
+                    "saved": str(_decisions_path(self.repo)),
+                    "logged": str(_log_path(self.repo)),
                 }
             ).encode("utf-8")
         )
@@ -105,11 +118,15 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--repo", type=str, default="", help="Path to repo root (where data/ lives)")
     args = ap.parse_args()
+
+    Handler.repo = (args.repo or "").strip() or None
 
     srv = HTTPServer(("127.0.0.1", int(args.port)), Handler)
     print(f"Decisions Listener running on http://127.0.0.1:{args.port}/submit")
-    print(f"Writes: { _decisions_path() }")
+    print(f"Repo: {_root(Handler.repo)}")
+    print(f"Writes: {_decisions_path(Handler.repo)}")
     srv.serve_forever()
     return 0
 
