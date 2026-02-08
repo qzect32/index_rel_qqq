@@ -47,25 +47,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Focus intel polish: links + better matching + pinned freeze";
-const BLOCK_NOTE = "Now that Focus intel exists, decide how links and matching should behave (still 15 questions).";
+const BLOCK_TITLE = "Dashboard headlines tile (from RSS) + 'why moving' quick view";
+const BLOCK_NOTE = "Now that RSS is wired, decide how Dashboard should surface headlines and whether to pin by symbol.";
 
 const DECISIONS = [
-  { key:"intel_news_match_strict", label:"1) News match strictness", why:"Regex ticker match can overmatch common words.", options:{A:"Ticker only ($SYM or word boundary)",B:"Ticker + exchange suffix (e.g., SYM.O)",C:"Manual allowlist"}, default:"A" },
-  { key:"intel_news_dedupe", label:"2) Deduplicate headlines", why:"Same headline from multiple feeds.", options:{A:"By title",B:"By link",C:"No dedupe"}, default:"A" },
-  { key:"intel_show_links", label:"3) Show clickable links", why:"Open the article in browser.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"intel_open_news_tab", label:"4) News tab integration", why:"Let Focus set a filter on News tab.", options:{A:"Yes (set session filter)",B:"No"}, default:"A" },
-  { key:"intel_open_earnings_tab", label:"5) Earnings tab integration", why:"Let Focus open the latest report automatically.", options:{A:"Yes (set session selection)",B:"No"}, default:"A" },
-  { key:"intel_pin_freeze", label:"6) Pinned behavior", why:"You picked freeze when pinned.", options:{A:"Freeze until unpinned",B:"Refresh every 5 min even when pinned"}, default:"A" },
-  { key:"intel_cache_ttl", label:"7) Cache TTL", why:"How often to rebuild intel.", options:{A:"30s",B:"60s",C:"120s"}, default:"B" },
-  { key:"intel_render_mode", label:"8) Render mode", why:"Compact vs detailed.", options:{A:"Compact bullets",B:"Detailed tables",C:"Both"}, default:"C" },
-  { key:"intel_halts_detail", label:"9) Halts detail", why:"How much to show.", options:{A:"Reason + resume time",B:"Full row json",C:"Just badge"}, default:"A" },
-  { key:"intel_filings_detail", label:"10) Filings detail", why:"Show score and open report.", options:{A:"Score + buttons",B:"Inline report.md",C:"Just badge"}, default:"A" },
-  { key:"intel_export", label:"11) Export formats", why:"You currently export markdown.", options:{A:"Markdown only",B:"Markdown + JSON",C:"None"}, default:"A" },
-  { key:"intel_errors", label:"12) Error display", why:"If cache read fails.", options:{A:"Silent",B:"Show small warning",C:"Raise error"}, default:"B" },
-  { key:"intel_limit_news", label:"13) News items count", why:"Keep it tight.", options:{A:"3",B:"5",C:"10"}, default:"A" },
-  { key:"intel_limit_reports", label:"14) Reports count", why:"How many reports to list.", options:{A:"1 latest",B:"3 latest",C:"10 latest"}, default:"A" },
-  { key:"start_coding_intel_polish", label:"15) Start coding this polish block now?", why:"If yes, I’ll add real links + News/Earnings tab integration + better matching.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"dash_headlines_enable", label:"1) Enable Dashboard headlines tile?", why:"Shows latest RSS headlines without going to News tab.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"dash_headlines_mode", label:"2) Headlines mode", why:"What should it show?", options:{A:"Latest overall",B:"Filtered to main ticker",C:"Filtered to Focus"}, default:"A" },
+  { key:"dash_headlines_count", label:"3) Headline count", why:"Keep it readable.", options:{A:"5",B:"10",C:"15"}, default:"B" },
+  { key:"dash_headlines_links", label:"4) Clickable links", why:"Open article directly.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"dash_headlines_dedupe", label:"5) Deduplicate", why:"Same headline across feeds.", options:{A:"By title",B:"By link",C:"No"}, default:"A" },
+  { key:"dash_headlines_refresh", label:"6) Refresh behavior", why:"Uses cached RSS.", options:{A:"Use cache only",B:"Force refresh on Dashboard"}, default:"A" },
+  { key:"dash_why_moving_enable", label:"7) Add 'Why moving' mini tile?", why:"One-liner from Focus intel sources.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"dash_why_moving_symbol", label:"8) Which symbol?", why:"Source for the mini tile.", options:{A:"Main ticker",B:"Scanner Focus",C:"Both"}, default:"A" },
+  { key:"dash_why_moving_sources", label:"9) Sources", why:"What feeds drive it.", options:{A:"Halts + Filings + News",B:"News only",C:"Filings only"}, default:"A" },
+  { key:"dash_why_moving_detail", label:"10) Detail level", why:"How verbose.", options:{A:"1 line",B:"3 bullets",C:"Inline table"}, default:"B" },
+  { key:"dash_why_moving_export", label:"11) Export", why:"Local record.", options:{A:"None",B:"Markdown",C:"JSON"}, default:"A" },
+  { key:"dash_layout", label:"12) Where place tiles", why:"Dashboard is crowded.", options:{A:"Replace old Headlines placeholder",B:"New row under highlights",C:"Sidebar only"}, default:"A" },
+  { key:"dash_guardrails", label:"13) Guardrails", why:"Avoid extra API calls.", options:{A:"No extra calls (cache only)",B:"Allow refresh button"}, default:"A" },
+  { key:"dash_notes", label:"14) Notes field", why:"Quick notes.", options:{A:"Keep manual notes area",B:"Remove"}, default:"A" },
+  { key:"start_coding_dash_headlines", label:"15) Start coding this Dashboard headlines block now?", why:"If yes, I’ll wire the tile(s) into Dashboard.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
