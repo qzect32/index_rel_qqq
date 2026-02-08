@@ -2739,7 +2739,7 @@ with tab_scanner:
                 except Exception:
                     pass
 
-                # News (cached RSS) — match $SYM or word boundary
+                # News (cached RSS) — match $SYM or word boundary; dedupe by title
                 try:
                     p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
                     if p.exists():
@@ -2751,6 +2751,9 @@ with tab_scanner:
                             pat = rf"(\${focus_sym}\b|\b{focus_sym}\b)"
                             m = titles.str.upper().str.contains(pat, regex=True, na=False)
                             hits = dfn[m].copy()
+                            if not hits.empty:
+                                hits["title_norm"] = hits["title"].astype(str).str.strip().str.lower()
+                                hits = hits.drop_duplicates(subset=["title_norm"], keep="first")
                             if "published_ts" in hits.columns:
                                 hits["published_ts"] = pd.to_datetime(hits["published_ts"], errors="coerce", utc=True)
                                 hits = hits.sort_values("published_ts", ascending=False)
@@ -2783,20 +2786,27 @@ with tab_scanner:
                     if intel.get("halts"):
                         h = intel.get("halts") or {}
                         st.error(f"HALT: {h.get('reason','')} ({h.get('market','')})")
-                        st.write({k: h.get(k) for k in ["halt_time_et", "resume_time_et", "reason", "market"] if k in h})
+                        st.caption(f"Resume: {h.get('resume_time_et','')}  |  Halted: {h.get('halt_time_et','')}")
                         md_lines.append("## HALT")
-                        md_lines.append(str(h))
+                        md_lines.append(json.dumps({k: h.get(k) for k in ["reason", "market", "halt_time_et", "resume_time_et"]}, indent=2, default=str))
                         md_lines.append("")
 
                     f = intel.get("filings")
                     if isinstance(f, dict):
                         st.warning("FILINGS: recent report")
-                        st.write({k: f.get(k) for k in ["score", "current", "baseline", "report_md"] if k in f})
+                        st.write({k: f.get(k) for k in ["score", "current", "baseline"] if k in f})
+
+                        bA, bB = st.columns([0.55, 0.45])
+                        if bA.button("Prep News tab filter", key=f"intel_news_btn_{focus_sym}"):
+                            st.session_state["news_filter_symbol"] = focus_sym
+                            st.toast("News filter set (open News tab)")
+                        if bB.button("Prep Earnings tab", key=f"intel_earnings_btn_{focus_sym}"):
+                            st.session_state["earnings_sym"] = focus_sym
+                            st.toast("Earnings symbol set (open Earnings tab)")
+
                         md_lines.append("## FILINGS")
                         md_lines.append(json.dumps({k: f.get(k) for k in ["score", "current", "baseline", "report_md"]}, indent=2, default=str))
                         md_lines.append("")
-                        # link-out: hint
-                        st.caption("Link-out: open the News tab for headlines; open the Earnings tab for reports.")
 
                     news = intel.get("news")
                     if isinstance(news, list) and news:
@@ -2804,11 +2814,17 @@ with tab_scanner:
                         for r in news[:3]:
                             if not isinstance(r, dict):
                                 continue
-                            st.write(f"- {r.get('published','')} — {r.get('title','')}")
+                            title = str(r.get("title", ""))
+                            link = str(r.get("link", ""))
+                            pub = str(r.get("published", ""))
+                            if link:
+                                st.markdown(f"- {pub} — [{title}]({link})")
+                            else:
+                                st.write(f"- {pub} — {title}")
                         md_lines.append("## NEWS")
                         for r in news[:3]:
                             if isinstance(r, dict):
-                                md_lines.append(f"- {r.get('published','')} — {r.get('title','')}")
+                                md_lines.append(f"- {r.get('published','')} — {r.get('title','')} ({r.get('link','')})")
                         md_lines.append("")
 
                     md_blob = "\n".join(md_lines)
@@ -3595,7 +3611,31 @@ with tab_news:
         show = nd.copy()
         if "published_ts" in show.columns:
             show = show.sort_values("published_ts", ascending=False)
-        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]].head(50), use_container_width=True, height=520, hide_index=True)
+
+        # Optional focus filter (set from Scanner Focus intel)
+        st.session_state.setdefault("news_filter_symbol", "")
+        fs = str(st.session_state.get("news_filter_symbol") or "").upper().strip()
+        if fs:
+            try:
+                pat = rf"(\${fs}\b|\b{fs}\b)"
+                m = show["title"].astype(str).str.upper().str.contains(pat, regex=True, na=False)
+                show = show[m].copy()
+                st.caption(f"Filter: {fs} (set from Scanner Focus intel)")
+                if st.button("Clear filter", key="news_clear_filter"):
+                    st.session_state["news_filter_symbol"] = ""
+                    st.rerun()
+            except Exception:
+                pass
+
+        # Dedupe by title
+        try:
+            show["title_norm"] = show["title"].astype(str).str.strip().str.lower()
+            show = show.drop_duplicates(subset=["title_norm"], keep="first")
+        except Exception:
+            pass
+
+        show = show.head(50)
+        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]], use_container_width=True, height=520, hide_index=True)
 
         # Ticker detection (simple regex)
         import re
@@ -3638,7 +3678,9 @@ with tab_earnings:
         st.info("Earnings calendar via Schwab/TOS endpoints is not wired yet. Next step: endpoint discovery.")
 
         st.markdown("### Filings (SEC EDGAR)")
-        sym = st.text_input("Symbol", value=selected, key="earnings_sym").upper().strip()
+        # Allow Scanner Focus intel to pre-select symbol
+        st.session_state.setdefault("earnings_sym", selected)
+        sym = st.text_input("Symbol", value=str(st.session_state.get("earnings_sym") or selected), key="earnings_sym").upper().strip()
 
         # Recent reports list (from watcher and manual runs)
         st.markdown("#### Recent reports")
