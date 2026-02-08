@@ -1,59 +1,55 @@
 {
-  "version": 11,
+  "version": 12,
   "title": "Decisions Hub (desktop submit)",
-  "note": "Batch 9: Performance + guardrails (budgets, caching, backoff, failure modes). TODO triage injected dynamically.",
+  "note": "Batch 10: Feed quality (News + Halts + Filings/EDGAR + Macro). TODO triage injected dynamically.",
   "categories": [
     {
-      "id": "guardrails9",
-      "name": "Guardrails — batch 9",
-      "notesKey": "guardrails9_notes",
+      "id": "news_quality10",
+      "name": "News quality — batch 10",
+      "notesKey": "news_quality10_notes",
       "items": [
-        {"key": "budget_global_calls_per_min", "q": "Set a global API call budget per minute (hard cap)?", "opts": {"A": "Yes (hard cap)", "B": "Soft cap (warn + degrade)", "C": "No cap"}, "default": "B"},
-        {"key": "budget_degrade_strategy", "q": "When budget is exceeded, degrade strategy", "opts": {"A": "Skip lowest-priority sections", "B": "Increase refresh intervals", "C": "Freeze updates and show warning"}, "default": "A"},
-        {"key": "budget_priority_order", "q": "Priority order under load", "opts": {"A": "Scanner > Wall > Signals > News", "B": "Signals > Scanner > Wall > News", "C": "Wall > Scanner > Signals > News"}, "default": "A"},
-        {"key": "fail_open_or_hide", "q": "If a feed fails, UI should", "opts": {"A": "Fail open (show stale + error)", "B": "Hide the section"}, "default": "A"},
-        {"key": "retry_policy", "q": "Retry policy for failing feeds", "opts": {"A": "Exponential backoff + jitter", "B": "Fixed interval", "C": "No retries (manual only)"}, "default": "A"},
-        {"key": "circuit_breaker", "q": "Enable circuit breaker (stop calling a feed for N minutes after repeated failures)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "circuit_breaker_minutes", "q": "Circuit breaker cooldown (minutes)", "opts": {"A": "2", "B": "5", "C": "15"}, "default": "B"},
-        {"key": "cache_policy", "q": "Default caching posture", "opts": {"A": "Aggressive (prefer cached)", "B": "Balanced", "C": "Fresh-first"}, "default": "B"},
-        {"key": "cache_ttl_default", "q": "Default cache TTL", "opts": {"A": "30s", "B": "60s", "C": "120s"}, "default": "B"},
-        {"key": "telemetry_enabled", "q": "Enable lightweight telemetry (latency, call counts, cache hits) to a local debug panel", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "start_coding_guardrails_batch9", "q": "Start coding Guardrails batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "news_source_strategy", "q": "News sources strategy", "opts": {"A": "Few high-quality sources", "B": "Broad coverage"}, "default": "A"},
+        {"key": "news_dedupe_strategy", "q": "Dedupe strategy", "opts": {"A": "By URL only", "B": "By (title+domain) fuzzy", "C": "By (title+symbol) fuzzy"}, "default": "B"},
+        {"key": "news_summary_policy", "q": "Summary/snippet policy", "opts": {"A": "Show if available", "B": "Generate locally (best-effort)", "C": "No snippets"}, "default": "A"},
+        {"key": "news_low_quality_list_owner", "q": "Low-quality sources list should be", "opts": {"A": "Hardcoded + occasional edits", "B": "User-editable in UI", "C": "Auto-learned over time"}, "default": "B"},
+        {"key": "news_error_visibility", "q": "When a news fetch fails", "opts": {"A": "Show inline error row", "B": "Hide failure unless > threshold", "C": "Only show in debug panel"}, "default": "B"},
+        {"key": "start_coding_news_quality_batch10", "q": "Start coding News quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "scanner_perf9",
-      "name": "Scanner perf — batch 9",
-      "notesKey": "scanner_perf9_notes",
+      "id": "halts_quality10",
+      "name": "Halts quality — batch 10",
+      "notesKey": "halts_quality10_notes",
       "items": [
-        {"key": "scanner_poll_interval", "q": "Scanner poll interval default", "opts": {"A": "2s", "B": "5s", "C": "10s"}, "default": "B"},
-        {"key": "scanner_focus_prefetch", "q": "Focus view: prefetch intel in background (halts/filings/news)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_prefetch_cap", "q": "Prefetch cap per minute", "opts": {"A": "Low", "B": "Medium", "C": "High"}, "default": "B"},
-        {"key": "scanner_stale_ok", "q": "If quotes are stale, allow UI to keep showing (with warning) instead of blanking", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "start_coding_scanner_perf_batch9", "q": "Start coding Scanner perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "halts_time_window", "q": "Show resumed halts within", "opts": {"A": "30m", "B": "2h", "C": "Today"}, "default": "B"},
+        {"key": "halts_grouping", "q": "Halts grouping", "opts": {"A": "By symbol", "B": "By time", "C": "By reason"}, "default": "A"},
+        {"key": "halts_highlight_rules", "q": "Highlight rules", "opts": {"A": "Active only", "B": "Active + just resumed", "C": "Active + resumed + repeated"}, "default": "B"},
+        {"key": "halts_alert_policy", "q": "Alerts policy", "opts": {"A": "No alerts", "B": "Alert on new halt", "C": "Alert on halt + resume"}, "default": "B"},
+        {"key": "start_coding_halts_quality_batch10", "q": "Start coding Halts quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "wall_perf9",
-      "name": "Wall perf — batch 9",
-      "notesKey": "wall_perf9_notes",
+      "id": "filings_quality10",
+      "name": "Filings/EDGAR quality — batch 10",
+      "notesKey": "filings_quality10_notes",
       "items": [
-        {"key": "wall_refresh_strategy", "q": "Wall refresh strategy", "opts": {"A": "Staggered per-tile", "B": "Global tick"}, "default": "A"},
-        {"key": "wall_max_tiles", "q": "Max tiles shown (cap)", "opts": {"A": "32", "B": "50", "C": "80"}, "default": "B"},
-        {"key": "wall_sparkline_budget", "q": "Sparkline budget", "opts": {"A": "Visible tiles only", "B": "Top 16", "C": "Off under load"}, "default": "A"},
-        {"key": "wall_degrade_under_load", "q": "Under load, Wall should", "opts": {"A": "Disable sparklines", "B": "Increase refresh interval", "C": "Reduce tiles"}, "default": "A"},
-        {"key": "start_coding_wall_perf_batch9", "q": "Start coding Wall perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "filings_universe", "q": "Filings universe", "opts": {"A": "Main ticker only", "B": "Watchlist + main", "C": "Market-wide (capped)"}, "default": "B"},
+        {"key": "filings_forms_focus", "q": "Forms to prioritize", "opts": {"A": "8-K/10-Q/10-K", "B": "Include DEF 14A/13D/13G", "C": "All forms"}, "default": "B"},
+        {"key": "filings_diff_mode", "q": "EDGAR diff mode", "opts": {"A": "Section-level (risk factors/MD&A)", "B": "Whole-doc hash (simple)", "C": "No diff"}, "default": "A"},
+        {"key": "filings_score_threshold", "q": "Badge/notify threshold", "opts": {"A": "Score ≥10", "B": "Score ≥5", "C": "Any"}, "default": "B"},
+        {"key": "start_coding_filings_quality_batch10", "q": "Start coding Filings quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "signals_perf9",
-      "name": "Signals perf — batch 9",
-      "notesKey": "signals_perf9_notes",
+      "id": "macro_quality10",
+      "name": "Macro quality — batch 10",
+      "notesKey": "macro_quality10_notes",
       "items": [
-        {"key": "signals_refresh_default", "q": "Signals refresh default", "opts": {"A": "Manual only", "B": "30s", "C": "60s"}, "default": "C"},
-        {"key": "signals_section_refresh", "q": "Refresh controls", "opts": {"A": "Per-section buttons", "B": "Global refresh button", "C": "No buttons"}, "default": "B"},
-        {"key": "signals_hide_blocked_default", "q": "Hide BLOCKED sections by default", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "start_coding_signals_perf_batch9", "q": "Start coding Signals perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "macro_sources", "q": "Macro sources", "opts": {"A": "Fed RSS only", "B": "Fed RSS + calendar events", "C": "Add curated headlines"}, "default": "B"},
+        {"key": "macro_relevance_filter", "q": "Relevance filtering", "opts": {"A": "Show everything", "B": "Show high-signal only", "C": "Two-tier (important + misc)"}, "default": "C"},
+        {"key": "macro_event_countdown", "q": "Event countdown widgets", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "macro_max_items", "q": "Max macro items shown", "opts": {"A": "3", "B": "5", "C": "10"}, "default": "B"},
+        {"key": "start_coding_macro_quality_batch10", "q": "Start coding Macro quality batch 10 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     }
   ]
