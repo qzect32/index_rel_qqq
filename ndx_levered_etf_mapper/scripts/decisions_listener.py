@@ -216,35 +216,23 @@ def _schema_with_todo(repo: str | None, *, include_answered: bool) -> dict:
             new_cats.append(c2)
         cats = new_cats
 
-    # Inject a TODO progress category (dynamic) so the hub can show progress + next items.
+    # NOTE: We no longer inject TODO items as a Decisions category.
+    # TODO progress is still exposed via /status and schema meta.
     stats = _todo_stats(repo)
-    open_items = _todo_open_items(repo, limit=15, answered=answered if not include_answered else None)
-    todo_cat = {
-        "id": "todo",
-        "name": f"TODO Progress ({stats.get('pct_done', 0)}% done)",
-        "notesKey": "todo_notes",
-        "items": [
-            {
-                "key": f"todo_{it.get('i')}",
-                "q": f"{it.get('title')}",
-                "opts": {"A": "Do next", "B": "Skip", "C": "Blocked/Defer"},
-                "default": "B",
-                "meta": {"status": it.get("status")},
-            }
-            for it in open_items
-        ],
-        "meta": stats,
-    }
 
-    # Prepend
-    sch["categories"] = [todo_cat] + list(cats)
+    sch["categories"] = list(cats)
     sch.setdefault("meta", {})
     if isinstance(sch.get("meta"), dict):
         sch["meta"]["answered_keys"] = len(list(answered))
         sch["meta"]["include_answered"] = bool(include_answered)
-    sch.setdefault("meta", {})
-    if isinstance(sch.get("meta"), dict):
         sch["meta"]["todo"] = stats
+
+        # Add file freshness to help explain 'stuck %' situations.
+        try:
+            p = _todo_status_path(repo)
+            sch["meta"]["todo_status_mtime"] = p.stat().st_mtime if p.exists() else None
+        except Exception:
+            sch["meta"]["todo_status_mtime"] = None
 
     return sch
 
