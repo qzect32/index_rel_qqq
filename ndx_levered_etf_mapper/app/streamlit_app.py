@@ -2668,6 +2668,159 @@ with tab_scanner:
             st.plotly_chart(_plot_candles(dfp, title=f"{focus} — {tf}"), use_container_width=True)
 
     with fR:
+        # --- Focus intel (halts + filings + news) ---
+        try:
+            focus_sym = str(focus).upper().strip()
+            st.session_state.setdefault("focus_intel_cache", {})
+            cache = st.session_state.get("focus_intel_cache")
+            if not isinstance(cache, dict):
+                cache = {}
+                st.session_state["focus_intel_cache"] = cache
+
+            ttl_s = 60.0
+            cache_key = f"{focus_sym}"
+
+            pin = bool(st.session_state.get("scanner_pin", False))
+            # if pinned, freeze intel until focus changes
+            if pin:
+                ttl_s = 1e18
+
+            rec = cache.get(cache_key, {}) if isinstance(cache.get(cache_key), dict) else {}
+            age = time.time() - float(rec.get("ts", 0.0) or 0.0)
+            if (not rec) or (age > ttl_s):
+                # Build intel
+                intel = {"halts": None, "filings": None, "news": []}
+
+                # Halts (active only)
+                try:
+                    p = _data_dir() / "feeds_cache" / "latest_halts_cboe.json"
+                    if not p.exists():
+                        p = _data_dir() / "feeds_cache" / "latest_halts_nasdaq.json"
+                    if not p.exists():
+                        p = _data_dir() / "feeds_cache" / "latest_halts_nyse.json"
+                    if p.exists():
+                        obj = json.loads(p.read_text(encoding="utf-8"))
+                        rows = obj.get("rows") if isinstance(obj, dict) else None
+                        dfh = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+                        if not dfh.empty and "symbol" in dfh.columns:
+                            if "resumed" in dfh.columns:
+                                dfh = dfh[dfh["resumed"] == False]  # noqa: E712
+                            dfm = dfh[dfh["symbol"].astype(str).str.upper().str.strip() == focus_sym]
+                            if not dfm.empty:
+                                intel["halts"] = dfm.head(1).to_dict(orient="records")[0]
+                except Exception:
+                    pass
+
+                # Filings (prefer watcher alerts if present; else show most recent report)
+                try:
+                    best = None
+                    alerts = st.session_state.get("signals_filings_alerts", [])
+                    if isinstance(alerts, list):
+                        for a in alerts:
+                            if isinstance(a, dict) and str(a.get("symbol") or "").upper().strip() == focus_sym:
+                                best = a
+                                break
+
+                    # fallback: scan report directory
+                    if best is None:
+                        rep_root = (Path(_data_dir()) / "filings" / focus_sym / "reports")
+                        md_paths = []
+                        if rep_root.exists():
+                            for md in rep_root.glob("*/report.md"):
+                                try:
+                                    md_paths.append((md.stat().st_mtime, md))
+                                except Exception:
+                                    pass
+                        md_paths.sort(reverse=True)
+                        if md_paths:
+                            best = {"symbol": focus_sym, "report_md": str(md_paths[0][1])}
+
+                    intel["filings"] = best
+                except Exception:
+                    pass
+
+                # News (cached RSS) — match $SYM or word boundary
+                try:
+                    p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
+                    if p.exists():
+                        obj = json.loads(p.read_text(encoding="utf-8"))
+                        rows = obj.get("rows") if isinstance(obj, dict) else None
+                        dfn = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+                        if not dfn.empty and "title" in dfn.columns:
+                            titles = dfn["title"].astype(str)
+                            pat = rf"(\${focus_sym}\b|\b{focus_sym}\b)"
+                            m = titles.str.upper().str.contains(pat, regex=True, na=False)
+                            hits = dfn[m].copy()
+                            if "published_ts" in hits.columns:
+                                hits["published_ts"] = pd.to_datetime(hits["published_ts"], errors="coerce", utc=True)
+                                hits = hits.sort_values("published_ts", ascending=False)
+                            intel["news"] = hits.head(3).to_dict(orient="records")
+                except Exception:
+                    pass
+
+                cache[cache_key] = {"ts": time.time(), "intel": intel}
+                st.session_state["focus_intel_cache"] = cache
+                rec = cache.get(cache_key, {})
+
+            intel = rec.get("intel") if isinstance(rec, dict) else None
+            if isinstance(intel, dict):
+                with st.expander("Intel (halts + filings + news)", expanded=True):
+                    badges = []
+                    if intel.get("halts"):
+                        badges.append("HALT")
+                    if intel.get("filings"):
+                        badges.append("FIL")
+                    if intel.get("news"):
+                        badges.append("NEWS")
+                    if badges:
+                        st.caption("Badges: " + " / ".join(badges))
+
+                    md_lines = []
+                    md_lines.append(f"# Focus intel — {focus_sym}")
+                    md_lines.append("")
+
+                    # Order: Halts > Filings > News
+                    if intel.get("halts"):
+                        h = intel.get("halts") or {}
+                        st.error(f"HALT: {h.get('reason','')} ({h.get('market','')})")
+                        st.write({k: h.get(k) for k in ["halt_time_et", "resume_time_et", "reason", "market"] if k in h})
+                        md_lines.append("## HALT")
+                        md_lines.append(str(h))
+                        md_lines.append("")
+
+                    f = intel.get("filings")
+                    if isinstance(f, dict):
+                        st.warning("FILINGS: recent report")
+                        st.write({k: f.get(k) for k in ["score", "current", "baseline", "report_md"] if k in f})
+                        md_lines.append("## FILINGS")
+                        md_lines.append(json.dumps({k: f.get(k) for k in ["score", "current", "baseline", "report_md"]}, indent=2, default=str))
+                        md_lines.append("")
+                        # link-out: hint
+                        st.caption("Link-out: open the News tab for headlines; open the Earnings tab for reports.")
+
+                    news = intel.get("news")
+                    if isinstance(news, list) and news:
+                        st.info("NEWS: recent matches")
+                        for r in news[:3]:
+                            if not isinstance(r, dict):
+                                continue
+                            st.write(f"- {r.get('published','')} — {r.get('title','')}")
+                        md_lines.append("## NEWS")
+                        for r in news[:3]:
+                            if isinstance(r, dict):
+                                md_lines.append(f"- {r.get('published','')} — {r.get('title','')}")
+                        md_lines.append("")
+
+                    md_blob = "\n".join(md_lines)
+                    st.download_button(
+                        "Download intel (md)",
+                        data=md_blob.encode("utf-8"),
+                        file_name=f"focus_intel_{focus_sym}.md",
+                        mime="text/markdown",
+                    )
+        except Exception:
+            pass
+
         st.markdown("#### Exposure overlap")
         st.caption("If you're already holding it, we flag it here (best-effort).")
 
