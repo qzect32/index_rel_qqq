@@ -1,49 +1,59 @@
 {
-  "version": 10,
+  "version": 11,
   "title": "Decisions Hub (desktop submit)",
-  "note": "Batch 8: next-steps decisions after completing batch 7 (feeds/guardrails/debug UX). TODO triage injected dynamically.",
+  "note": "Batch 9: Performance + guardrails (budgets, caching, backoff, failure modes). TODO triage injected dynamically.",
   "categories": [
     {
-      "id": "scanner8",
-      "name": "Scanner — batch 8",
-      "notesKey": "scanner8_notes",
+      "id": "guardrails9",
+      "name": "Guardrails — batch 9",
+      "notesKey": "guardrails9_notes",
       "items": [
-        {"key": "scanner_focus_snapshot_bundle", "q": "Focus: add 1-click debug snapshot bundle (prices/news/halts/filings payload excerpts)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_focus_latency_badges", "q": "Focus: show per-section latency/cache-age badges", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_quote_budget_default", "q": "Scanner: default quote budget posture", "opts": {"A": "Conservative", "B": "Normal", "C": "Aggressive"}, "default": "B"},
-        {"key": "start_coding_scanner_batch8", "q": "Start coding Scanner batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "budget_global_calls_per_min", "q": "Set a global API call budget per minute (hard cap)?", "opts": {"A": "Yes (hard cap)", "B": "Soft cap (warn + degrade)", "C": "No cap"}, "default": "B"},
+        {"key": "budget_degrade_strategy", "q": "When budget is exceeded, degrade strategy", "opts": {"A": "Skip lowest-priority sections", "B": "Increase refresh intervals", "C": "Freeze updates and show warning"}, "default": "A"},
+        {"key": "budget_priority_order", "q": "Priority order under load", "opts": {"A": "Scanner > Wall > Signals > News", "B": "Signals > Scanner > Wall > News", "C": "Wall > Scanner > Signals > News"}, "default": "A"},
+        {"key": "fail_open_or_hide", "q": "If a feed fails, UI should", "opts": {"A": "Fail open (show stale + error)", "B": "Hide the section"}, "default": "A"},
+        {"key": "retry_policy", "q": "Retry policy for failing feeds", "opts": {"A": "Exponential backoff + jitter", "B": "Fixed interval", "C": "No retries (manual only)"}, "default": "A"},
+        {"key": "circuit_breaker", "q": "Enable circuit breaker (stop calling a feed for N minutes after repeated failures)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "circuit_breaker_minutes", "q": "Circuit breaker cooldown (minutes)", "opts": {"A": "2", "B": "5", "C": "15"}, "default": "B"},
+        {"key": "cache_policy", "q": "Default caching posture", "opts": {"A": "Aggressive (prefer cached)", "B": "Balanced", "C": "Fresh-first"}, "default": "B"},
+        {"key": "cache_ttl_default", "q": "Default cache TTL", "opts": {"A": "30s", "B": "60s", "C": "120s"}, "default": "B"},
+        {"key": "telemetry_enabled", "q": "Enable lightweight telemetry (latency, call counts, cache hits) to a local debug panel", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_guardrails_batch9", "q": "Start coding Guardrails batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "signals8",
-      "name": "Signals — batch 8",
-      "notesKey": "signals8_notes",
+      "id": "scanner_perf9",
+      "name": "Scanner perf — batch 9",
+      "notesKey": "scanner_perf9_notes",
       "items": [
-        {"key": "signals_fail_open", "q": "If a feed errors/blocks, should Signals show the section anyway (with error) or hide it?", "opts": {"A": "Show with error", "B": "Hide"}, "default": "A"},
-        {"key": "signals_feed_retry", "q": "Feed retry policy", "opts": {"A": "Exponential backoff", "B": "Fixed interval"}, "default": "A"},
-        {"key": "signals_export_bundle", "q": "Signals export bundle", "opts": {"A": "Markdown only", "B": "Markdown + JSON"}, "default": "B"},
-        {"key": "start_coding_signals_batch8", "q": "Start coding Signals batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "scanner_poll_interval", "q": "Scanner poll interval default", "opts": {"A": "2s", "B": "5s", "C": "10s"}, "default": "B"},
+        {"key": "scanner_focus_prefetch", "q": "Focus view: prefetch intel in background (halts/filings/news)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "scanner_prefetch_cap", "q": "Prefetch cap per minute", "opts": {"A": "Low", "B": "Medium", "C": "High"}, "default": "B"},
+        {"key": "scanner_stale_ok", "q": "If quotes are stale, allow UI to keep showing (with warning) instead of blanking", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_scanner_perf_batch9", "q": "Start coding Scanner perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "news8",
-      "name": "News — batch 8",
-      "notesKey": "news8_notes",
+      "id": "wall_perf9",
+      "name": "Wall perf — batch 9",
+      "notesKey": "wall_perf9_notes",
       "items": [
-        {"key": "news_state_persist", "q": "Persist RSS state to disk (dedupe + last seen) to survive restarts", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_source_mix", "q": "Preferred source mix", "opts": {"A": "Few high-quality", "B": "Broad coverage"}, "default": "A"},
-        {"key": "news_open_behavior", "q": "Open behavior", "opts": {"A": "New tab", "B": "Inline reader"}, "default": "B"},
-        {"key": "start_coding_news_batch8", "q": "Start coding News batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "wall_refresh_strategy", "q": "Wall refresh strategy", "opts": {"A": "Staggered per-tile", "B": "Global tick"}, "default": "A"},
+        {"key": "wall_max_tiles", "q": "Max tiles shown (cap)", "opts": {"A": "32", "B": "50", "C": "80"}, "default": "B"},
+        {"key": "wall_sparkline_budget", "q": "Sparkline budget", "opts": {"A": "Visible tiles only", "B": "Top 16", "C": "Off under load"}, "default": "A"},
+        {"key": "wall_degrade_under_load", "q": "Under load, Wall should", "opts": {"A": "Disable sparklines", "B": "Increase refresh interval", "C": "Reduce tiles"}, "default": "A"},
+        {"key": "start_coding_wall_perf_batch9", "q": "Start coding Wall perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "wall8",
-      "name": "Wall — batch 8",
-      "notesKey": "wall8_notes",
+      "id": "signals_perf9",
+      "name": "Signals perf — batch 9",
+      "notesKey": "signals_perf9_notes",
       "items": [
-        {"key": "wall_debug_overlay", "q": "Add optional debug overlay (data age / last quote time / update loop time)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "wall_refresh_strategy", "q": "Refresh strategy", "opts": {"A": "Staggered per-tile", "B": "Global tick"}, "default": "A"},
-        {"key": "start_coding_wall_batch8", "q": "Start coding Wall batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "signals_refresh_default", "q": "Signals refresh default", "opts": {"A": "Manual only", "B": "30s", "C": "60s"}, "default": "C"},
+        {"key": "signals_section_refresh", "q": "Refresh controls", "opts": {"A": "Per-section buttons", "B": "Global refresh button", "C": "No buttons"}, "default": "B"},
+        {"key": "signals_hide_blocked_default", "q": "Hide BLOCKED sections by default", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "start_coding_signals_perf_batch9", "q": "Start coding Signals perf batch 9 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     }
   ]
