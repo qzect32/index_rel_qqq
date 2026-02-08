@@ -140,6 +140,35 @@ Then open **Admin → Schwab OAuth** and run the OAuth authorization flow.
 
 ---
 
+## Support / Debugging (recommended)
+
+### Debug bundle (Streamlit)
+In the app, open **Admin → Support / Debug bundle**:
+- Click **Create debug bundle**
+- Then **Download last bundle**
+- Review **Recent errors** + **Session events** tails (sanitized)
+
+### Debug bundle (listener endpoint)
+If you're running the local decisions listener on port 8765, you can download a sanitized bundle at:
+
+- `http://127.0.0.1:8765/debug_bundle`
+
+---
+
+## Decisions Hub (local decisions inbox)
+
+A tiny local listener drives `decisions_form.html` so you can rapidly answer “batch” questions and persist them to `data/decisions.json`.
+
+Run the listener:
+
+```bash
+python scripts/decisions_listener.py --port 8765
+```
+
+Then open `decisions_form.html` and click **Reload schema** / **Submit**.
+
+---
+
 ## CLI (datasets)
 
 Build the relationships graph and export datasets to `data/`:
