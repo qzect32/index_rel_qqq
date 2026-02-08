@@ -2270,7 +2270,30 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
                 st.success("Logged dry-run delete to data/alerts_log.jsonl")
 
         st.markdown("### Headlines")
-        st.caption("Cached RSS headlines (no extra calls from Dashboard).")
+        st.caption("Cached RSS headlines (Dashboard is cache-first; optional refresh button if enabled).")
+
+        # Optional refresh (decision: dash_perf_posture = Allow refresh buttons)
+        try:
+            refresh_ok = bool((_load_decisions().get("categories") or {}).get("dashboard", {}).get("dash_perf_posture") == "B")
+        except Exception:
+            refresh_ok = False
+
+        if refresh_ok:
+            if st.button("Refresh RSS cache", key="dash_refresh_news"):
+                try:
+                    cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
+                    news_urls = ((cfg.get("news") or {}).get("rss_urls")) if isinstance(cfg, dict) else None
+                    news_urls = news_urls if isinstance(news_urls, list) else []
+                except Exception:
+                    news_urls = []
+                try:
+                    from etf_mapper.feeds.news_rss import NewsRssConfig
+
+                    nf = NewsRssFeed(data_dir=_data_dir(), urls=[str(u) for u in news_urls], cfg=NewsRssConfig(parallel=True, max_show=50))
+                    _ = nf.fetch()
+                    st.toast("Refreshed RSS cache")
+                except Exception as e:
+                    st.warning(str(e))
 
         # Read cached news RSS
         try:
@@ -2299,14 +2322,23 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
             # Latest overall (top 10)
             show = show.head(10)
+            from urllib.parse import urlparse
+
             for _, r in show.iterrows():
                 pub = str(r.get("published") or "").strip()
                 title = str(r.get("title") or "").strip()
                 link = str(r.get("link") or "").strip()
+                dom = ""
+                try:
+                    dom = urlparse(link).netloc.replace("www.", "") if link else ""
+                except Exception:
+                    dom = ""
+
+                suffix = f" ({dom})" if dom else ""
                 if link:
-                    st.markdown(f"- {pub} — [{title}]({link})")
+                    st.markdown(f"- {pub} — [{title}]({link}){suffix}")
                 else:
-                    st.write(f"- {pub} — {title}")
+                    st.write(f"- {pub} — {title}{suffix}")
         else:
             st.caption("No news cache yet. Open News tab once to fetch.")
 
