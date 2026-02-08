@@ -47,25 +47,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Scanner Focus: why-moving integration (News + Filings + Halts)";
-const BLOCK_NOTE = "Goal: when you focus a symbol, show the top 3 most relevant intel items without extra decisions.";
+const BLOCK_TITLE = "Focus intel polish: links + better matching + pinned freeze";
+const BLOCK_NOTE = "Now that Focus intel exists, decide how links and matching should behave (still 15 questions).";
 
 const DECISIONS = [
-  { key:"focus_enable_intel", label:"1) Enable Focus intel panel?", why:"Adds a compact panel next to the focus chart.", options:{A:"Yes",B:"Hold"}, default:"A" },
-  { key:"focus_intel_sources", label:"2) Sources", why:"Which sources to pull from?", options:{A:"News RSS + Filings + Halts",B:"Filings + Halts only",C:"News only"}, default:"A" },
-  { key:"focus_news_match", label:"3) News matching", why:"How to decide if a headline is about the symbol?", options:{A:"Simple ticker regex in title",B:"Keyword match only",C:"Manual only"}, default:"A" },
-  { key:"focus_filings_match", label:"4) Filings matching", why:"Use watcher alerts.", options:{A:"Show if symbol has alert",B:"Show latest report regardless of score",C:"Off"}, default:"A" },
-  { key:"focus_halts_match", label:"5) Halts matching", why:"Use cached halts.", options:{A:"Show if symbol currently halted",B:"Show if halted today",C:"Off"}, default:"A" },
-  { key:"focus_show_links", label:"6) Link-outs", why:"Quick jump to details.", options:{A:"None",B:"Link to News tab + Earnings report",C:"All"}, default:"B" },
-  { key:"focus_max_items", label:"7) Max items shown", why:"Keep it tight.", options:{A:"3",B:"5",C:"10"}, default:"A" },
-  { key:"focus_order", label:"8) Ordering", why:"What should be on top?", options:{A:"Halts > Filings > News",B:"News > Filings > Halts",C:"Score-based"}, default:"A" },
-  { key:"focus_auto_refresh", label:"9) Auto-refresh focus intel", why:"Keep it stable.", options:{A:"On (same cadence as Scanner refresh)",B:"Off"}, default:"A" },
-  { key:"focus_cache_ttl", label:"10) Cache TTL", why:"Avoid extra processing.", options:{A:"30s",B:"60s",C:"120s"}, default:"B" },
-  { key:"focus_show_sentiment", label:"11) Show filing diff score", why:"Useful context.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"focus_show_badges", label:"12) Badges", why:"Compact chips.", options:{A:"HALT/FIL/NEWS",B:"FIL only",C:"None"}, default:"A" },
-  { key:"focus_pin_behavior", label:"13) When pinned", why:"Should intel freeze?", options:{A:"Freeze",B:"Keep updating"}, default:"A" },
-  { key:"focus_export", label:"14) Export focus intel", why:"Local notes.", options:{A:"None",B:"Markdown",C:"JSON"}, default:"B" },
-  { key:"start_coding_focus_intel", label:"15) Start coding this Focus intel block now?", why:"If yes, I’ll wire it into Scanner focus panel.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"intel_news_match_strict", label:"1) News match strictness", why:"Regex ticker match can overmatch common words.", options:{A:"Ticker only ($SYM or word boundary)",B:"Ticker + exchange suffix (e.g., SYM.O)",C:"Manual allowlist"}, default:"A" },
+  { key:"intel_news_dedupe", label:"2) Deduplicate headlines", why:"Same headline from multiple feeds.", options:{A:"By title",B:"By link",C:"No dedupe"}, default:"A" },
+  { key:"intel_show_links", label:"3) Show clickable links", why:"Open the article in browser.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"intel_open_news_tab", label:"4) News tab integration", why:"Let Focus set a filter on News tab.", options:{A:"Yes (set session filter)",B:"No"}, default:"A" },
+  { key:"intel_open_earnings_tab", label:"5) Earnings tab integration", why:"Let Focus open the latest report automatically.", options:{A:"Yes (set session selection)",B:"No"}, default:"A" },
+  { key:"intel_pin_freeze", label:"6) Pinned behavior", why:"You picked freeze when pinned.", options:{A:"Freeze until unpinned",B:"Refresh every 5 min even when pinned"}, default:"A" },
+  { key:"intel_cache_ttl", label:"7) Cache TTL", why:"How often to rebuild intel.", options:{A:"30s",B:"60s",C:"120s"}, default:"B" },
+  { key:"intel_render_mode", label:"8) Render mode", why:"Compact vs detailed.", options:{A:"Compact bullets",B:"Detailed tables",C:"Both"}, default:"C" },
+  { key:"intel_halts_detail", label:"9) Halts detail", why:"How much to show.", options:{A:"Reason + resume time",B:"Full row json",C:"Just badge"}, default:"A" },
+  { key:"intel_filings_detail", label:"10) Filings detail", why:"Show score and open report.", options:{A:"Score + buttons",B:"Inline report.md",C:"Just badge"}, default:"A" },
+  { key:"intel_export", label:"11) Export formats", why:"You currently export markdown.", options:{A:"Markdown only",B:"Markdown + JSON",C:"None"}, default:"A" },
+  { key:"intel_errors", label:"12) Error display", why:"If cache read fails.", options:{A:"Silent",B:"Show small warning",C:"Raise error"}, default:"B" },
+  { key:"intel_limit_news", label:"13) News items count", why:"Keep it tight.", options:{A:"3",B:"5",C:"10"}, default:"A" },
+  { key:"intel_limit_reports", label:"14) Reports count", why:"How many reports to list.", options:{A:"1 latest",B:"3 latest",C:"10 latest"}, default:"A" },
+  { key:"start_coding_intel_polish", label:"15) Start coding this polish block now?", why:"If yes, I’ll add real links + News/Earnings tab integration + better matching.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
