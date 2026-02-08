@@ -47,25 +47,25 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Schwab-native Alerts (TOS/Mobile): scope + UX + safe testing";
-const BLOCK_NOTE = "No ToS clicking. We’ll only implement if Schwab endpoints are confirmed; otherwise keep scaffold + safe probes.";
+const BLOCK_TITLE = "Scanner Focus: why-moving integration (News + Filings + Halts)";
+const BLOCK_NOTE = "Goal: when you focus a symbol, show the top 3 most relevant intel items without extra decisions.";
 
 const DECISIONS = [
-  { key:"alerts_discovery", label:"1) Endpoint discovery now?", why:"This may require testing OAuth scopes in your environment.", options:{A:"Yes (probe endpoints)",B:"Hold (scaffold only)"}, default:"B" },
-  { key:"alerts_scope_policy", label:"2) OAuth scope expansion", why:"Some alert endpoints may require more than readonly.", options:{A:"Readonly only",B:"Allow expanding scopes (you approve)"}, default:"B" },
-  { key:"alerts_ui_location", label:"3) Where should Alerts live?", why:"So it’s quick.", options:{A:"Dashboard tile",B:"Signals panel",C:"New Alerts tab"}, default:"A" },
-  { key:"alerts_types", label:"4) Alert types", why:"Keep it minimal first.", options:{A:"Price above/below",B:"Add % move",C:"All supported types"}, default:"A" },
-  { key:"alerts_default_expiry", label:"5) Default expiry", why:"Avoid stale alerts.", options:{A:"End of day",B:"1 week",C:"No expiry"}, default:"A" },
-  { key:"alerts_dedup", label:"6) Dedup behavior", why:"Prevent duplicates.", options:{A:"One alert per symbol+direction",B:"Allow duplicates",C:"Replace existing"}, default:"C" },
-  { key:"alerts_test_mode", label:"7) Safe testing mode", why:"No accidental spam.", options:{A:"Dry-run (show payload only)",B:"Create real alerts",C:"Create then auto-delete"}, default:"A" },
-  { key:"alerts_list", label:"8) List existing alerts", why:"So you can manage.", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"alerts_delete", label:"9) Delete/disable controls", why:"Cleanup.", options:{A:"Delete",B:"Disable if supported",C:"Both"}, default:"C" },
-  { key:"alerts_symbol_source", label:"10) Symbol picker", why:"Which symbols quick-add uses.", options:{A:"Main ticker",B:"Watchlist",C:"Hot list"}, default:"B" },
-  { key:"alerts_threshold_ui", label:"11) Threshold UI", why:"Fast entry.", options:{A:"Manual price",B:"% from current",C:"Both"}, default:"C" },
-  { key:"alerts_rate_limit", label:"12) Rate limiting", why:"Don’t hammer Schwab.", options:{A:"Max 2 creates/min",B:"Max 10/min",C:"No limit"}, default:"A" },
-  { key:"alerts_audit_log", label:"13) Audit log", why:"Keep a local record.", options:{A:"Write jsonl to data/alerts_log.jsonl",B:"No"}, default:"A" },
-  { key:"alerts_entitlement_errors", label:"14) If not entitled", why:"What should UI do?", options:{A:"Show BLOCKED status + explanation",B:"Hide alerts UI",C:"Keep retrying"}, default:"A" },
-  { key:"start_coding_alerts", label:"15) Start coding Alerts block now?", why:"If yes, I’ll implement scaffold + probe hooks + dry-run payload builder.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"focus_enable_intel", label:"1) Enable Focus intel panel?", why:"Adds a compact panel next to the focus chart.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"focus_intel_sources", label:"2) Sources", why:"Which sources to pull from?", options:{A:"News RSS + Filings + Halts",B:"Filings + Halts only",C:"News only"}, default:"A" },
+  { key:"focus_news_match", label:"3) News matching", why:"How to decide if a headline is about the symbol?", options:{A:"Simple ticker regex in title",B:"Keyword match only",C:"Manual only"}, default:"A" },
+  { key:"focus_filings_match", label:"4) Filings matching", why:"Use watcher alerts.", options:{A:"Show if symbol has alert",B:"Show latest report regardless of score",C:"Off"}, default:"A" },
+  { key:"focus_halts_match", label:"5) Halts matching", why:"Use cached halts.", options:{A:"Show if symbol currently halted",B:"Show if halted today",C:"Off"}, default:"A" },
+  { key:"focus_show_links", label:"6) Link-outs", why:"Quick jump to details.", options:{A:"None",B:"Link to News tab + Earnings report",C:"All"}, default:"B" },
+  { key:"focus_max_items", label:"7) Max items shown", why:"Keep it tight.", options:{A:"3",B:"5",C:"10"}, default:"A" },
+  { key:"focus_order", label:"8) Ordering", why:"What should be on top?", options:{A:"Halts > Filings > News",B:"News > Filings > Halts",C:"Score-based"}, default:"A" },
+  { key:"focus_auto_refresh", label:"9) Auto-refresh focus intel", why:"Keep it stable.", options:{A:"On (same cadence as Scanner refresh)",B:"Off"}, default:"A" },
+  { key:"focus_cache_ttl", label:"10) Cache TTL", why:"Avoid extra processing.", options:{A:"30s",B:"60s",C:"120s"}, default:"B" },
+  { key:"focus_show_sentiment", label:"11) Show filing diff score", why:"Useful context.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"focus_show_badges", label:"12) Badges", why:"Compact chips.", options:{A:"HALT/FIL/NEWS",B:"FIL only",C:"None"}, default:"A" },
+  { key:"focus_pin_behavior", label:"13) When pinned", why:"Should intel freeze?", options:{A:"Freeze",B:"Keep updating"}, default:"A" },
+  { key:"focus_export", label:"14) Export focus intel", why:"Local notes.", options:{A:"None",B:"Markdown",C:"JSON"}, default:"B" },
+  { key:"start_coding_focus_intel", label:"15) Start coding this Focus intel block now?", why:"If yes, I’ll wire it into Scanner focus panel.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
