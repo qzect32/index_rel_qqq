@@ -2147,34 +2147,100 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
         st.markdown("### Alerts")
         st.caption(
-            "Target state: create/read *Schwab-native* (TOS/Schwab mobile) alerts via Schwab API so Schwab handles SMS/push. "
-            "I can’t confirm the alerts endpoints until we’re in your Schwab developer account docs."
+            "Goal: create/read *Schwab-native* alerts so Schwab/TOS handles SMS/push. "
+            "Endpoint discovery is currently **HOLD**; this tile is a safe scaffold + dry-run payload builder."
         )
 
-        with st.expander("Local alerts (temporary placeholder)", expanded=False):
-            st.session_state.setdefault("alerts", [])
-            a_sym = st.text_input("Symbol", value=selected, key="alert_sym")
-            a_op = st.selectbox("Condition", [">=", "<=", ">", "<", "=="], index=0, key="alert_op")
-            a_px = st.number_input("Trigger price", min_value=0.0, value=0.0, step=0.5, key="alert_px")
-            a_exp_min = st.slider("Expires in (minutes)", 5, 24 * 60, 60, 5, key="alert_exp")
+        def _alerts_audit_log(obj: dict) -> None:
+            try:
+                p = _data_dir() / "alerts_log.jsonl"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("", encoding="utf-8") if not p.exists() else None
+                with p.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+            except Exception:
+                pass
 
-            if st.button("Add local alert"):
-                exp_at = pd.Timestamp.now() + pd.Timedelta(minutes=int(a_exp_min))
-                st.session_state["alerts"].append(
-                    {
-                        "symbol": str(a_sym).upper().strip(),
-                        "op": a_op,
-                        "price": float(a_px),
-                        "expires_at": exp_at.isoformat(),
-                        "armed": True,
-                    }
-                )
-                st.success("Local alert added (UI only).")
+        def _alerts_rate_limit_ok() -> bool:
+            # Max 2 creates/min (soft)
+            st.session_state.setdefault("alerts_create_ts", [])
+            xs = [float(x) for x in st.session_state.get("alerts_create_ts", []) if isinstance(x, (int, float))]
+            now = time.time()
+            xs = [x for x in xs if (now - x) < 60]
+            st.session_state["alerts_create_ts"] = xs
+            return len(xs) < 2
 
-            st.json(st.session_state.get("alerts", []))
-            if st.button("Clear local alerts"):
-                st.session_state["alerts"] = []
-                st.rerun()
+        def _alerts_rate_limit_note() -> None:
+            st.session_state.setdefault("alerts_create_ts", [])
+            st.session_state["alerts_create_ts"].append(time.time())
+
+        with st.expander("Schwab alerts (scaffold + dry-run)", expanded=False):
+            st.info(
+                "BLOCKED: Schwab alerts endpoints/scopes not confirmed in this workspace yet. "
+                "This section builds payloads and logs actions locally without creating real alerts."
+            )
+
+            # Symbols from watchlist
+            wl = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+            sym = st.selectbox("Symbol", options=wl if wl else [selected], index=0, key="alerts_sym_pick")
+
+            # Threshold UI: manual + % from current
+            q = _schwab_quote(sym)
+            px0 = q.get("mark") or q.get("last")
+            try:
+                px0f = float(px0)
+            except Exception:
+                px0f = None
+
+            colA, colB = st.columns([0.55, 0.45])
+            direction = colA.selectbox("Direction", ["Above", "Below"], index=0, key="alerts_dir")
+            mode = colB.selectbox("Threshold", ["Manual price", "% from current"], index=0, key="alerts_thr_mode")
+
+            if mode == "% from current":
+                pct = st.number_input("%", value=1.0, step=0.25, key="alerts_pct")
+                if px0f is not None:
+                    trig = px0f * (1.0 + abs(float(pct)) / 100.0) if direction == "Above" else px0f * (1.0 - abs(float(pct)) / 100.0)
+                else:
+                    trig = None
+            else:
+                trig = st.number_input("Trigger price", min_value=0.0, value=0.0, step=0.5, key="alerts_manual_px")
+
+            # Default expiry: end of day
+            exp = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+            alert_type = st.selectbox("Type", ["price", "% move", "other (placeholder)"], index=0, key="alerts_type")
+
+            payload = {
+                "symbol": sym,
+                "type": alert_type,
+                "condition": "gte" if direction == "Above" else "lte",
+                "trigger": float(trig) if trig is not None else None,
+                "expires_at": exp.isoformat(),
+                "test_mode": "dry_run",
+            }
+
+            st.markdown("**Dry-run payload**")
+            st.json(payload)
+
+            if st.button("Create (dry-run)", key="alerts_create_dry"):
+                if not _alerts_rate_limit_ok():
+                    st.warning("Rate limit: max 2 creates/min (dry-run). Try again in a bit.")
+                else:
+                    _alerts_rate_limit_note()
+                    _alerts_audit_log({"ts": time.time(), "action": "create_dry_run", "payload": payload})
+                    st.success("Logged dry-run create to data/alerts_log.jsonl")
+
+            # List/delete scaffolds
+            st.markdown("---")
+            st.markdown("**List existing alerts (scaffold)**")
+            st.caption("When endpoints are confirmed, this will query Schwab and show your real alerts.")
+            st.write({"status": "BLOCKED", "reason": "alerts endpoints not confirmed"})
+
+            st.markdown("**Delete/disable (scaffold)**")
+            st.caption("When endpoints are confirmed, we'll support delete + disable.")
+            if st.button("Delete (dry-run)", key="alerts_delete_dry"):
+                _alerts_audit_log({"ts": time.time(), "action": "delete_dry_run", "symbol": sym})
+                st.success("Logged dry-run delete to data/alerts_log.jsonl")
 
         st.markdown("### Headlines")
         st.caption("Placeholder for now (fastest path). Paste headlines you care about; later we’ll wire a feed.")
