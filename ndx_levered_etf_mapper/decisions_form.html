@@ -53,6 +53,7 @@
       <pre id="todoText" style="max-height:420px; overflow:auto;">(click Load)</pre>
     </details>
     <p class="tiny">Tip: Reload schema after you submit to get a fresh rotated batch. Listener now injects a dynamic TODO Progress category.</p>
+    <p class="tiny" style="opacity:0.85">Build: <code id="buildStamp"></code></p>
 
     <div class="card">
       <div class="row">
@@ -116,6 +117,9 @@ const FALLBACK_SCHEMA = {
 
 let schema = FALLBACK_SCHEMA;
 let active = schema.categories[0].id;
+let lastLatest = null;
+let lastSchemaMeta = null;
+const BUILD_STAMP = '2026-02-08b';
 
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
@@ -179,17 +183,17 @@ function renderTabs(latest){
   root.innerHTML='';
   for(const c of schema.categories){
     const latestCat = (latest && latest.categories && latest.categories[c.id]) ? latest.categories[c.id] : null;
-    const dot = el('span',{class:`dot ${computeDotClass(c.id, latest)}`});
+    const dot = el('span',{class:`dot ${computeDotClass(c.id, latestCat)}`});
     const t=el('div',{class:`tab ${c.id===active?'active':''}`}, [dot, c.name]);
-    t.onclick=()=>{ active=c.id; renderTabs(latest); renderPanel(latest); markSeen(c.id, latest); };
+    t.onclick=()=>{ active=c.id; renderTabs(latest); renderPanel(latest); markSeen(c.id, latestCat); };
     root.appendChild(t);
   }
 }
 
-function markSeen(catId, latest){
+function markSeen(catId, latestCat){
   try{
-    if(latest && latest._received_at){
-      setSeenStamp(catId, String(latest._received_at));
+    if(latestCat && latestCat._received_at){
+      setSeenStamp(catId, String(latestCat._received_at));
     }
   }catch(e){}
 }
@@ -289,17 +293,17 @@ async function ping(){
 
 async function fetchStatus(){
   const ok=await ping();
-  if(!ok) return {latest:null, todo:null};
+  if(!ok) return {latest:null, todo:null, velocity:null};
   const url = baseUrl() + '/status';
   try{
     const r=await fetch(url,{method:'GET'});
     const j=await r.json();
     if(j && j.ok){
-      return { latest: j.latest || null, todo: j.todo || null };
+      return { latest: j.latest || null, todo: j.todo || null, velocity: j.velocity || null };
     }
-    return {latest:null, todo:null};
+    return {latest:null, todo:null, velocity:null};
   }catch(e){
-    return {latest:null, todo:null};
+    return {latest:null, todo:null, velocity:null};
   }
 }
 
@@ -321,29 +325,31 @@ async function fetchSchema(){
 }
 
 function validateComplete(){
-  // Require every item in current schema to be present in payload.
+  // Only validate the *active* tab's DOM.
+  // Other categories aren't rendered (by design), but can still be submitted via drafts/defaults.
   const missing=[];
-  for(const c of (schema.categories||[])){
-    for(const it of (c.items||[])){
-      const k=it.key;
-      const v=getDraftValue(c.id, k);
-      const sel=document.querySelector(`input[name='q_${c.id}_${k}']:checked`);
-      const has = !!sel || (v!=null && String(v).trim().length>0);
-      // If neither selected nor drafted, gatherCategory will fall back to default.
-      // That's acceptable as an answer, so we don't treat it as missing.
-      // But if the element doesn't exist at all, something is wrong.
-      const elExists = !!document.querySelector(`input[name='q_${c.id}_${k}']`);
-      if(!elExists){ missing.push(`${c.id}.${k}`); }
-    }
+  const c = (schema.categories||[]).find(x=>x.id===active);
+  if(!c) return missing;
+  for(const it of (c.items||[])){
+    const k=it.key;
+    const elExists = !!document.querySelector(`input[name='q_${c.id}_${k}']`);
+    if(!elExists){ missing.push(`${c.id}.${k}`); }
   }
   return missing;
 }
 
 async function submit(){
   const url=document.getElementById('submitUrl').value;
+
+  // Defensive: ensure the active tab is rendered before validating.
+  // (Can happen if submit is clicked during a schema/status refresh.)
+  if(!document.querySelector(`#panel input[name^='q_${active}_']`)){
+    try{ renderPanel(lastLatest); }catch(e){}
+  }
+
   const missing = validateComplete();
   if(missing.length){
-    alert('Submit blocked: some questions were not rendered. Try Reload schema.\n\nMissing:\n' + missing.slice(0,50).join('\n'));
+    alert('Submit blocked: some questions were not rendered. Try Reload schema.\n\nActive: ' + active + '\nMissing:\n' + missing.slice(0,50).join('\n'));
     return;
   }
   const payload=gatherAll();
@@ -369,14 +375,33 @@ async function submit(){
   }
 }
 
-function setTodoPct(todo){
+function setProgress(meta, todo){
   const e=document.getElementById('todoPct');
   if(!e) return;
-  if(!todo || typeof todo.total !== 'number'){
-    e.textContent = 'TODO: (unavailable)';
-    return;
+
+  const dPct = (meta && meta.decisions_pct!=null) ? Number(meta.decisions_pct) : null;
+  const dAns = (meta && meta.decisions_answered!=null) ? Number(meta.decisions_answered) : null;
+  const dTot = (meta && meta.decisions_total!=null) ? Number(meta.decisions_total) : null;
+
+  const tPct = (todo && todo.pct_norm!=null) ? Number(todo.pct_norm) : null;
+
+  // Combined progress: average of decisions% and TODO normalized%, when both are available.
+  let combined = null;
+  if(dPct!=null && !Number.isNaN(dPct) && tPct!=null && !Number.isNaN(tPct)){
+    combined = Math.round(((dPct + tPct) / 2) * 10) / 10;
   }
-  e.textContent = `TODO: ${todo.pct_done||0}% done (${todo.done||0}/${todo.total||0})`;
+
+  const parts=[];
+  if(combined!=null) parts.push(`Progress: ${combined}%`);
+  if(dPct!=null && dTot!=null && dAns!=null) parts.push(`Decisions: ${dPct}% (${dAns}/${dTot})`);
+  if(todo && typeof todo.total === 'number'){
+    const raw = `TODO raw ${todo.pct_done||0}% (${todo.done||0}/${todo.total||0})`;
+    const norm = (todo.pct_norm!=null) ? `TODO norm ${todo.pct_norm}% (in-progress: ${todo.in_progress||0}, blocked: ${todo.blocked||0})` : null;
+    parts.push(raw);
+    if(norm) parts.push(norm);
+  }
+
+  e.textContent = parts.join(' • ') || 'Progress: (unavailable)';
 }
 
 function setEffort(vel){
@@ -390,7 +415,8 @@ function setEffort(vel){
 async function refreshLoop(){
   const st = await fetchStatus();
   const latest = st.latest;
-  setTodoPct(st.todo);
+  lastLatest = latest;
+  setProgress(lastSchemaMeta, st.todo);
   setEffort(st.velocity);
   renderTabs(latest);
   renderPanel(latest);
@@ -402,6 +428,7 @@ async function loadSchemaAndRefresh(){
   if(s){
     schema = s;
     if(!schema.categories || !schema.categories.length){ schema = FALLBACK_SCHEMA; }
+    lastSchemaMeta = (schema && schema.meta) ? schema.meta : null;
     active = schema.categories[0].id;
   }
   await refreshLoop();
@@ -453,10 +480,11 @@ document.getElementById('loadTodoStatus').onclick = ()=>loadTodo('status');
 document.getElementById('ping').onclick = refreshLoop;
 
 // Start
+try{ document.getElementById('buildStamp').textContent = BUILD_STAMP; }catch(e){}
 loadSchemaAndRefresh();
 setInterval(async ()=>{
-  const latest = await fetchStatus();
-  renderTabs(latest);
+  const st = await fetchStatus();
+  renderTabs(st.latest);
 }, 3000);
 </script>
 </body>

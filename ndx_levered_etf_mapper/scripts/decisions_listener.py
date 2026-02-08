@@ -248,6 +248,35 @@ def _schema_with_todo(repo: str | None, *, include_answered: bool) -> dict:
 
     answered = _answered_keys(repo)
 
+    # Decisions progress (based on the static schema only; excludes injected TODO/meta).
+    base_total = 0
+    base_cat_ids: set[str] = set()
+    base_keys: set[str] = set()
+    try:
+        for c in cats:
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "").strip()
+            if not cid:
+                continue
+            base_cat_ids.add(cid)
+            items = c.get("items") if isinstance(c.get("items"), list) else []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                k = str(it.get("key") or "").strip()
+                if not k:
+                    continue
+                base_total += 1
+                base_keys.add(f"{cid}.{k}")
+    except Exception:
+        base_total = 0
+        base_cat_ids = set()
+        base_keys = set()
+
+    base_answered = len([k for k in answered if k in base_keys]) if base_keys else 0
+    base_pct = (float(base_answered) / float(base_total) * 100.0) if base_total else 0.0
+
     # Filter out any already-answered questions unless explicitly requested.
     if not include_answered:
         new_cats = []
@@ -324,6 +353,11 @@ def _schema_with_todo(repo: str | None, *, include_answered: bool) -> dict:
         sch["meta"]["answered_keys"] = len(list(answered))
         sch["meta"]["include_answered"] = bool(include_answered)
         sch["meta"]["todo"] = stats
+
+        sch["meta"]["decisions_total"] = int(base_total)
+        sch["meta"]["decisions_answered"] = int(base_answered)
+        sch["meta"]["decisions_pct"] = round(float(base_pct), 1)
+        sch["meta"]["decisions_remaining"] = int(max(0, base_total - base_answered))
 
         # Add file freshness to help explain 'stuck %' situations.
         try:
