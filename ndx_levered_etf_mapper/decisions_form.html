@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Market Hub — Decisions Form</title>
   <style>
-    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); --warn:#ffd166; }
+    :root { --bg:#0b1220; --card:#111a2e; --text:#e5e7eb; --muted:#9ca3af; --accent:#33ffcc; --border:rgba(255,255,255,0.10); }
     body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
     .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 60px; }
     h1 { margin: 6px 0 6px; font-size: 22px; }
@@ -21,17 +21,13 @@
     pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 12px; }
     .tiny { font-size: 12px; color: var(--muted); }
     .pill { display:inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: var(--muted); }
-    .pill.warn { border-color: rgba(255,209,102,0.35); color: var(--warn); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Market Hub — Decisions Form</h1>
-    <p>
-      Block: <span class="pill" id="block"></span>
-      <span class="pill warn" id="note" style="display:none"></span>
-    </p>
-    <p class="tiny">15 questions. Pick answers → <b>Generate JSON</b> → paste JSON into chat. Local-only.</p>
+    <p>Block: <span class="pill" id="block"></span></p>
+    <p class="tiny">Minimal-duplication form: only new decisions. (We carry forward previous defaults unless asked.)</p>
 
     <div id="questions"></div>
 
@@ -47,32 +43,20 @@
   </div>
 
 <script>
-const BLOCK_TITLE = "Signals hub next: reduce clutter + refresh policy";
-const BLOCK_NOTE = "Now that Dashboard/Wall/Signals are busy, choose how Signals collapses/refreshes and what moves where.";
+const BLOCK_TITLE = "Next: dashboard/watchlist tape polish (no duplicated questions)";
 
 const DECISIONS = [
-  { key:"signals_collapse_defaults", label:"1) Default collapsed sections", why:"Reduce clutter.", options:{A:"Collapse Earnings only",B:"Collapse Earnings + News",C:"Collapse everything"}, default:"A" },
-  { key:"signals_show_news", label:"2) Show News inside Signals?", why:"You now have a News tab.", options:{A:"Keep small section",B:"Remove from Signals",C:"Replace Macro"}, default:"B" },
-  { key:"signals_show_macro", label:"3) Show Macro inside Signals?", why:"You also have Dashboard highlight.", options:{A:"Keep",B:"Remove",C:"Keep but collapse"}, default:"C" },
-  { key:"signals_show_filings", label:"4) Show Filings alerts inside Signals?", why:"You have Earnings tab too.", options:{A:"Keep inside Earnings expander",B:"Move to its own expander",C:"Remove"}, default:"A" },
-  { key:"signals_refresh_policy", label:"5) Refresh policy", why:"Avoid waste.", options:{A:"Refresh only on interval if tab visible",B:"Always refresh in background",C:"Manual only"}, default:"A" },
-  { key:"signals_refresh_s", label:"6) Interval", why:"If interval-based.", options:{A:"60s",B:"120s",C:"300s"}, default:"B" },
-  { key:"signals_badges", label:"7) Badges row", why:"Keep at top?", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"signals_badge_fields", label:"8) Badge fields", why:"What to show.", options:{A:"Halts/Earnings/Filings/Macro",B:"Halts/Filings only",C:"Custom"}, default:"A" },
-  { key:"signals_halts_table_rows", label:"9) Halts rows", why:"Table height.", options:{A:"8",B:"12",C:"20"}, default:"B" },
-  { key:"signals_macro_rows", label:"10) Macro rows", why:"How many feed items.", options:{A:"5",B:"12",C:"20"}, default:"B" },
-  { key:"signals_filings_rows", label:"11) Filings alerts rows", why:"How many alerts.", options:{A:"5",B:"10",C:"20"}, default:"B" },
-  { key:"signals_drive_dashboard", label:"12) Drive Dashboard highlights", why:"Should Signals override Dashboard tiles?", options:{A:"Yes",B:"No"}, default:"A" },
-  { key:"signals_keyboard", label:"13) Keyboard flow", why:"Any quick actions?", options:{A:"None",B:"Add 'Set main ticker' buttons",C:"Add hotkeys (later)"}, default:"B" },
-  { key:"signals_perf", label:"14) Performance posture", why:"How aggressive?", options:{A:"Conservative",B:"Normal",C:"Aggressive"}, default:"B" },
-  { key:"start_coding_signals_polish", label:"15) Start coding this Signals polish block now?", why:"If yes, I’ll implement collapse + refresh visibility + move/remove sections.", options:{A:"Yes",B:"Hold"}, default:"A" },
+  { key:"tape_colorize", label:"1) Watchlist tape: colorize by % change?", why:"Higher scanability.", options:{A:"Yes",B:"No"}, default:"A" },
+  { key:"tape_flash", label:"2) Tape: flash on threshold crossings?", why:"Only if you want motion.", options:{A:"Yes",B:"No"}, default:"B" },
+  { key:"tape_threshold", label:"3) Threshold", why:"Used only if flash is on.", options:{A:"0.5%",B:"1%",C:"2%"}, default:"B" },
+  { key:"tape_speed", label:"4) Tape speed", why:"How fast it scrolls.", options:{A:"Slow",B:"Normal",C:"Fast"}, default:"B" },
+  { key:"start_coding_tape_polish", label:"5) Start coding this tape polish block now?", why:"If yes, I’ll implement color/flash/speed.", options:{A:"Yes",B:"Hold"}, default:"A" },
 ];
 
 function el(tag, attrs={}, children=[]) {
   const e=document.createElement(tag);
   Object.entries(attrs).forEach(([k,v])=>{
     if(k==="class") e.className=v;
-    else if(k==="html") e.innerHTML=v;
     else e.setAttribute(k,v);
   });
   (Array.isArray(children)?children:[children]).forEach(c=>{
@@ -105,8 +89,7 @@ function renderQuestions() {
 function gather() {
   const out = { _updated_at: new Date().toISOString(), _block: BLOCK_TITLE };
   for (const q of DECISIONS) {
-    const groupName = `q_${q.key}`;
-    const sel = document.querySelector(`input[name='${groupName}']:checked`);
+    const sel = document.querySelector(`input[name='q_${q.key}']:checked`);
     out[q.key] = sel ? sel.value : q.default;
   }
   return out;
@@ -119,9 +102,6 @@ function setOut(obj) {
 }
 
 document.getElementById('block').textContent = BLOCK_TITLE;
-document.getElementById('note').style.display = 'inline-block';
-document.getElementById('note').textContent = BLOCK_NOTE;
-
 renderQuestions();
 
 document.getElementById('gen').addEventListener('click', () => setOut(gather()));
