@@ -3422,8 +3422,8 @@ with tab_signals:
         return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15);color:{col};font-size:12px;'>" \
                f"{label}: {detail}</span>"
 
-    # --- Auto-refresh throttle ---
-    refresh_s = 120.0
+    # --- Auto-refresh throttle (tab-visible only; this code runs only when Signals tab is active) ---
+    refresh_s = 120.0  # decisions: 120s
     now = time.time()
 
     st.session_state.setdefault("signals_last_refresh", 0.0)
@@ -3533,7 +3533,27 @@ with tab_signals:
                 show = show.sort_values("mins_to_resume", ascending=True)
 
             cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et", "mins_to_resume"] if c in show.columns]
-            st.dataframe(show[cols].head(12), use_container_width=True, height=420, hide_index=True)
+            show2 = show[cols].head(12).copy()
+            st.dataframe(show2, use_container_width=True, height=420, hide_index=True)
+
+            # Quick actions (buttons)
+            try:
+                hs = show2["symbol"].astype(str).tolist() if "symbol" in show2.columns else []
+                hs = [str(x).upper().strip() for x in hs if str(x).strip()]
+                if hs:
+                    pick = st.selectbox("Action symbol", hs, index=0, key="signals_halt_action_sym")
+                    bA, bB = st.columns([0.5, 0.5])
+                    if bA.button("Set main", key="signals_halt_set_main"):
+                        st.session_state["selected_ticker"] = pick
+                        st.toast(f"Main ticker set: {pick}")
+                        st.rerun()
+                    if bB.button("Focus (Scanner)", key="signals_halt_set_focus"):
+                        st.session_state["scanner_focus"] = pick
+                        st.session_state["scanner_pin"] = True
+                        st.toast(f"Scanner focus pinned: {pick}")
+                        st.rerun()
+            except Exception:
+                pass
 
     with cE:
         with st.expander("Earnings", expanded=False):
@@ -3571,18 +3591,19 @@ with tab_signals:
                     adf["score"] = pd.to_numeric(adf["score"], errors="coerce")
                     adf = adf.sort_values("score", ascending=False)
 
-                st.dataframe(adf[[c for c in ["symbol", "score", "current", "baseline"] if c in adf.columns]], use_container_width=True, height=200, hide_index=True)
+                adf2 = adf[[c for c in ["symbol", "score", "current", "baseline"] if c in adf.columns]].head(10).copy()
+                st.dataframe(adf2, use_container_width=True, height=200, hide_index=True)
 
                 # Drilldown: show report.md inline
                 opts = []
-                for _, r in adf.iterrows():
+                for _, r in adf.head(10).iterrows():
                     sym = str(r.get("symbol") or "")
                     sc = r.get("score")
                     opts.append(f"{sym} — score {sc}")
 
                 sel_ix = st.selectbox("Open report", list(range(len(opts))), format_func=lambda i: opts[i], key="signals_filings_open")
                 try:
-                    p = Path(str(adf.iloc[int(sel_ix)].get("report_md") or ""))
+                    p = Path(str(adf.head(10).iloc[int(sel_ix)].get("report_md") or ""))
                     if p.exists():
                         st.markdown(p.read_text(encoding="utf-8", errors="ignore"))
                     else:
@@ -3590,47 +3611,96 @@ with tab_signals:
                 except Exception as e:
                     st.caption(str(e))
 
+                # Quick actions
+                try:
+                    sym = str(adf.head(10).iloc[int(sel_ix)].get("symbol") or "").upper().strip()
+                    bA, bB = st.columns([0.5, 0.5])
+                    if bA.button("Set main", key="signals_filings_set_main"):
+                        st.session_state["selected_ticker"] = sym
+                        st.toast(f"Main ticker set: {sym}")
+                        st.rerun()
+                    if bB.button("Prep Earnings tab", key="signals_filings_prep_earn"):
+                        st.session_state["earnings_sym"] = sym
+                        st.toast("Earnings symbol set (open Earnings tab)")
+                except Exception:
+                    pass
+
     with cM:
-        st.markdown("### Macro")
-
-        # Auto-feed: Fed RSS (all urls from data/rss_feeds.json -> fed.urls)
-        try:
-            cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
-            fed_urls = ((cfg.get("fed") or {}).get("urls")) if isinstance(cfg, dict) else None
-            fed_urls = fed_urls if isinstance(fed_urls, list) else []
-        except Exception:
-            fed_urls = []
-
-        fr = FedRssFeed(data_dir=_data_dir(), urls=[str(u) for u in fed_urls])
-        st.session_state.setdefault("macro_last_fetch", 0.0)
-        if (time.time() - float(st.session_state.get("macro_last_fetch", 0.0))) >= 60 * 60:
+        with st.expander("Macro", expanded=False):
+            # Auto-feed: Fed RSS (all urls from data/rss_feeds.json -> fed.urls)
             try:
-                _ = fr.fetch()
+                cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
+                fed_urls = ((cfg.get("fed") or {}).get("urls")) if isinstance(cfg, dict) else None
+                fed_urls = fed_urls if isinstance(fed_urls, list) else []
             except Exception:
-                pass
-            st.session_state["macro_last_fetch"] = time.time()
+                fed_urls = []
 
-        dff = fr.read_cache()
-        if isinstance(dff, pd.DataFrame) and not dff.empty:
-            st.caption("Auto (Fed RSS) — most recent items")
-            show = dff.copy()
-            if "published_ts" in show.columns:
-                show = show.sort_values("published_ts", ascending=False)
-            st.dataframe(show[[c for c in ["published", "title"] if c in show.columns]].head(12), use_container_width=True, height=240, hide_index=True)
+            fr = FedRssFeed(data_dir=_data_dir(), urls=[str(u) for u in fed_urls])
+            st.session_state.setdefault("macro_last_fetch", 0.0)
+            if (time.time() - float(st.session_state.get("macro_last_fetch", 0.0))) >= 60 * 60:
+                try:
+                    _ = fr.fetch()
+                except Exception:
+                    pass
+                st.session_state["macro_last_fetch"] = time.time()
 
-            # highlight rule: most recent title + published
+            dff = fr.read_cache()
+            if isinstance(dff, pd.DataFrame) and not dff.empty:
+                st.caption("Auto (Fed RSS) — most recent items")
+                show = dff.copy()
+                if "published_ts" in show.columns:
+                    show = show.sort_values("published_ts", ascending=False)
+                st.dataframe(show[[c for c in ["published", "title"] if c in show.columns]].head(12), use_container_width=True, height=240, hide_index=True)
+
+                # highlight rule: most recent title + published
+                try:
+                    top = show.iloc[0].to_dict()
+                    title = str(top.get("title") or "").strip()
+                    pub = str(top.get("published") or "").strip()
+                    st.session_state.setdefault("next_macro_event", "")
+                    auto = f"{pub} — {title}".strip(" —")
+                    if not str(st.session_state.get("next_macro_event") or "").strip():
+                        st.session_state["next_macro_event"] = auto
+                except Exception:
+                    pass
+            else:
+                st.caption("No Fed RSS items cached yet.")
+
+            st.markdown("---")
+            st.markdown("#### News (small)")
+            st.caption("Cached RSS headlines (no fetch here).")
             try:
-                top = show.iloc[0].to_dict()
-                title = str(top.get("title") or "").strip()
-                pub = str(top.get("published") or "").strip()
-                st.session_state.setdefault("next_macro_event", "")
-                auto = f"{pub} — {title}".strip(" —")
-                if not str(st.session_state.get("next_macro_event") or "").strip():
-                    st.session_state["next_macro_event"] = auto
+                p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
+                if p.exists():
+                    obj = json.loads(p.read_text(encoding="utf-8"))
+                    rows = obj.get("rows") if isinstance(obj, dict) else None
+                    dfn = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+                else:
+                    dfn = pd.DataFrame()
             except Exception:
-                pass
-        else:
-            st.caption("No Fed RSS items cached yet.")
+                dfn = pd.DataFrame()
+
+            if isinstance(dfn, pd.DataFrame) and not dfn.empty:
+                show = dfn.copy()
+                if "published_ts" in show.columns:
+                    show["published_ts"] = pd.to_datetime(show["published_ts"], errors="coerce", utc=True)
+                    show = show.sort_values("published_ts", ascending=False)
+                try:
+                    show["title_norm"] = show["title"].astype(str).str.strip().str.lower()
+                    show = show.drop_duplicates(subset=["title_norm"], keep="first")
+                except Exception:
+                    pass
+                show = show.head(5)
+                for _, r in show.iterrows():
+                    pub = str(r.get("published") or "").strip()
+                    title = str(r.get("title") or "").strip()
+                    link = str(r.get("link") or "").strip()
+                    if link:
+                        st.markdown(f"- {pub} — [{title}]({link})")
+                    else:
+                        st.write(f"- {pub} — {title}")
+            else:
+                st.caption("No news cache yet.")
 
         st.markdown("---")
         st.caption("Manual note + next-event override")
