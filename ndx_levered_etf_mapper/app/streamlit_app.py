@@ -5546,15 +5546,67 @@ with tab_admin:
 
     st.write({"settings_path": str(_settings_path()), "scanners_dir": str(_scanners_dir())})
 
-    # Debug bundle
+    # Debug bundle + verbose logs
     with st.expander("Support / Debug bundle", expanded=False):
         st.caption("Creates a sanitized zip with recent logs (no secrets/tokens).")
-        if st.button("Create debug bundle"):
-            try:
-                bundle = create_debug_bundle(_data_dir())
-                st.success(f"Wrote: {bundle}")
-            except Exception as e:
-                st.error(str(e))
+
+        logs_dir = _data_dir() / "logs"
+        session_path = logs_dir / "spade_session.jsonl"
+        err_path = logs_dir / "spade_errors.jsonl"
+
+        c1, c2 = st.columns([0.35, 0.65])
+        with c1:
+            if st.button("Create debug bundle"):
+                try:
+                    bundle = create_debug_bundle(_data_dir())
+                    st.session_state["_last_debug_bundle"] = str(bundle)
+                    st.success(f"Wrote: {bundle}")
+                except Exception as e:
+                    st.error(str(e))
+
+        with c2:
+            bp = st.session_state.get("_last_debug_bundle")
+            if bp and Path(str(bp)).exists():
+                try:
+                    b = Path(str(bp)).read_bytes()
+                    st.download_button(
+                        "Download last bundle",
+                        data=b,
+                        file_name=Path(str(bp)).name,
+                        mime="application/zip",
+                    )
+                except Exception:
+                    st.caption("(Bundle exists but couldn't be read for download)")
+
+        st.markdown("##### Recent errors (tail)")
+        try:
+            if err_path.exists():
+                lines = err_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-300:]
+                rows = []
+                for ln in lines:
+                    try:
+                        rows.append(json.loads(ln))
+                    except Exception:
+                        continue
+                if rows:
+                    df = pd.DataFrame(rows)
+                    keep = [c for c in ["ts", "where", "type", "message", "fingerprint"] if c in df.columns]
+                    st.dataframe(df[keep].tail(80), use_container_width=True, height=240)
+                else:
+                    st.caption("(No parseable error rows yet)")
+            else:
+                st.caption("(No error log yet)")
+        except Exception as e:
+            st.caption(f"(Failed to render error tail: {e})")
+
+        st.markdown("##### Session events (tail)")
+        try:
+            if session_path.exists():
+                st.code("\n".join(session_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-120:]), language="json")
+            else:
+                st.caption("(No session log yet)")
+        except Exception as e:
+            st.caption(f"(Failed to render session tail: {e})")
 
     st.markdown("#### Schwab OAuth")
 

@@ -24,6 +24,7 @@ from pathlib import Path
 import time
 import re
 import subprocess
+import zipfile
 from urllib.parse import urlparse, parse_qs
 
 
@@ -434,6 +435,85 @@ def _append_log(obj: dict, *, repo: str | None) -> None:
         f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
 
 
+def _take_last_lines(path: Path, max_lines: int = 2000) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return lines[-max_lines:]
+    except Exception:
+        return []
+
+
+def _create_debug_bundle(repo: str | None) -> bytes:
+    """Return a sanitized debug zip (as bytes).
+
+    Contains tails of local logs and a few non-secret snapshots. Intended for
+    'what failed' troubleshooting.
+    """
+    data_dir = _data_dir(repo)
+    logs = data_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+
+    session = logs / "spade_session.jsonl"
+    errors = logs / "spade_errors.jsonl"
+
+    out = Path("debug_bundle_tmp.zip")
+
+    # We build in-memory (BytesIO would be ideal, but keep it simple/robust here).
+    # Use a temp file then read bytes.
+    try:
+        import io
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("spade_session.tail.jsonl", "\n".join(_take_last_lines(session)) + "\n")
+            z.writestr("spade_errors.tail.jsonl", "\n".join(_take_last_lines(errors)) + "\n")
+
+            # decisions (useful for reproducing schema filtering issues)
+            try:
+                p = _decisions_path(repo)
+                if p.exists():
+                    z.writestr("decisions.json", p.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                pass
+            try:
+                lp = _log_path(repo)
+                if lp.exists():
+                    z.writestr("decisions_log.tail.jsonl", "\n".join(_take_last_lines(lp)) + "\n")
+            except Exception:
+                pass
+
+            # schema snapshot
+            try:
+                sch = _load_schema(repo)
+                z.writestr("decisions_inbox_schema.json", json.dumps(sch, indent=2, ensure_ascii=False, default=str))
+            except Exception:
+                pass
+
+            # todo snapshot
+            try:
+                tp = _todo_status_path(repo)
+                if tp.exists():
+                    z.writestr("TODO_STATUS.md", "\n".join(_take_last_lines(tp, max_lines=1200)) + "\n")
+            except Exception:
+                pass
+
+            # simple runtime snapshot (no secrets)
+            snap = {
+                "repo": str(_root(repo)),
+                "data_dir": str(data_dir),
+                "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "tokens_present": (data_dir / "schwab_tokens.json").exists(),
+                "secrets_present": (data_dir / "schwab_secrets.local.json").exists(),
+            }
+            z.writestr("snapshot.json", json.dumps(snap, indent=2))
+
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 def _decorate_latest_for_client(latest: dict) -> dict:
     """Add per-category _received_at stamps for UI convenience.
 
@@ -508,6 +588,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"ok": True, **obj}, ensure_ascii=False, default=str).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self._cors()
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        if self.path in ("/debug_bundle", "/debug_bundle/"):
+            try:
+                blob = _create_debug_bundle(self.repo)
+                if not blob:
+                    raise RuntimeError("failed to create debug bundle")
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                fn = f"debug_bundle_{stamp}.zip"
+                self.send_response(200)
+                self._cors()
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", f"attachment; filename=\"{fn}\"")
+                self.end_headers()
+                self.wfile.write(blob)
             except Exception as e:
                 self.send_response(500)
                 self._cors()
