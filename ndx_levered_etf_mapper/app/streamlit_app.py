@@ -2646,22 +2646,22 @@ with tab_wall:
     st.subheader("Wall")
     st.caption("Wide monitor wall: dense grid view. Schwab-only quotes. No live orders.")
 
-    # Decisions applied:
-    # - grid: 4x8
-    # - source: Watchlist + Hot List (combined)
-    # - refresh: 60s
-    # - quote TTL: 30s
-    # - micro sparkline: 1h
-    # - heat: on (computed locally from current wall universe)
-    # - click behavior: both (set main ticker + focus scanner)
-    # - filters: movers only
-    # - color: by % change
-    # - badges: halt + filings
-    # - export: csv + pdf
-    # - perf: aggressive
+    # Guardrails + polish (stored in app_settings.json)
+    st.session_state.setdefault("wall_autorefresh", True)
+    st.session_state.setdefault("wall_refresh_s", 60)
+    st.session_state.setdefault("wall_quote_ttl_s", 30)
+    st.session_state.setdefault("wall_max_universe", 120)
+    st.session_state.setdefault("wall_top_n", 32)
 
-    # Auto-refresh
-    st_autorefresh(interval=60 * 1000, key="wall_autorefresh")
+    c1, c2, c3, c4, c5 = st.columns([0.18, 0.22, 0.20, 0.20, 0.20])
+    c1.toggle("Auto-refresh", key="wall_autorefresh")
+    c2.write(f"Every: {int(st.session_state.get('wall_refresh_s', 60))}s")
+    c3.write(f"TTL: {int(st.session_state.get('wall_quote_ttl_s', 30))}s")
+    c4.write(f"Max pool: {int(st.session_state.get('wall_max_universe', 120))}")
+    c5.write(f"Top N: {int(st.session_state.get('wall_top_n', 32))}")
+
+    if bool(st.session_state.get("wall_autorefresh", True)):
+        st_autorefresh(interval=int(st.session_state.get("wall_refresh_s", 60)) * 1000, key="wall_autorefresh_tick")
 
     # Build symbol universe
     watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
@@ -2674,8 +2674,12 @@ with tab_wall:
         if s not in universe:
             universe.append(s)
 
-    # Aggressive posture: allow larger candidate pool, but cap fetches
-    universe = universe[:120]
+    # Candidate pool cap
+    try:
+        cap = int(st.session_state.get("wall_max_universe", 120))
+    except Exception:
+        cap = 120
+    universe = universe[: max(20, min(250, cap))]
 
     # Quote cache (TTL=30s)
     st.session_state.setdefault("wall_quote_cache", {})
@@ -2684,9 +2688,10 @@ with tab_wall:
         qc = {}
         st.session_state["wall_quote_cache"] = qc
 
-    def _wall_quote(sym: str, ttl_s: float = 30.0) -> dict:
+    def _wall_quote(sym: str) -> dict:
         sym = str(sym).upper().strip()
         now = time.time()
+        ttl_s = float(st.session_state.get("wall_quote_ttl_s", 30) or 30)
         rec = qc.get(sym)
         if isinstance(rec, dict):
             ts = float(rec.get("ts", 0.0) or 0.0)
@@ -2731,12 +2736,13 @@ with tab_wall:
     # Build rows (quotes)
     rows = []
     for s in universe:
-        q = _wall_quote(s, ttl_s=30.0)
+        q = _wall_quote(s)
         px = q.get("mark") or q.get("last")
         chg = q.get("netChange")
         chgp = q.get("netPct")
         vol = q.get("totalVolume") or q.get("volume")
-        rows.append({"symbol": s, "px": px, "chg_%": chgp, "chg": chg, "vol": vol})
+        stale = bool(not q) or (px is None and chgp is None)
+        rows.append({"symbol": s, "px": px, "chg_%": chgp, "chg": chg, "vol": vol, "stale": stale})
 
     df = pd.DataFrame(rows)
     for c in ["px", "chg_%", "chg", "vol"]:
@@ -2747,8 +2753,12 @@ with tab_wall:
     df["abs_chg_%"] = df["chg_%"].abs()
     df = df.sort_values("abs_chg_%", ascending=False)
 
-    # Grid 4x8 => 32 tiles
-    N = 32
+    # Grid 4x8 => Top N
+    try:
+        N = int(st.session_state.get("wall_top_n", 32))
+    except Exception:
+        N = 32
+    N = max(8, min(80, N))
     df = df.head(N).copy()
 
     # Heat score (local ranks across wall only)
@@ -2779,6 +2789,7 @@ with tab_wall:
         c.drawString(40, 760, "Market Hub — Wall snapshot")
         c.setFont("Helvetica", 10)
         c.drawString(40, 744, time.strftime("%Y-%m-%d %H:%M:%S"))
+        c.drawString(250, 744, f"mode: {st.session_state.get('event_mode','Normal')}")
 
         y = 720
         c.setFont("Helvetica-Bold", 9)
@@ -2840,11 +2851,16 @@ with tab_wall:
             chgp = r.get("chg_%")
             heat = r.get("heat")
 
+            stale = bool(r.get("stale"))
+
             badge = ""
             if sym in halts_active:
                 badge += " HALT"
             if sym in filings_syms:
                 badge += " FIL"
+            if stale:
+                badge += " STALE"
+
             bg = _tile_color(chgp)
             cols[j].markdown(
                 f"<div style='padding:10px;border-radius:12px;background:{bg};border:1px solid rgba(255,255,255,0.10)'>"
