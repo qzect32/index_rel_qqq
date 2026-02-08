@@ -42,24 +42,79 @@ def _todo_status_path(repo: str | None) -> Path:
 
 
 def _todo_stats(repo: str | None) -> dict:
-    """Return {total, done, pct_done} from TODO_STATUS.md if present."""
+    """Return TODO stats from TODO_STATUS.md if present.
+
+    Raw pct_done counts only DONE.
+    Normalized pct_norm treats IN-PROGRESS as partial credit to better reflect reality.
+    """
     p = _todo_status_path(repo)
     if not p.exists():
-        return {"total": 0, "done": 0, "pct_done": 0.0}
+        return {
+            "total": 0,
+            "done": 0,
+            "in_progress": 0,
+            "blocked": 0,
+            "pct_done": 0.0,
+            "pct_norm": 0.0,
+        }
 
     total = 0
     done = 0
+    in_progress = 0
+    blocked = 0
+    cur_status: str | None = None
+
+    def _bump(status: str | None):
+        nonlocal done, in_progress, blocked
+        if not status:
+            return
+        s = status.strip().upper()
+        if s == "DONE":
+            done += 1
+        elif s in ("IN-PROGRESS", "IN PROGRESS", "INPROGRESS"):
+            in_progress += 1
+        elif s == "BLOCKED":
+            blocked += 1
+
     try:
         for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines():
             if ln.startswith("## "):
+                # finalize previous
+                if cur_status is not None:
+                    _bump(cur_status)
                 total += 1
-            if ln.strip() == "- STATUS: DONE":
-                done += 1
-    except Exception:
-        return {"total": 0, "done": 0, "pct_done": 0.0}
+                cur_status = "IN-PROGRESS"  # default if missing
+                continue
+            if ln.strip().startswith("- STATUS:"):
+                cur_status = ln.strip().split(":", 1)[1].strip()
 
-    pct = (float(done) / float(total) * 100.0) if total else 0.0
-    return {"total": int(total), "done": int(done), "pct_done": round(pct, 1)}
+        # finalize last
+        if cur_status is not None:
+            _bump(cur_status)
+    except Exception:
+        return {
+            "total": 0,
+            "done": 0,
+            "in_progress": 0,
+            "blocked": 0,
+            "pct_done": 0.0,
+            "pct_norm": 0.0,
+        }
+
+    pct_done = (float(done) / float(total) * 100.0) if total else 0.0
+
+    # Normalization heuristic: DONE=1.0, IN-PROGRESS=0.35, BLOCKED=0.0
+    credit = float(done) + 0.35 * float(in_progress)
+    pct_norm = (credit / float(total) * 100.0) if total else 0.0
+
+    return {
+        "total": int(total),
+        "done": int(done),
+        "in_progress": int(in_progress),
+        "blocked": int(blocked),
+        "pct_done": round(pct_done, 1),
+        "pct_norm": round(pct_norm, 1),
+    }
 
 
 def _todo_open_items(repo: str | None, *, limit: int = 15, answered: set[str] | None = None) -> list[dict]:
@@ -213,12 +268,55 @@ def _schema_with_todo(repo: str | None, *, include_answered: bool) -> dict:
                 filt.append(it)
             c2 = dict(c)
             c2["items"] = filt
-            new_cats.append(c2)
+            # Drop empty categories so the UI doesn't show 'notes-only' tabs.
+            if filt:
+                new_cats.append(c2)
         cats = new_cats
 
-    # NOTE: We no longer inject TODO items as a Decisions category.
-    # TODO progress is still exposed via /status and schema meta.
+    # Inject a dynamic TODO decisions category.
+    # This keeps the Decisions Hub useful even when all static batches are answered.
     stats = _todo_stats(repo)
+    open_items = _todo_open_items(repo, limit=12, answered=answered)
+    todo_items = []
+    for it in open_items:
+        i = int(it.get("i") or 0)
+        title = str(it.get("title") or "").strip()
+        todo_items.append(
+            {
+                "key": f"todo_{i}",
+                "q": f"TODO #{i}: {title}",
+                "opts": {"A": "Do now", "B": "Queue", "C": "Skip"},
+                "default": "B",
+            }
+        )
+
+    if todo_items:
+        cats = list(cats) + [
+            {
+                "id": "todo",
+                "name": "TODO — next up",
+                "notesKey": "todo_notes",
+                "items": todo_items,
+            }
+        ]
+
+    # If everything is answered and TODO injection had nothing new, keep the UI usable.
+    if not cats:
+        cats = [
+            {
+                "id": "meta",
+                "name": "No unanswered questions",
+                "notesKey": "meta_notes",
+                "items": [
+                    {
+                        "key": "no_unanswered",
+                        "q": "Nothing new to decide right now. Next step: toggle 'Show answered' or bump schema to a new batch.",
+                        "opts": {"A": "OK"},
+                        "default": "A",
+                    }
+                ],
+            }
+        ]
 
     sch["categories"] = list(cats)
     sch.setdefault("meta", {})
@@ -302,6 +400,31 @@ def _append_log(obj: dict, *, repo: str | None) -> None:
         f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
 
 
+def _decorate_latest_for_client(latest: dict) -> dict:
+    """Add per-category _received_at stamps for UI convenience.
+
+    The UI computes 'unread' state per-tab, but the saved decisions payload has
+    a single top-level _received_at. We copy it onto each category dict when
+    serving /status so tabs can compare stamps.
+    """
+    if not isinstance(latest, dict):
+        return {}
+    ra = latest.get("_received_at")
+    cats = latest.get("categories") if isinstance(latest.get("categories"), dict) else {}
+    out = dict(latest)
+    out_cats: dict = {}
+    for cid, payload in cats.items():
+        if isinstance(payload, dict):
+            p2 = dict(payload)
+            if ra is not None and "_received_at" not in p2:
+                p2["_received_at"] = ra
+            out_cats[cid] = p2
+        else:
+            out_cats[cid] = payload
+    out["categories"] = out_cats
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     repo: str | None = None
 
@@ -319,6 +442,8 @@ class Handler(BaseHTTPRequestHandler):
                     latest = json.loads(p.read_text(encoding="utf-8"))
                     if not isinstance(latest, dict):
                         latest = {}
+
+                latest = _decorate_latest_for_client(latest)
 
                 todo = _todo_stats(self.repo)
                 vel = _git_velocity(self.repo)

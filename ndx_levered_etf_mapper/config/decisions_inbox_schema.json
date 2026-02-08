@@ -1,94 +1,49 @@
 {
-  "version": 8,
+  "version": 10,
   "title": "Decisions Hub (desktop submit)",
-  "note": "Batch 6 (rotated). No TODO category. Focus: Scanner/Signals/News/Wall polish + guardrails.",
+  "note": "Batch 8: next-steps decisions after completing batch 7 (feeds/guardrails/debug UX). TODO triage injected dynamically.",
   "categories": [
     {
-      "id": "scanner6",
-      "name": "Scanner — batch 6",
-      "notesKey": "scanner6_notes",
+      "id": "scanner8",
+      "name": "Scanner — batch 8",
+      "notesKey": "scanner8_notes",
       "items": [
-        {"key": "scanner_presets", "q": "Add 3 presets (Momentum / Reversal / News) for filters", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_preset_default", "q": "Default preset", "opts": {"A": "Momentum", "B": "Reversal", "C": "News"}, "default": "A"},
-        {"key": "scanner_sort_default", "q": "Default sort", "opts": {"A": "$ volume", "B": "% move", "C": "Heat"}, "default": "A"},
-        {"key": "scanner_show_float", "q": "Show float (if available later)", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "scanner_show_iv", "q": "Show IV (if available later)", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "scanner_focus_quick_actions", "q": "Focus: add quick actions row (Set main / Hot+ / Alert dry-run)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_focus_news_snippets", "q": "Focus: show 1–2 line snippet for related headlines", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_focus_show_halts", "q": "Focus intel: show halts section", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_focus_show_filings", "q": "Focus intel: show filings section", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_focus_show_news", "q": "Focus intel: show news section", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_cache_scan_results", "q": "Cache last scan results so tab reload is instant", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "scanner_cache_ttl_s", "q": "Last scan cache TTL", "opts": {"A": "60s", "B": "180s", "C": "600s"}, "default": "B"},
-        {"key": "scanner_export_defaults", "q": "Scanner exports default", "opts": {"A": "CSV only", "B": "PDF only", "C": "Both"}, "default": "C"},
-        {"key": "scanner_guardrail_ui", "q": "Show guardrail budget bar inside Scanner", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "start_coding_scanner_batch6", "q": "Start coding Scanner batch 6 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "scanner_focus_snapshot_bundle", "q": "Focus: add 1-click debug snapshot bundle (prices/news/halts/filings payload excerpts)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "scanner_focus_latency_badges", "q": "Focus: show per-section latency/cache-age badges", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "scanner_quote_budget_default", "q": "Scanner: default quote budget posture", "opts": {"A": "Conservative", "B": "Normal", "C": "Aggressive"}, "default": "B"},
+        {"key": "start_coding_scanner_batch8", "q": "Start coding Scanner batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "signals6",
-      "name": "Signals — batch 6",
-      "notesKey": "signals6_notes",
+      "id": "signals8",
+      "name": "Signals — batch 8",
+      "notesKey": "signals8_notes",
       "items": [
-        {"key": "signals_news_match_mode", "q": "News match mode", "opts": {"A": "Main ticker only", "B": "Watchlist+main"}, "default": "A"},
-        {"key": "signals_news_show_snippet", "q": "Show snippet if feed provides summary", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "signals_macro_max_items", "q": "Macro items shown", "opts": {"A": "3", "B": "5", "C": "10"}, "default": "B"},
-        {"key": "signals_macro_default_open", "q": "Macro expander default", "opts": {"A": "Closed", "B": "Open"}, "default": "A"},
-        {"key": "signals_halts_highlight_rules", "q": "Halts highlight rules", "opts": {"A": "Active only", "B": "Active + just resumed"}, "default": "A"},
-        {"key": "signals_filings_badge_threshold", "q": "Filings badge threshold", "opts": {"A": "Score ≥10", "B": "Score ≥5", "C": "Any"}, "default": "A"},
-        {"key": "signals_refresh_buttons", "q": "Refresh buttons", "opts": {"A": "None", "B": "Per-section"}, "default": "A"},
-        {"key": "signals_show_cache_age_everywhere", "q": "Show cache age badges on all sections", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "signals_onepager_export", "q": "Add 1-click Signals one-pager export (md)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "signals_focus_buttons", "q": "Keep Focus / Set Main buttons", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "signals_hide_blocked_sections", "q": "Hide BLOCKED sections by default", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "signals_layout_density", "q": "Layout density", "opts": {"A": "Compact", "B": "Normal"}, "default": "A"},
-        {"key": "signals_perf_cap", "q": "Perf cap posture", "opts": {"A": "Aggressive", "B": "Normal"}, "default": "A"},
-        {"key": "signals_show_status_table", "q": "Show feeds status table in Signals", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "start_coding_signals_batch6", "q": "Start coding Signals batch 6 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "signals_fail_open", "q": "If a feed errors/blocks, should Signals show the section anyway (with error) or hide it?", "opts": {"A": "Show with error", "B": "Hide"}, "default": "A"},
+        {"key": "signals_feed_retry", "q": "Feed retry policy", "opts": {"A": "Exponential backoff", "B": "Fixed interval"}, "default": "A"},
+        {"key": "signals_export_bundle", "q": "Signals export bundle", "opts": {"A": "Markdown only", "B": "Markdown + JSON"}, "default": "B"},
+        {"key": "start_coding_signals_batch8", "q": "Start coding Signals batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "news6",
-      "name": "News — batch 6",
-      "notesKey": "news6_notes",
+      "id": "news8",
+      "name": "News — batch 8",
+      "notesKey": "news8_notes",
       "items": [
-        {"key": "news_default_filter", "q": "Default filter", "opts": {"A": "None", "B": "Main ticker", "C": "Watchlist"}, "default": "B"},
-        {"key": "news_group_by_symbol", "q": "Group headlines by detected symbol", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_show_snippet", "q": "Show snippet/summary when available", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_open_in_browser", "q": "Add open-in-browser button per row", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_export_mode", "q": "News export", "opts": {"A": "CSV", "B": "JSON", "C": "None"}, "default": "A"},
-        {"key": "news_export_include_filters", "q": "Export includes current filters", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_dedupe_window", "q": "Dedupe window", "opts": {"A": "Same-day", "B": "48h", "C": "7d"}, "default": "B"},
-        {"key": "news_match_case", "q": "Ticker matching case", "opts": {"A": "Case-insensitive", "B": "Strict"}, "default": "A"},
-        {"key": "news_hide_low_quality", "q": "Hide low-quality sources (manual list)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "news_low_quality_ui", "q": "Add UI to edit low-quality list", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "news_show_failures", "q": "Show fetch failures inline", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "news_refresh_button", "q": "Manual refresh button", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "news_max_rows", "q": "Max rows shown", "opts": {"A": "50", "B": "100", "C": "200"}, "default": "B"},
-        {"key": "news_perf_mode", "q": "Perf mode", "opts": {"A": "Normal", "B": "Aggressive"}, "default": "B"},
-        {"key": "start_coding_news_batch6", "q": "Start coding News batch 6 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "news_state_persist", "q": "Persist RSS state to disk (dedupe + last seen) to survive restarts", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "news_source_mix", "q": "Preferred source mix", "opts": {"A": "Few high-quality", "B": "Broad coverage"}, "default": "A"},
+        {"key": "news_open_behavior", "q": "Open behavior", "opts": {"A": "New tab", "B": "Inline reader"}, "default": "B"},
+        {"key": "start_coding_news_batch8", "q": "Start coding News batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     },
     {
-      "id": "wall6",
-      "name": "Wall — batch 6",
-      "notesKey": "wall6_notes",
+      "id": "wall8",
+      "name": "Wall — batch 8",
+      "notesKey": "wall8_notes",
       "items": [
-        {"key": "wall_tasteful_theme", "q": "Wall theme", "opts": {"A": "Tasteful (muted)", "B": "Aggressive (bright)"}, "default": "A"},
-        {"key": "wall_tile_density", "q": "Tile density", "opts": {"A": "More info", "B": "Less info"}, "default": "B"},
-        {"key": "wall_badge_style", "q": "Badge style", "opts": {"A": "Small", "B": "Large"}, "default": "A"},
-        {"key": "wall_show_reason", "q": "Show 'why moving' hint on hover", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "wall_click_action", "q": "Tile click action", "opts": {"A": "Set main ticker", "B": "Open Focus in Scanner"}, "default": "B"},
-        {"key": "wall_color_rule", "q": "Color rule", "opts": {"A": "By net %", "B": "By heat"}, "default": "A"},
-        {"key": "wall_sparkline_show", "q": "Show sparkline", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "wall_sparkline_ttl", "q": "Sparkline TTL", "opts": {"A": "60s", "B": "120s", "C": "300s"}, "default": "B"},
-        {"key": "wall_refresh_default", "q": "Autorefresh default", "opts": {"A": "On", "B": "Off"}, "default": "A"},
-        {"key": "wall_refresh_s_default", "q": "Autorefresh seconds", "opts": {"A": "30", "B": "60", "C": "120"}, "default": "B"},
-        {"key": "wall_export_bundle", "q": "Wall export bundle", "opts": {"A": "PDF+CSV", "B": "PDF only", "C": "None"}, "default": "A"},
-        {"key": "wall_export_include_badges", "q": "Export includes badges", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
-        {"key": "wall_perf_cap", "q": "Perf cap", "opts": {"A": "Normal", "B": "Aggressive"}, "default": "B"},
-        {"key": "wall_hide_stale", "q": "Hide stale tiles", "opts": {"A": "No", "B": "Yes"}, "default": "A"},
-        {"key": "start_coding_wall_batch6", "q": "Start coding Wall batch 6 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
+        {"key": "wall_debug_overlay", "q": "Add optional debug overlay (data age / last quote time / update loop time)", "opts": {"A": "Yes", "B": "No"}, "default": "A"},
+        {"key": "wall_refresh_strategy", "q": "Refresh strategy", "opts": {"A": "Staggered per-tile", "B": "Global tick"}, "default": "A"},
+        {"key": "start_coding_wall_batch8", "q": "Start coding Wall batch 8 now?", "opts": {"A": "Yes", "B": "Hold"}, "default": "A"}
       ]
     }
   ]
