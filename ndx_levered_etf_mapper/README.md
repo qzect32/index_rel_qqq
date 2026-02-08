@@ -10,6 +10,23 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 
 ## Changelog (running)
 
+### 2026-02-08
+- **Decisions Hub**: shipped multiple decision batches (performance/guardrails → feed quality → UI/UX+debugging) via `config/decisions_inbox_schema.json`
+- **Decisions listener** (`scripts/decisions_listener.py`):
+  - Filters out empty categories (prevents "notes-only" tabs after completing a batch)
+  - Injects TODO triage questions dynamically
+  - Adds decisions progress stats into schema meta (answered/total/%/remaining)
+  - Adds `GET /debug_bundle` endpoint to download a sanitized debug zip
+- **Decisions form** (`decisions_form.html`):
+  - Progress pill now combines Decisions progress + normalized TODO progress
+  - Build stamp + submit guard hardening (reduces submit-time "not rendered" edge cases)
+- **Streamlit app** (`app/streamlit_app.py`):
+  - Debugging UX upgraded: create bundle + download button + verbose tails for `spade_errors.jsonl` and `spade_session.jsonl`
+- **Project ops**:
+  - Refreshed `TODO_STATUS.md` (normalized tracking)
+  - Added `scripts/metrics_24h.py` to compute last-24h commits/LOC/files + decisions/todo stats
+  - README updated with Decisions Hub + debugging bundle docs
+
 ### 2026-02-07
 - **Signals hub**: 3-panel layout (Halts | Earnings | Macro) + status badges
 - **Earnings**: new Earnings tab + SEC EDGAR filings list + download → diff → score → report (md+json)
