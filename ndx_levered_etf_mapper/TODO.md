@@ -29,6 +29,14 @@ Decision-related blocks should be captured as explicit TODOs under “Implementa
 
 ## 0) Inventory: what currently requires external APIs / sources
 
+### Dexter integration (deep research agent)
+
+- Goal: run Dexter as an integrated research sidecar (non-interactive) from Market Hub UI.
+- STATUS: IN-PROGRESS
+- NEXT: add an "Install/Doctor" check in Admin tab (bun present, dexter repo present, required env keys present) + add explicit instructions for storing keys in `~/.openclaw/.env`.
+- BLOCKERS: bun not installed / not on PATH on some machines; API keys must be provisioned.
+
+
 ### A) Schwab APIs we *haven’t confirmed / wired* yet
 
 1) **Schwab-native Alerts (TOS/Schwab Mobile)**
