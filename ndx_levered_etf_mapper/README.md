@@ -106,6 +106,43 @@ Polygon support has been removed.
 
 ---
 
+## Release checklist (for real use)
+
+Before you call this “ready”, run this list in order:
+
+1) **Clean tree**
+   - `git status` is clean
+
+2) **Static checks**
+   - `python -m ruff check .`
+   - `python -m pytest -q`
+
+3) **Local ops sanity**
+   - `python scripts/mh_doctor.py` (creates a quick local report; no secrets)
+   - (optional) `python scripts/metrics_24h.py` to refresh progress stats
+
+4) **Safety: paper trading only (default)**
+   - Confirm `SchwabConfig.paper_trading_only=True` (default)
+   - Any attempted order placement should write to `data/paper_orders.jsonl` and return a stub response
+
+5) **Manual smoke test (Streamlit)**
+   - `streamlit run app/streamlit_app.py`
+   - Verify:
+     - Admin → Schwab OAuth connect flow
+     - Quotes + 1m candles render for a liquid symbol (e.g., SPY)
+     - Options chain loads (SPY)
+     - Exposure tab loads account/positions (read-only)
+     - Debug bundle downloads; tails render without crashing
+
+6) **Release metadata**
+   - Bump `pyproject.toml` version
+   - Append to `CHANGELOG.md`
+
+7) **Publish**
+   - `git push origin main`
+
+---
+
 ## Installation
 
 ### 1) Prerequisites

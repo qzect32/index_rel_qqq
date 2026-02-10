@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+import time
 import urllib.parse
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import requests
@@ -26,6 +29,11 @@ class SchwabConfig:
     base_url: str = DEFAULT_BASE_URL
     auth_url: str = DEFAULT_AUTH_URL
     token_url: str = DEFAULT_TOKEN_URL
+
+    # Safety: default to paper-trading only.
+    # Set paper_trading_only=False only if you explicitly intend to place LIVE orders.
+    paper_trading_only: bool = True
+    paper_orders_path: str = "data/paper_orders.jsonl"
 
 
 class SchwabAPI:
@@ -192,5 +200,25 @@ class SchwabAPI:
         return self._get(f"/trader/v1/accounts/{account_hash}", params={"fields": fields})
 
     def place_order(self, account_hash: str, order: dict[str, Any]) -> Any:
-        # WARNING: this can place real orders if your app is entitled. Keep UI guarded.
+        """Place an order.
+
+        SAFETY DEFAULT:
+        - In Market Hub we default to paper trading (log-only) to prevent accidental live orders.
+        - To enable live order placement you must explicitly set SchwabConfig.paper_trading_only=False.
+        """
+        if bool(getattr(self.cfg, "paper_trading_only", True)):
+            # Log locally and return a stable stub response.
+            p = Path(str(getattr(self.cfg, "paper_orders_path", "data/paper_orders.jsonl")))
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                "mode": "PAPER",
+                "account_hash": account_hash,
+                "order": order,
+            }
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+            return {"status": "PAPER", "paper_orders_path": str(p), "record": rec}
+
+        # LIVE order path (explicit opt-in only).
         return self._post(f"/trader/v1/accounts/{account_hash}/orders", json_body=order)
