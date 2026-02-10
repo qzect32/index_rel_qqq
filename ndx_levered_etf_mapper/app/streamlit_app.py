@@ -2674,7 +2674,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_scaffolds, tab_decisions, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_dexter, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_scaffolds, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
@@ -2683,6 +2683,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
         "Signals",
         "News",
         "Earnings",
+        "Dexter",
         "Overview",
         "Relations",
         "Options",
@@ -5909,6 +5910,83 @@ with tab_earnings:
         st.markdown("### Sentiment / diff (scaffold)")
         st.caption("Next: download filing text and compare Risk Factors + MD&A vs prior quarter.")
         st.text_area("Notes", value="", height=240, placeholder="What changed? Any new risk language? Guidance tone shift?…")
+
+
+with tab_dexter:
+    st.subheader("Dexter (deep financial research)")
+    st.caption(
+        "Integrates the Dexter agent (virattt/dexter) as a research sidecar. "
+        "Requires Bun + API keys (OpenAI + FinancialDatasets)."
+    )
+
+    st.markdown("### Query")
+    q_default = "Analyze NVDA: key risks, catalysts, and what to watch next week."
+    query = st.text_area("Question", value=q_default, height=110, key="dexter_query")
+
+    st.session_state.setdefault("dexter_timeout_s", 600)
+    timeout_s = st.number_input(
+        "Timeout (seconds)",
+        min_value=60,
+        max_value=3600,
+        value=int(st.session_state.get("dexter_timeout_s", 600)),
+        step=30,
+    )
+
+    # Default expected location: sibling clone under ~/.openclaw/workspace/dexter
+    dexter_dir_hint = str((Path(__file__).resolve().parents[2] / "dexter").resolve())
+    st.text_input(
+        "Dexter repo directory (optional override)",
+        value=str(st.session_state.get("dexter_dir", "")),
+        key="dexter_dir",
+        help=f"Default expected location: {dexter_dir_hint}",
+    )
+
+    st.info(
+        "Paper trading safety: this integration is research-only. It does not submit live orders. "
+        "(Any order placement is gated separately in the Schwab client.)"
+    )
+
+    if st.button("Run Dexter", key="dexter_run"):
+        import sys
+        import subprocess
+
+        dd = _data_dir()
+        bridge = (Path(__file__).resolve().parents[1] / "scripts" / "dexter_bridge.py").resolve()
+        cmd = [
+            sys.executable,
+            str(bridge),
+            "--query",
+            str(query),
+            "--out-dir",
+            str(dd),
+            "--timeout-s",
+            str(int(timeout_s)),
+        ]
+        dexter_dir = str(st.session_state.get("dexter_dir") or "").strip()
+        if dexter_dir:
+            cmd += ["--dexter-dir", dexter_dir]
+
+        with st.spinner("Running Dexter…"):
+            p = subprocess.run(cmd, capture_output=True, text=True)
+
+        if p.returncode != 0:
+            st.error("Dexter run failed")
+            st.code((p.stdout or "") + "\n" + (p.stderr or ""))
+        else:
+            try:
+                obj = json.loads(p.stdout)
+            except Exception:
+                obj = {"raw": p.stdout}
+            st.success("Dexter completed")
+            out_path = (obj.get("out") if isinstance(obj, dict) else None)
+            if out_path:
+                st.caption(f"Saved: {out_path}")
+            res = obj.get("result") if isinstance(obj, dict) else None
+            if isinstance(res, dict) and res.get("answer"):
+                st.markdown("### Answer")
+                st.markdown(str(res.get("answer")))
+            st.markdown("### Raw output")
+            st.json(obj)
 
 
 with tab_overview:

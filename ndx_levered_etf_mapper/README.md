@@ -149,6 +149,15 @@ Before you call this “ready”, run this list in order:
 - **Python 3.10+**
 - A Schwab Developer Portal app (client id/secret)
 
+Optional (Dexter deep research):
+- **Bun** runtime (Dexter)
+- API keys for Dexter:
+  - `OPENAI_API_KEY`
+  - `FINANCIAL_DATASETS_API_KEY`
+  - (optional) `EXASEARCH_API_KEY` or `TAVILY_API_KEY`
+
+We recommend storing these in `~/.openclaw/.env` (OpenClaw global env file), so both OpenClaw and Market Hub can read them.
+
 ### 2) Create a virtualenv and install
 
 ```bash
