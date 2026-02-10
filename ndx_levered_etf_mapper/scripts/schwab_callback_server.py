@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Local Schwab OAuth callback catcher (no extra deps).
 
 Schwab forces HTTPS redirect URIs for localhost in some configurations.
