@@ -5274,8 +5274,26 @@ with tab_signals:
         st.markdown("---")
         st.caption("Manual note + next-event override")
         st.text_area("Notes", key="macro_events", height=160, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+
+        # Avoid duplicate widget keys: Dashboard owns `next_macro_event`.
         st.session_state.setdefault("next_macro_event", "")
-        st.text_area("Next event", key="next_macro_event", height=90, placeholder="CPI 08:30 ET — notes…")
+        st.session_state.setdefault(
+            "next_macro_event_signals",
+            str(st.session_state.get("next_macro_event") or ""),
+        )
+        st.text_area(
+            "Next event",
+            key="next_macro_event_signals",
+            height=90,
+            placeholder="CPI 08:30 ET — notes…",
+        )
+        # Sync back to the shared value (safe: different widget key).
+        try:
+            v = str(st.session_state.get("next_macro_event_signals") or "").strip()
+            if v != str(st.session_state.get("next_macro_event") or "").strip():
+                st.session_state["next_macro_event"] = v
+        except Exception:
+            pass
 
         st.markdown("---")
         st.markdown("#### News (RSS)")
