@@ -28,7 +28,7 @@ def _filings_root(data_dir: Path) -> Path:
 def _user_agent() -> str:
     # SEC requires a descriptive UA with contact. Keep generic but descriptive.
     # You can override later via config.
-    return "MarketHub/0.1 (local research; contact: user)"
+    return "Market Hub/0.1 (local research; contact: user)"
 
 
 def _get_json(url: str, *, headers: dict, timeout: float = 15.0) -> dict:

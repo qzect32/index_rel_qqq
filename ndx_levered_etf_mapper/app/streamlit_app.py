@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import sqlite3
 import json
+import time
 from datetime import datetime
 from typing import Optional, Iterable
 
@@ -37,7 +39,6 @@ from streamlit_autorefresh import st_autorefresh
 
 # PDF exports (reportlab)
 from io import BytesIO
-import time
 import zipfile
 
 from etf_mapper.schwab import SchwabAPI, SchwabConfig
@@ -51,21 +52,138 @@ from etf_mapper.build_prices import refresh_prices
 from etf_mapper.build import refresh_universe as refresh_relations
 
 
+# ---------- Lightweight instrumentation ----------
+# Local-only counters/timers to help debug performance + cache behavior.
+# No secrets/tokens; safe to include in debug bundles.
+
+def _metrics() -> dict:
+    st.session_state.setdefault("_metrics", {"counters": {}, "timings_ms": {}})
+    m = st.session_state.get("_metrics")
+    if not isinstance(m, dict):
+        m = {"counters": {}, "timings_ms": {}}
+        st.session_state["_metrics"] = m
+    m.setdefault("counters", {})
+    m.setdefault("timings_ms", {})
+    return m
+
+
+def _metric_inc(name: str, by: int = 1) -> None:
+    try:
+        m = _metrics()
+        c = m.get("counters")
+        if not isinstance(c, dict):
+            c = {}
+            m["counters"] = c
+        c[name] = int(c.get(name, 0) or 0) + int(by)
+    except Exception:
+        # instrumentation must never break the app
+        pass
+
+
+class _MetricTimer:
+    def __init__(self, name: str):
+        self.name = name
+        self.t0 = None
+
+    def __enter__(self):
+        self.t0 = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if self.t0 is None:
+                return
+            dt_ms = int(round((time.time() - self.t0) * 1000.0))
+            m = _metrics()
+            t = m.get("timings_ms")
+            if not isinstance(t, dict):
+                t = {}
+                m["timings_ms"] = t
+            # store last + total + count (cheap)
+            rec = t.get(self.name) if isinstance(t.get(self.name), dict) else {}
+            last = dt_ms
+            total = int(rec.get("total_ms", 0) or 0) + dt_ms
+            n = int(rec.get("n", 0) or 0) + 1
+            t[self.name] = {"last_ms": last, "total_ms": total, "n": n, "avg_ms": int(total / max(1, n))}
+        except Exception:
+            pass
+
+
+def _metric_time(name: str) -> _MetricTimer:
+    return _MetricTimer(name)
+
+
+def _cache_info_safe(fn) -> dict | None:
+    """Best-effort cache stats for Streamlit cached functions.
+
+    Streamlit wraps cached functions with helpers like .cache_info(). If the
+    runtime doesn't expose them (version differences), we just return None.
+
+    Returns
+    -------
+    dict | None
+        {"hits": int, "misses": int, "currsize": int, "maxsize": int}
+    """
+    try:
+        ci = getattr(fn, "cache_info", None)
+        if ci is None:
+            return None
+        info = ci()
+        # Most Streamlit versions return functools.CacheInfo-like tuple.
+        return {
+            "hits": int(getattr(info, "hits", 0) or 0),
+            "misses": int(getattr(info, "misses", 0) or 0),
+            "currsize": int(getattr(info, "currsize", 0) or 0),
+            "maxsize": int(getattr(info, "maxsize", 0) or 0),
+        }
+    except Exception:
+        return None
+
+
+# ---------- Auto-refresh coordinator ----------
+# Streamlit re-runs the whole script even when content is organized into tabs.
+# Multiple `st_autorefresh()` calls (one per tab/section) can feel jittery and
+# can schedule overlapping refresh widgets.
+#
+# Instead: sections *request* a refresh interval, and we apply a single
+# st_autorefresh() at the end of the run using the smallest requested interval.
+
+def _request_autorefresh(interval_ms: int, reason: str) -> None:
+    try:
+        interval_ms = int(interval_ms or 0)
+        if interval_ms <= 0:
+            return
+        req = st.session_state.get("_autorefresh_requests")
+        if not isinstance(req, dict):
+            req = {}
+            st.session_state["_autorefresh_requests"] = req
+        # store last-requested interval per reason (bounded growth)
+        req[str(reason)] = interval_ms
+    except Exception:
+        # auto-refresh requests must never break the app
+        pass
+
+
+def _apply_autorefresh_requests() -> None:
+    try:
+        req = st.session_state.get("_autorefresh_requests")
+        if not isinstance(req, dict) or not req:
+            return
+        vals = [int(v) for v in req.values() if int(v or 0) > 0]
+        if not vals:
+            return
+        interval = min(vals)
+        st_autorefresh(interval=interval, key="autorefresh_global")
+        try:
+            _metric_inc("autorefresh.applied")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 # ---------- App boot ----------
 st.set_page_config(page_title="Market Hub", layout="wide")
-
-# Flight recorder (local logs)
-if "session_id" not in st.session_state:
-    st.session_state["session_id"] = make_session_id()
-if "rec" not in st.session_state:
-    st.session_state["rec"] = FlightRecorder(_data_dir(), session_id=st.session_state["session_id"])
-
-# Settings load (local-only)
-if "_settings_loaded" not in st.session_state:
-    st.session_state["_settings_loaded"] = True
-    loaded = _settings_defaults() | _load_settings()
-    for k, v in loaded.items():
-        st.session_state.setdefault(k, v)
 
 # Load local .env automatically (kept out of git)
 load_dotenv()
@@ -149,6 +267,15 @@ st.markdown(
 
   .price-big { font-size: 2.1rem; font-weight: 750; letter-spacing: 0.2px; }
   .muted { color: #9ca3af; }
+
+  /* Action rows: make buttons feel consistent (prevents uneven column widths/heights) */
+  div.stButton > button,
+  div.stDownloadButton > button {
+    width: 100%;
+    min-height: 2.25rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 12px;
+  }
 </style>
     """,
     unsafe_allow_html=True,
@@ -156,9 +283,39 @@ st.markdown(
 
 
 def _data_dir() -> Path:
-    # Stored in session_state so it doesn't "jump" on reruns.
+    """Return the local data directory (non-secret).
+
+    Hardening:
+    - tolerates invalid paths (e.g. removed drive letters)
+    - creates the directory if missing
+    - falls back to ./data if the configured path is unusable
+
+    Stored in session_state so it doesn't "jump" on reruns.
+    """
     d = st.session_state.get("data_dir", "data")
-    return Path(d).resolve()
+
+    def _fallback() -> Path:
+        p = Path("data").resolve()
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    try:
+        p = Path(str(d)).expanduser().resolve()
+    except Exception:
+        return _fallback()
+
+    try:
+        # If a file exists at this path, don't crash the app.
+        if p.exists() and p.is_file():
+            return _fallback()
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return _fallback()
+
+    return p
 
 
 def _db_path(name: str) -> Path:
@@ -173,68 +330,535 @@ def _scanners_dir() -> Path:
     return _data_dir() / "scanners"
 
 
+def _list_scanner_views() -> list[str]:
+    try:
+        d = _scanners_dir()
+        if not d.exists():
+            return []
+        names = []
+        for p in d.glob("*.json"):
+            if p.name.startswith("."):
+                continue
+            names.append(p.stem)
+        names = sorted(set(names), key=lambda s: s.lower())
+        return names
+    except Exception:
+        return []
+
+
+def _atomic_write_json(p: Path, obj: dict) -> None:
+    """Best-effort atomic JSON write with a tiny .bak fallback.
+
+    This hardens user-facing persistence against partial writes (power loss,
+    killed process) without adding any new dependencies.
+    """
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        bak = p.with_suffix(p.suffix + ".bak")
+        try:
+            if p.exists():
+                bak.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
+
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
+
+
+def _save_scanner_view(name: str, payload: dict) -> Path | None:
+    try:
+        name = re.sub(r"[^A-Za-z0-9_\- ]+", "", str(name)).strip()
+        if not name:
+            return None
+        d = _scanners_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{name}.json"
+        obj = {
+            "name": name,
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "payload": payload,
+        }
+        _atomic_write_json(p, obj)
+        return p
+    except Exception:
+        return None
+
+
+def _load_scanner_view(name: str) -> dict:
+    try:
+        name = str(name).strip()
+        if not name:
+            return {}
+        p = _scanners_dir() / f"{name}.json"
+        if not p.exists():
+            return {}
+        obj = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(obj, dict):
+            return {}
+        payload = obj.get("payload")
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
 def _decisions_path() -> Path:
     return _data_dir() / "decisions.json"
 
 
 def _load_decisions() -> dict:
+    """Load Decisions Inbox payload (listener form) categories.
+
+    Hardening:
+    - tolerates partial/corrupt writes by falling back to decisions.json.bak
+    """
     p = _decisions_path()
-    if not p.exists():
-        return {}
-    try:
-        obj = json.loads(p.read_text(encoding="utf-8"))
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    cand = [p, p.with_suffix(p.suffix + ".bak")]
+    for fp in cand:
+        try:
+            if not fp.exists():
+                continue
+            obj = json.loads(fp.read_text(encoding="utf-8"))
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            continue
+    return {}
 
 
 def _save_decisions(obj: dict) -> None:
     try:
-        p = _decisions_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+        _atomic_write_json(_decisions_path(), obj)
     except Exception:
         pass
 
 
+def _load_inbox_categories() -> dict:
+    """Load Decisions Inbox payload (listener form) categories.
+
+    This is *separate* from the small in-app Decisions tab.
+
+    Expected shape:
+      {"categories": {"scanner6": {...}, "wall6": {...}, ...}}
+
+    Returns empty dict on any error.
+    """
+    try:
+        obj = _load_decisions()
+        cats = obj.get("categories") if isinstance(obj, dict) else None
+        return cats if isinstance(cats, dict) else {}
+    except Exception:
+        return {}
+
+
+def _apply_inbox_decisions_defaults() -> None:
+    """Best-effort: map saved Inbox decisions into session_state defaults.
+
+    This is intentionally conservative: we only set values if the key isn't already
+    in session_state (so manual overrides still win).
+    """
+    cats = _load_inbox_categories()
+
+    # --- Scanner batch 6 (from decisions.json) ---
+    sc = cats.get("scanner6") if isinstance(cats.get("scanner6"), dict) else {}
+    if sc:
+        # Cache scan results
+        if sc.get("scanner_cache_scan_results") == "A":
+            st.session_state.setdefault("scanner_cache_scan_results", True)
+        # TTL options: A=60s, B=120s, C=300s (best guess)
+        ttl_map = {"A": 60, "B": 120, "C": 300}
+        if sc.get("scanner_cache_ttl_s") in ttl_map:
+            st.session_state.setdefault("scanner_cache_ttl_s", ttl_map[sc.get("scanner_cache_ttl_s")])
+
+        st.session_state.setdefault("scanner_presets_enabled", sc.get("scanner_presets") == "A")
+
+        # Export defaults: A=CSV, B=PDF, C=Both
+        exp_map = {"A": "CSV", "B": "PDF", "C": "Both"}
+        if sc.get("scanner_export_defaults") in exp_map:
+            st.session_state.setdefault("scanner_export_defaults", exp_map[sc.get("scanner_export_defaults")])
+
+        # Focus intel options
+        st.session_state.setdefault("scanner_focus_quick_actions", sc.get("scanner_focus_quick_actions") == "A")
+        st.session_state.setdefault("scanner_focus_news_snippets", sc.get("scanner_focus_news_snippets") == "A")
+        st.session_state.setdefault("scanner_focus_show_halts", sc.get("scanner_focus_show_halts") == "A")
+        st.session_state.setdefault("scanner_focus_show_filings", sc.get("scanner_focus_show_filings") == "A")
+        st.session_state.setdefault("scanner_focus_show_news", sc.get("scanner_focus_show_news") == "A")
+
+        # Guardrail UI: A=subtle, B=normal, C=loud (best guess)
+        st.session_state.setdefault("scanner_guardrail_ui", sc.get("scanner_guardrail_ui") or "B")
+
+        # Show float/IV (placeholders until data feed exists)
+        st.session_state.setdefault("scanner_show_float", sc.get("scanner_show_float") == "A")
+        st.session_state.setdefault("scanner_show_iv", sc.get("scanner_show_iv") == "A")
+
+    # --- Wall batch 6 ---
+    wl = cats.get("wall6") if isinstance(cats.get("wall6"), dict) else {}
+    if wl:
+        # Tasteful theme: A=bright, B=tasteful (dark/subtle)
+        st.session_state.setdefault("wall_tasteful_theme", wl.get("wall_tasteful_theme") or "B")
+        # Density: A=comfortable, B=dense
+        st.session_state.setdefault("wall_tile_density", wl.get("wall_tile_density") or "B")
+        # Badge style: A=minimal, B=normal
+        st.session_state.setdefault("wall_badge_style", wl.get("wall_badge_style") or "B")
+        # Click action: A=Main, B=Focus
+        st.session_state.setdefault("wall_click_action", wl.get("wall_click_action") or "B")
+        # Sparklines
+        st.session_state.setdefault("wall_sparkline_show", wl.get("wall_sparkline_show") == "A")
+
+        ttl_map = {"A": 15, "B": 30, "C": 60}
+        if wl.get("wall_sparkline_ttl") in ttl_map:
+            st.session_state.setdefault("wall_sparkline_ttl_s", ttl_map[wl.get("wall_sparkline_ttl")])
+
+        # Refresh defaults: A=on, B=off
+        st.session_state.setdefault("wall_autorefresh", wl.get("wall_refresh_default") == "A")
+        # Refresh interval: A=30s, B=60s, C=120s (best guess)
+        refresh_map = {"A": 30, "B": 60, "C": 120}
+        if wl.get("wall_refresh_s_default") in refresh_map:
+            st.session_state.setdefault("wall_refresh_s", refresh_map[wl.get("wall_refresh_s_default")])
+
+        # Other toggles
+        st.session_state.setdefault("wall_hide_stale", wl.get("wall_hide_stale") == "A")
+
+    # --- News batch 6 ---
+    nw = cats.get("news6") if isinstance(cats.get("news6"), dict) else {}
+    if nw:
+        # Default filter: A=All, B=Focus (per your instruction)
+        st.session_state.setdefault("news_default_filter", nw.get("news_default_filter") or "A")
+        st.session_state.setdefault("news_group_by_symbol", nw.get("news_group_by_symbol") == "A")
+        st.session_state.setdefault("news_show_snippet", nw.get("news_show_snippet") == "A")
+        st.session_state.setdefault("news_open_in_browser", nw.get("news_open_in_browser") == "A")
+        st.session_state.setdefault("news_export_mode", nw.get("news_export_mode") or "A")
+        st.session_state.setdefault("news_export_include_filters", nw.get("news_export_include_filters") == "A")
+        st.session_state.setdefault("news_match_case", nw.get("news_match_case") == "A")
+        st.session_state.setdefault("news_hide_low_quality", nw.get("news_hide_low_quality") == "A")
+        st.session_state.setdefault("news_show_failures", nw.get("news_show_failures") == "A")
+
+        # Dedupe window: A=2h, B=6h, C=24h (best guess)
+        dw_map = {"A": 2, "B": 6, "C": 24}
+        if nw.get("news_dedupe_window") in dw_map:
+            st.session_state.setdefault("news_dedupe_window_h", dw_map[nw.get("news_dedupe_window")])
+
+        # Max rows: A=25, B=50, C=100 (best guess)
+        mr_map = {"A": 25, "B": 50, "C": 100}
+        if nw.get("news_max_rows") in mr_map:
+            st.session_state.setdefault("news_max_rows", mr_map[nw.get("news_max_rows")])
+
+        # Perf mode: A=Fast, B=Normal, C=Verbose (best guess)
+        st.session_state.setdefault("news_perf_mode", nw.get("news_perf_mode") or "B")
+
+    # --- Signals batch 6 (minimal defaults; UI still implements later) ---
+    sg = cats.get("signals6") if isinstance(cats.get("signals6"), dict) else {}
+    if sg:
+        st.session_state.setdefault("signals_layout_density", sg.get("signals_layout_density") or "A")
+        st.session_state.setdefault("signals_macro_default_open", sg.get("signals_macro_default_open") == "A")
+        mm_map = {"A": 6, "B": 12, "C": 24}
+        if sg.get("signals_macro_max_items") in mm_map:
+            st.session_state.setdefault("signals_macro_max_items", mm_map[sg.get("signals_macro_max_items")])
+        st.session_state.setdefault("signals_news_match_mode", sg.get("signals_news_match_mode") or "A")
+        st.session_state.setdefault("signals_news_show_snippet", sg.get("signals_news_show_snippet") == "A")
+        st.session_state.setdefault("signals_refresh_buttons", sg.get("signals_refresh_buttons") == "A")
+        st.session_state.setdefault("signals_show_cache_age_everywhere", sg.get("signals_show_cache_age_everywhere") == "A")
+        st.session_state.setdefault("signals_show_status_table", sg.get("signals_show_status_table") == "A")
+        st.session_state.setdefault("signals_hide_blocked_sections", sg.get("signals_hide_blocked_sections") == "A")
+        st.session_state.setdefault("signals_perf_cap", sg.get("signals_perf_cap") == "A")
+        st.session_state.setdefault("signals_onepager_export", sg.get("signals_onepager_export") == "A")
+        st.session_state.setdefault("signals_focus_buttons", sg.get("signals_focus_buttons") == "A")
+        st.session_state.setdefault("signals_halts_highlight_rules", sg.get("signals_halts_highlight_rules") == "A")
+        st.session_state.setdefault("signals_filings_badge_threshold", sg.get("signals_filings_badge_threshold") or "A")
+
+    # --- Batch 7–12 (auto-generated) defaults ---
+    # Scanner 7
+    sc7 = cats.get("scanner7") if isinstance(cats.get("scanner7"), dict) else {}
+    if sc7:
+        st.session_state.setdefault("scanner_scan_budget_ui", sc7.get("scanner_scan_budget_ui") == "A")
+        st.session_state.setdefault("scanner_sort_secondary", sc7.get("scanner_sort_secondary") or "B")
+        st.session_state.setdefault("scanner_focus_keyboard", sc7.get("scanner_focus_keyboard") == "A")
+        st.session_state.setdefault("scanner_focus_pin_symbol", sc7.get("scanner_focus_pin_symbol") == "A")
+
+    # Scanner 8–12
+    sc8 = cats.get("scanner8") if isinstance(cats.get("scanner8"), dict) else {}
+    if sc8:
+        st.session_state.setdefault("scanner_focus_prev_next", sc8.get("scanner_focus_prev_next") == "A")
+        st.session_state.setdefault("scanner_focus_show_reason", sc8.get("scanner_focus_show_reason") == "A")
+        st.session_state.setdefault("scanner_focus_actions_row", sc8.get("scanner_focus_actions_row") == "A")
+        st.session_state.setdefault("scanner_export_md_default", sc8.get("scanner_export_md_default") == "A")
+
+    sc9 = cats.get("scanner9") if isinstance(cats.get("scanner9"), dict) else {}
+    if sc9:
+        st.session_state.setdefault("scanner_hotlist_actions", sc9.get("scanner_hotlist_actions") == "A")
+        st.session_state.setdefault("scanner_focus_news_filter", sc9.get("scanner_focus_news_filter") == "A")
+        st.session_state.setdefault("scanner_focus_halts_filter", sc9.get("scanner_focus_halts_filter") == "A")
+        st.session_state.setdefault("scanner_focus_filings_filter", sc9.get("scanner_focus_filings_filter") == "A")
+
+    sc10 = cats.get("scanner10") if isinstance(cats.get("scanner10"), dict) else {}
+    if sc10:
+        st.session_state.setdefault("scanner_perf_cap", sc10.get("scanner_perf_cap") == "A")
+        st.session_state.setdefault("scanner_show_cache_age", sc10.get("scanner_show_cache_age") == "A")
+        st.session_state.setdefault("scanner_topk_choice", sc10.get("scanner_topk") or "B")
+        st.session_state.setdefault("scanner_focus_tf_choice", sc10.get("scanner_focus_tf") or "A")
+
+    sc11 = cats.get("scanner11") if isinstance(cats.get("scanner11"), dict) else {}
+    if sc11:
+        st.session_state.setdefault("scanner_focus_multi_pin", sc11.get("scanner_focus_multi_pin") == "A")
+        st.session_state.setdefault("scanner_focus_pin_limit", sc11.get("scanner_focus_pin_limit") or "B")
+        st.session_state.setdefault("scanner_focus_pin_autorotate", sc11.get("scanner_focus_pin_autorotate") == "A")
+        st.session_state.setdefault("scanner_focus_pin_rotate_s", sc11.get("scanner_focus_pin_rotate_s") or "B")
+
+    sc12 = cats.get("scanner12") if isinstance(cats.get("scanner12"), dict) else {}
+    if sc12:
+        st.session_state.setdefault("scanner_guardrails_banner", sc12.get("scanner_guardrails_banner") == "A")
+        st.session_state.setdefault("scanner_guardrails_cooldown", sc12.get("scanner_guardrails_cooldown") == "A")
+        st.session_state.setdefault("scanner_budget_meter", sc12.get("scanner_budget_meter") == "A")
+        # Default API budget cap
+        cap_map = {"A": 60, "B": 90, "C": 120}
+        if sc12.get("scanner_budget_cap") in cap_map:
+            st.session_state.setdefault("api_budget_cap", cap_map[sc12.get("scanner_budget_cap")])
+
+    # Signals 7–12
+    sg7 = cats.get("signals7") if isinstance(cats.get("signals7"), dict) else {}
+    if sg7:
+        st.session_state.setdefault("signals_status_table_default", sg7.get("signals_status_table_default") or "A")
+        st.session_state.setdefault("signals_cache_badges_style", sg7.get("signals_cache_badges_style") or "A")
+        st.session_state.setdefault("signals_section_order", sg7.get("signals_section_order") or "A")
+        st.session_state.setdefault("signals_halts_timewindow", sg7.get("signals_halts_timewindow") or "B")
+        st.session_state.setdefault("signals_1click_copy_md", sg7.get("signals_1click_copy_md") == "A")
+
+    sg8 = cats.get("signals8") if isinstance(cats.get("signals8"), dict) else {}
+    if sg8:
+        st.session_state.setdefault("signals_copy_md", sg8.get("signals_copy_md") == "A")
+        st.session_state.setdefault("signals_focus_quick_set_main", sg8.get("signals_focus_quick_set_main") == "A")
+        st.session_state.setdefault("signals_hide_empty_sections", sg8.get("signals_hide_empty_sections") == "A")
+        st.session_state.setdefault("signals_news_inline", sg8.get("signals_news_inline") == "A")
+
+    sg9 = cats.get("signals9") if isinstance(cats.get("signals9"), dict) else {}
+    if sg9:
+        st.session_state.setdefault("signals_halts_focus_filter", sg9.get("signals_halts_focus_filter") == "A")
+        st.session_state.setdefault("signals_filings_focus_filter", sg9.get("signals_filings_focus_filter") == "A")
+        st.session_state.setdefault("signals_macro_focus_filter", sg9.get("signals_macro_focus_filter") == "A")
+        st.session_state.setdefault("signals_halts_resumed", sg9.get("signals_halts_resumed") or "B")
+
+    sg10 = cats.get("signals10") if isinstance(cats.get("signals10"), dict) else {}
+    if sg10:
+        st.session_state.setdefault("signals_perf_cap2", sg10.get("signals_perf_cap") == "A")
+        st.session_state.setdefault("signals_rows_choice", sg10.get("signals_rows") or "B")
+        st.session_state.setdefault("signals_halts_rows_choice", sg10.get("signals_halts_rows") or "A")
+        st.session_state.setdefault("signals_news_rows_choice", sg10.get("signals_news_rows") or "A")
+
+    sg11 = cats.get("signals11") if isinstance(cats.get("signals11"), dict) else {}
+    if sg11:
+        st.session_state.setdefault("signals_focus_symbol", sg11.get("signals_focus_symbol") == "A")
+        st.session_state.setdefault("signals_focus_default", sg11.get("signals_focus_default") or "A")
+        st.session_state.setdefault("signals_focus_clear", sg11.get("signals_focus_clear") == "A")
+        st.session_state.setdefault("signals_focus_show", sg11.get("signals_focus_show") == "A")
+
+    sg12 = cats.get("signals12") if isinstance(cats.get("signals12"), dict) else {}
+    if sg12:
+        st.session_state.setdefault("signals_export_onepager", sg12.get("signals_export_onepager") == "A")
+        st.session_state.setdefault("signals_export_format", sg12.get("signals_export_format") or "A")
+        st.session_state.setdefault("signals_export_include_status", sg12.get("signals_export_include_status") == "A")
+        st.session_state.setdefault("signals_export_include_links", sg12.get("signals_export_include_links") == "A")
+
+    # News 7–12
+    n7 = cats.get("news7") if isinstance(cats.get("news7"), dict) else {}
+    if n7:
+        st.session_state.setdefault("news_reader_mode", n7.get("news_reader_mode") == "A")
+        st.session_state.setdefault("news_symbol_highlight", n7.get("news_symbol_highlight") == "A")
+        st.session_state.setdefault("news_tag_earnings_filings", n7.get("news_tag_earnings_filings") == "A")
+        st.session_state.setdefault("news_failures_threshold", n7.get("news_failures_threshold") or "C")
+
+    n8 = cats.get("news8") if isinstance(cats.get("news8"), dict) else {}
+    if n8:
+        st.session_state.setdefault("news_focus_quick_filter", n8.get("news_focus_quick_filter") == "A")
+        st.session_state.setdefault("news_group_compact", n8.get("news_group_compact") == "A")
+        st.session_state.setdefault("news_show_source_domain", n8.get("news_show_source_domain") == "A")
+        st.session_state.setdefault("news_open_mode", n8.get("news_open_mode") or "B")
+
+    n9 = cats.get("news9") if isinstance(cats.get("news9"), dict) else {}
+    if n9:
+        st.session_state.setdefault("news_table_vs_list", n9.get("news_table_vs_list") or "A")
+        st.session_state.setdefault("news_snippet_lines", n9.get("news_snippet_lines") or "B")
+        st.session_state.setdefault("news_dedupe_strict", n9.get("news_dedupe_strict") == "A")
+        st.session_state.setdefault("news_limit_choice", n9.get("news_limit") or "A")
+
+    n10 = cats.get("news10") if isinstance(cats.get("news10"), dict) else {}
+    if n10:
+        st.session_state.setdefault("news_reader_extract", n10.get("news_reader_extract") == "A")
+        st.session_state.setdefault("news_reader_cache", n10.get("news_reader_cache") == "A")
+        st.session_state.setdefault("news_reader_timeout", n10.get("news_reader_timeout") or "B")
+        st.session_state.setdefault("news_reader_fallback", n10.get("news_reader_fallback") or "A")
+
+    n11 = cats.get("news11") if isinstance(cats.get("news11"), dict) else {}
+    if n11:
+        st.session_state.setdefault("news_filter_focus_default", n11.get("news_filter_focus_default") == "A")
+        st.session_state.setdefault("news_filter_hotlist", n11.get("news_filter_hotlist") == "A")
+        st.session_state.setdefault("news_filter_watchlist", n11.get("news_filter_watchlist") == "A")
+        st.session_state.setdefault("news_filter_clear", n11.get("news_filter_clear") == "A")
+
+    n12 = cats.get("news12") if isinstance(cats.get("news12"), dict) else {}
+    if n12:
+        st.session_state.setdefault("news_export_md", n12.get("news_export_md") == "A")
+        st.session_state.setdefault("news_export_limit_choice", n12.get("news_export_limit") or "B")
+        st.session_state.setdefault("news_export_include_snippets", n12.get("news_export_include_snippets") == "A")
+        st.session_state.setdefault("news_export_include_sources", n12.get("news_export_include_sources") == "A")
+
+    # Wall 7–12
+    w7 = cats.get("wall7") if isinstance(cats.get("wall7"), dict) else {}
+    if w7:
+        st.session_state.setdefault("wall_layout_mode", w7.get("wall_layout_mode") or "A")
+        st.session_state.setdefault("wall_tile_click_secondary", w7.get("wall_tile_click_secondary") or "A")
+        st.session_state.setdefault("wall_stale_definition", w7.get("wall_stale_definition") or "B")
+        st.session_state.setdefault("wall_badge_budget", w7.get("wall_badge_budget") or "B")
+
+    w8 = cats.get("wall8") if isinstance(cats.get("wall8"), dict) else {}
+    if w8:
+        st.session_state.setdefault("wall_movers_only", w8.get("wall_movers_only") == "A")
+        st.session_state.setdefault("wall_filter_mode", w8.get("wall_filter_mode") or "A")
+        st.session_state.setdefault("wall_show_heat", w8.get("wall_show_heat") == "A")
+        st.session_state.setdefault("wall_show_sparkline2", w8.get("wall_show_sparkline") == "A")
+
+    w9 = cats.get("wall9") if isinstance(cats.get("wall9"), dict) else {}
+    if w9:
+        st.session_state.setdefault("wall_sort", w9.get("wall_sort") or "A")
+        st.session_state.setdefault("wall_stale_hide", w9.get("wall_stale_hide") == "A")
+        st.session_state.setdefault("wall_badges", w9.get("wall_badges") or "B")
+        st.session_state.setdefault("wall_export", w9.get("wall_export") or "C")
+
+    w10 = cats.get("wall10") if isinstance(cats.get("wall10"), dict) else {}
+    if w10:
+        st.session_state.setdefault("wall_quote_ttl_choice", w10.get("wall_quote_ttl") or "B")
+        st.session_state.setdefault("wall_refresh_choice", w10.get("wall_refresh") or "B")
+        st.session_state.setdefault("wall_max_universe_choice", w10.get("wall_max_universe") or "B")
+        st.session_state.setdefault("wall_heat_weights", w10.get("wall_heat_weights") == "A")
+
+    w11 = cats.get("wall11") if isinstance(cats.get("wall11"), dict) else {}
+    if w11:
+        st.session_state.setdefault("wall_focus_sync", w11.get("wall_focus_sync") == "A")
+        st.session_state.setdefault("wall_tile_buttons", w11.get("wall_tile_buttons") or "B")
+        st.session_state.setdefault("wall_badge_compact", w11.get("wall_badge_compact") == "A")
+        st.session_state.setdefault("wall_color", w11.get("wall_color") or "A")
+
+    w12 = cats.get("wall12") if isinstance(cats.get("wall12"), dict) else {}
+    if w12:
+        st.session_state.setdefault("wall_export_bundle2", w12.get("wall_export_bundle") == "A")
+        st.session_state.setdefault("wall_export_include_badges2", w12.get("wall_export_include_badges") == "A")
+        st.session_state.setdefault("wall_export_include_heat2", w12.get("wall_export_include_heat") == "A")
+        st.session_state.setdefault("wall_export_include_stale2", w12.get("wall_export_include_stale") == "A")
+
+
 def _settings_defaults() -> dict:
     # Keep this small and non-secret.
+    # NOTE: Keys listed here are the *only* ones persisted by _autosave_settings().
     return {
+        # Core
+        "data_dir": "data",
         "selected_ticker": "QQQ",
         "watchlist": "QQQ,SPY,TSLA,AAPL,NVDA,/ES",
         "event_mode": "Normal",
         "api_budget_cap": 60,
+        # App-level UX
+        "app_autorefresh": False,
+        # Admin / instrumentation
+        "debug_show_metrics": False,
+        # Dash / heat
         "dash_hot_spark_window": "1h",
         "heat_rv_on": False,
         "heat_rv_method": "returns",
         "heat_rv_k": 0.35,
         "heat_weights": _default_heat_weights(),
+        # Wall (polish: keep UI preferences stable across sessions)
+        "wall_autorefresh": False,
+        "wall_refresh_s": 30,
+        "wall_quote_ttl_s": 30,
+        "wall_max_universe": 120,
+        "wall_top_n": 32,
+        "wall_stale_definition": "B",  # A=2m,B=5m,C=15m
+        "wall_movers_only": False,
+        "wall_filter_mode": "A",
+        "wall_tile_density": "B",
         # Scanner UI
         "scanner_preset": "Watchlist",
         "scanner_custom_symbols": "",
         "scanner_max_symbols": 80,
+        "scanner_cache_scan_results": True,
+        "scanner_cache_ttl_s": 90,
+        "scanner_focus": "",
+        "scanner_pin": False,
+        "scanner_tf": "1h",
+        # News UI
+        "news_default_filter": "A",
+        "news_group_by_symbol": True,
+        "news_show_snippet": True,
+        "news_filter_symbol": "",
+        "news_open_mode": "B",  # A=External, B=Reader panel
+        "news_max_rows": 50,
     }
 
 
 def _load_settings() -> dict:
+    """Load local, non-secret UI/app settings.
+
+    Hardening:
+    - tolerates partial/corrupt writes (e.g., power loss) by falling back to a
+      small .bak file.
+    """
     p = _settings_path()
-    if not p.exists():
-        return {}
-    try:
-        obj = json.loads(p.read_text(encoding="utf-8"))
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+    cand = [p, p.with_suffix(p.suffix + ".bak")]
+    for fp in cand:
+        try:
+            if not fp.exists():
+                continue
+            obj = json.loads(fp.read_text(encoding="utf-8"))
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    return {}
 
 
 def _save_settings(obj: dict) -> None:
+    """Atomically save settings to disk (best-effort).
+
+    Uses the shared atomic JSON writer so behavior matches other persisted
+    artifacts (decisions, scanner views).
+    """
     try:
-        p = _settings_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj, indent=2, sort_keys=True), encoding="utf-8")
+        _atomic_write_json(_settings_path(), obj)
     except Exception:
         pass
 
+
+# ---------- Session bootstrap (order matters) ----------
+# Load local, non-secret settings first so data_dir is stable for the rest of the app.
+if "_settings_loaded" not in st.session_state:
+    st.session_state["_settings_loaded"] = True
+    loaded = _settings_defaults() | _load_settings()
+    for k, v in loaded.items():
+        st.session_state.setdefault(k, v)
+
+    # Ensure settings file exists early (first-run UX + debug bundle completeness).
+    # This is non-secret, local-only state.
+    try:
+        if not _settings_path().exists():
+            _save_settings(loaded)
+            st.session_state["_settings_last_blob"] = json.dumps(loaded, sort_keys=True)
+            st.session_state["_settings_last_save_ts"] = time.time()
+    except Exception:
+        pass
+
+    # Apply Decisions Inbox defaults (saved via Decisions Hub / listener)
+    # after base settings are present.
+    try:
+        _apply_inbox_decisions_defaults()
+    except Exception:
+        pass
+
+# Flight recorder (local logs)
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = make_session_id()
+if "rec" not in st.session_state:
+    st.session_state["rec"] = FlightRecorder(_data_dir(), session_id=st.session_state["session_id"])
 
 def _settings_snapshot() -> dict:
     # Single source of truth: pull from session_state.
@@ -251,21 +875,107 @@ def _settings_snapshot() -> dict:
     return snap
 
 
-def _autosave_settings() -> None:
-    """Auto-save settings when they change."""
+def _autosave_settings(*, force: bool = False) -> None:
+    """Auto-save settings when they change.
+
+    UX/perf note:
+    Streamlit reruns frequently; writing JSON on every tiny change can add
+    noticeable jitter. We debounce disk writes while preserving correctness.
+
+    Parameters
+    ----------
+    force:
+        If True, flush immediately (used before st.stop() / end-of-run) so user
+        changes persist even if they happened within the debounce window.
+    """
     defaults = _settings_defaults()
     cur = defaults | _settings_snapshot()
+
     try:
         blob = json.dumps(cur, sort_keys=True)
     except Exception:
         return
 
+    # If nothing changed, nothing to do.
     last = st.session_state.get("_settings_last_blob")
     if last == blob:
         return
 
+    now = time.time()
+    last_save = float(st.session_state.get("_settings_last_save_ts", 0.0) or 0.0)
+
+    # If we saved very recently, keep only the latest pending state.
+    # Next rerun (triggered by the user's next interaction) will flush it.
+    #
+    # UX note:
+    # We intentionally do *not* schedule an auto-rerun here. In practice it adds
+    # visible "jitter" (extra reruns) and can make the app feel less stable.
+    if (now - last_save) < 1.0 and not force:
+        st.session_state["_settings_pending_blob"] = blob
+        st.session_state["_settings_pending_obj"] = cur
+        return
+
+    pending_blob = st.session_state.get("_settings_pending_blob")
+    pending_obj = st.session_state.get("_settings_pending_obj")
+    if pending_blob and isinstance(pending_obj, dict):
+        # Prefer flushing the pending-most-recent snapshot.
+        blob = str(pending_blob)
+        cur = dict(pending_obj)
+        st.session_state["_settings_pending_blob"] = None
+        st.session_state["_settings_pending_obj"] = None
+
     _save_settings(cur)
     st.session_state["_settings_last_blob"] = blob
+    st.session_state["_settings_last_save_ts"] = now
+
+
+def _early_stop() -> None:
+    """Stop the current run, but first flush any pending local state.
+
+    Streamlit's `st.stop()` exits early, skipping end-of-run hooks.
+    We use this helper to ensure settings persistence + global autorefresh
+    are applied even on early-exit branches.
+    """
+    try:
+        _autosave_settings(force=True)
+    except Exception:
+        pass
+    try:
+        _apply_autorefresh_requests()
+    except Exception:
+        pass
+    st.stop()
+
+
+def _empty_state_text(kind: str) -> str:
+    """Centralized empty-state copy.
+
+    Keeping these messages in one place makes the app feel more polished and
+    reduces minor inconsistencies as the UI grows.
+    """
+    k = (kind or "").strip().lower()
+
+    if k in {"news", "rss", "news_rss"}:
+        return (
+            "No RSS headlines cached yet. Use Dashboard → “Refresh RSS cache” "
+            "(or wait up to ~15m for auto-refresh)."
+        )
+
+    if k in {"halts", "trading_halts"}:
+        return "No halts cached yet. Open Halts and click Refresh now."
+
+    if k in {"fed", "macro", "fed_rss"}:
+        return "No Fed RSS items cached yet. Open Macro and click Refresh now."
+
+    if k in {"intel", "intel_hits"}:
+        return "No cached intel hits for the current ticker yet."
+
+    return "No cached data yet."
+
+
+def _news_cache_empty_text() -> str:
+    # Back-compat wrapper (older call sites).
+    return _empty_state_text("news")
 
 
 def _schwab_api() -> SchwabAPI | None:
@@ -285,8 +995,21 @@ def _schwab_api() -> SchwabAPI | None:
 
 @st.cache_data(show_spinner=False)
 def _read_sql(db_path: str, query: str, params: Optional[tuple] = None) -> pd.DataFrame:
-    with sqlite3.connect(db_path) as conn:
-        return pd.read_sql(query, conn, params=params)
+    """Small hardened wrapper around pandas.read_sql.
+
+    Streamlit apps often start before local artifacts exist (fresh clone, new
+    data_dir, etc.). Returning an empty dataframe keeps the UI responsive and
+    lets the user build/refresh artifacts from inside the app.
+    """
+    try:
+        if not Path(db_path).exists():
+            _metric_inc("sql.missing_db")
+            return pd.DataFrame()
+        with sqlite3.connect(db_path) as conn:
+            return pd.read_sql(query, conn, params=params)
+    except Exception:
+        _metric_inc("sql.error")
+        return pd.DataFrame()
 
 
 @st.cache_data(show_spinner=False, ttl=90)
@@ -401,8 +1124,23 @@ def _realized_vol_1m(df1m: pd.DataFrame, *, method: str = "returns", lookback: i
 
 
 def _table_cols(db_path: Path, table: str) -> list[str]:
-    with sqlite3.connect(db_path) as conn:
-        return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    """Return a table's column names.
+
+    Hardening:
+    - returns [] if the db file is missing or unreadable
+    - never raises (UI should gracefully show "no data" / rebuild prompts)
+    """
+    try:
+        db_path = Path(db_path)
+        if not db_path.exists():
+            _metric_inc("sql.missing_db")
+            return []
+        with sqlite3.connect(str(db_path)) as conn:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return [r[1] for r in rows if isinstance(r, (list, tuple)) and len(r) >= 2]
+    except Exception:
+        _metric_inc("sql.error")
+        return []
 
 
 def _ensure_universe(data_dir: Path) -> Path | None:
@@ -657,6 +1395,71 @@ def _schwab_profile(ticker: str) -> dict:
     return out
 
 
+def _local_quote_from_prices(ticker: str) -> dict:
+    """Best-effort local quote fallback.
+
+    Purpose:
+    - Keep the UI usable in "offline" mode (no Schwab secrets configured)
+    - Avoid empty tiles/blank metrics when only local daily data exists
+
+    Source:
+    - data/prices.sqlite (prices_daily)
+
+    Notes:
+    - Returns a *quote-like* dict shaped similarly to _schwab_quote()
+    - Includes age_s so tiles can mark it as stale when appropriate
+    """
+    try:
+        tkr = _normalize_ticker(ticker)
+        if not tkr:
+            return {}
+
+        p = _data_dir() / "prices.sqlite"
+        if not p.exists():
+            return {}
+
+        q = """
+        select date, close
+        from prices_daily
+        where ticker = ?
+        order by date desc
+        limit 2
+        """
+        df = _read_sql(str(p), q, params=(tkr,))
+        if df.empty or "close" not in df.columns or "date" not in df.columns:
+            return {}
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"])  # type: ignore
+        if df.empty:
+            return {}
+
+        close_last = float(df.iloc[0]["close"])
+        close_prev = float(df.iloc[1]["close"]) if len(df) > 1 else None
+
+        ts = pd.Timestamp(df.iloc[0]["date"]).to_pydatetime()
+        ts_ms = int(pd.Timestamp(ts).timestamp() * 1000)
+        age_s = max(0.0, time.time() - float(pd.Timestamp(ts).timestamp()))
+
+        net_change = (close_last - close_prev) if close_prev not in (None, 0.0) else None
+        net_pct = ((net_change / close_prev) * 100.0) if (net_change is not None and close_prev) else None
+
+        out = {
+            "symbol": tkr,
+            "last": close_last,
+            "mark": close_last,
+            "netChange": net_change,
+            "netPct": net_pct,
+            "ts_ms": ts_ms,
+            "age_s": age_s,
+            "raw": {"source": "local/prices.sqlite", "date": str(ts.date())},
+            "_local": True,
+        }
+        return out
+    except Exception:
+        return {}
+
+
 @st.cache_data(show_spinner=False, ttl=15)
 def _schwab_quote(ticker: str) -> dict:
     """Fetch a live quote snapshot from Schwab.
@@ -677,7 +1480,9 @@ def _schwab_quote(ticker: str) -> dict:
 
     api = _schwab_api()
     if api is None:
-        return {}
+        # Offline fallback: use last local daily close when available.
+        q_local = _local_quote_from_prices(tkr)
+        return q_local if q_local else {}
 
     _budget_note_call(1)
     try:
@@ -1476,6 +2281,21 @@ def _pdf_scanner_snapshot(
 with st.sidebar:
     st.markdown("### Explore")
 
+    # Connection status (quiet but clear).
+    # Keep this lightweight: no network calls, just local files.
+    try:
+        _dd = _data_dir()
+        _secrets = load_schwab_secrets(_dd)
+        _tokens_present = (_dd / "schwab_tokens.json").exists()
+        if not _secrets:
+            st.warning("Schwab OAuth is not configured. Open Admin → Schwab OAuth to set it up.")
+        elif not _tokens_present:
+            st.warning("Schwab is not connected (tokens missing/expired). Open Admin → Schwab OAuth to connect.")
+        else:
+            st.caption("Schwab: connected")
+    except Exception:
+        pass
+
     # Event mode (affects scanner/dashboard defaults)
     st.session_state["event_mode"] = st.selectbox(
         "Event mode",
@@ -1522,31 +2342,50 @@ with st.sidebar:
 
     with st.expander("Live", expanded=False):
         st.caption("Live mode is Schwab-only. Enable to refresh the UI every 60 seconds.")
-        auto_refresh = st.toggle("Auto-refresh (60s)", value=True)
+
+        # Default OFF to avoid background reruns (smoother UX; opt-in when needed).
+        st.session_state.setdefault("app_autorefresh", False)
+        auto_refresh = st.toggle("Auto-refresh (60s)", key="app_autorefresh")
         if auto_refresh:
             # lightweight refresh loop (useful during market hours)
-            st_autorefresh(interval=60 * 1000, key="autorefresh")
+            _request_autorefresh(60 * 1000, reason="app")
 
     with st.expander("Guardrails", expanded=False):
         st.caption("Request budget + rate-limit backoff. Default: 60 calls/min soft cap.")
+
+        # UX polish:
+        # Put the slider inside a form so dragging it doesn't cause immediate app reruns.
+        # (Streamlit reruns are cheap, but they can *feel* jittery in a trading cockpit.)
         st.session_state.setdefault("api_budget_cap", 60)
-        st.session_state["api_budget_cap"] = st.slider(
-            "API soft cap (calls/min)",
-            min_value=20,
-            max_value=240,
-            value=int(st.session_state.get("api_budget_cap", 60)),
-            step=10,
-        )
+
+        with st.form("guardrails_form", clear_on_submit=False, border=False):
+            cap_widget = st.slider(
+                "API soft cap (calls/min)",
+                min_value=20,
+                max_value=240,
+                value=int(st.session_state.get("api_budget_cap", 60)),
+                step=10,
+                key="api_budget_cap_widget",
+            )
+
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                apply_clicked = st.form_submit_button("Apply")
+            with c2:
+                reset_clicked = st.form_submit_button("Reset counter / clear cooldown")
+
+        if apply_clicked:
+            st.session_state["api_budget_cap"] = int(cap_widget)
+
+        if reset_clicked:
+            st.session_state["api_calls_ts"] = []
+            st.session_state["api_cooldown_until"] = None
+            st.rerun()
 
         calls = _budget_calls_last_minute()
         cap = _budget_cap_per_minute()
         blocked = _budget_blocked()
         st.write({"calls_last_minute": calls, "cap": cap, "blocked": bool(blocked)})
-
-        if st.button("Reset call counter / clear cooldown", key="guardrails_reset"):
-            st.session_state["api_calls_ts"] = []
-            st.session_state["api_cooldown_until"] = None
-            st.rerun()
 
     with st.expander("Secrets", expanded=False):
         # Schwab-only UI.
@@ -1559,8 +2398,9 @@ with st.sidebar:
             }
         )
 
-# Auto-save settings on change
-_autosave_settings()
+# Settings persistence:
+# We auto-save once per run at the end (see Persistence hook) to reduce rerun jitter.
+# (We also save right before any early st.stop() exits.)
 
 # Need data_dir after sidebar inputs are bound
 data_dir = _data_dir()
@@ -1573,13 +2413,27 @@ else:
     universe = pd.DataFrame(columns=["ticker", "name", "primary_exchange", "active"])
 
 # Single source of truth: one ticker box.
+# Polish: put the ticker input in a form so we don't rerun on every keystroke.
 with st.sidebar:
     st.session_state.setdefault("selected_ticker", "QQQ")
-    selected = st.text_input("Ticker", value=st.session_state.get("selected_ticker", "QQQ"), key="selected_ticker").upper().strip()
+
+    with st.form("ticker_form", border=False):
+        raw_selected = st.text_input(
+            "Ticker",
+            value=st.session_state.get("selected_ticker", "QQQ"),
+            key="selected_ticker",
+        )
+        submitted = st.form_submit_button("Go")
+
+    # Normalize on submit (and avoid jitter while typing).
+    if submitted:
+        st.session_state["selected_ticker"] = (raw_selected or "").upper().strip()
+
+    selected = (st.session_state.get("selected_ticker") or "").upper().strip()
 
 if not selected:
     st.warning("Enter a ticker symbol (e.g. TSLA, TSLL, QQQ).")
-    st.stop()
+    _early_stop()
 
 # No universe table filtering in Schwab-only mode.
 
@@ -1644,8 +2498,23 @@ with st.expander("More stats", expanded=False):
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
 # Top-of-page rolling tape (watchlist) — Schwab-only
+# Polish: avoid rerun jitter while typing by using a small form + draft key.
+st.session_state.setdefault("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
+st.session_state.setdefault("_watchlist_draft", str(st.session_state.get("watchlist") or ""))
+
+with st.form("watchlist_tape_form", border=False):
+    st.text_input(
+        "Watchlist (comma-separated)",
+        value=str(st.session_state.get("_watchlist_draft") or ""),
+        key="_watchlist_draft",
+        help="Applies on Update (prevents keystroke-by-keystroke reruns).",
+    )
+    apply = st.form_submit_button("Update")
+
+if apply:
+    st.session_state["watchlist"] = str(st.session_state.get("_watchlist_draft") or "")
+
 watch = st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
-watch = st.text_input("Watchlist (comma-separated)", value=watch, key="watchlist")
 watch_syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()]
 watch_syms = watch_syms[:12]
 if watch_syms:
@@ -1816,7 +2685,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_decisions, tab_admin) = st.tabs(
+(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_scaffolds, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
@@ -1832,6 +2701,7 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
         "Casino Lab",
         "Exposure",
         "Exports",
+        "Scaffolds",
         "Decisions",
         "Admin",
     ]
@@ -1862,7 +2732,7 @@ with tab_dash:
             dfh = pd.DataFrame()
 
         if dfh.empty:
-            st.caption("No cached halts yet. Open Halts tab and click Refresh now.")
+            st.caption(_empty_state_text("halts"))
         else:
             # show top few active halts
             show = dfh.copy()
@@ -1941,9 +2811,18 @@ def _load_hotlist_by_mode() -> dict[str, list[str]]:
     out = {m: [] for m in _event_modes()}
     try:
         p = _hotlist_path()
-        if not p.exists():
+        cand = [p, p.with_suffix(p.suffix + ".bak")]
+        obj = None
+        for fp in cand:
+            try:
+                if not fp.exists():
+                    continue
+                obj = json.loads(fp.read_text(encoding="utf-8"))
+                break
+            except Exception:
+                continue
+        if obj is None:
             return out
-        obj = json.loads(p.read_text(encoding="utf-8"))
 
         if isinstance(obj, list):
             # legacy
@@ -1973,7 +2852,6 @@ def _load_hotlist_by_mode() -> dict[str, list[str]]:
 def _save_hotlist_by_mode(by_mode: dict[str, list[str]]) -> None:
     try:
         p = _hotlist_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
         clean_by: dict[str, list[str]] = {}
         for m in _event_modes():
             xs = by_mode.get(m, []) if isinstance(by_mode, dict) else []
@@ -1985,7 +2863,7 @@ def _save_hotlist_by_mode(by_mode: dict[str, list[str]]) -> None:
             clean_by[m] = clean[:80]
 
         obj = {"version": 2, "by_mode": clean_by}
-        p.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+        _atomic_write_json(p, obj)
     except Exception:
         pass
 
@@ -2049,8 +2927,20 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
     with dL:
         st.markdown("### Watchlist")
+
+        # Polish: watchlist edits can cause lots of reruns (keystroke-by-keystroke).
+        # Put the input in a form so the table doesn't jitter while typing.
+        st.session_state.setdefault("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
+        with st.form("watchlist_form", border=False):
+            st.text_input(
+                "Symbols",
+                value=st.session_state.get("watchlist", ""),
+                key="watchlist",
+                help="Comma-separated. Example: QQQ,SPY,TSLA,AAPL,NVDA,/ES",
+            )
+            st.form_submit_button("Update")
+
         watch = st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
-        watch = st.text_input("Symbols", value=watch, key="watchlist")
         syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()][:20]
 
         rows = []
@@ -2081,7 +2971,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
         # Decision: Dashboard view = combined.
         hot_syms = _hotlist_combined()[:25]
         if not hot_syms:
-            st.write("(empty)")
+            st.info("No pins yet. Run a scan and pin a symbol to see it here.")
         else:
             spark_window = st.selectbox(
                 "Sparkline window",
@@ -2152,7 +3042,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
         live_countdown = st.toggle("Live seconds", value=False, help="Off by default to keep things fast.")
         if live_countdown:
-            st_autorefresh(interval=1000, key="countdown_1s")
+            _request_autorefresh(1000, reason="countdown")
 
         if delta.total_seconds() <= 0:
             st.success("It’s Mar 14 @ 9:30 — margin discipline timer is done.")
@@ -2340,7 +3230,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
                 else:
                     st.write(f"- {pub} — {title}{suffix}")
         else:
-            st.caption("No news cache yet. Open News tab once to fetch.")
+            st.caption(_news_cache_empty_text())
 
         st.markdown("### Why moving (quick view)")
         st.caption("Main ticker: halts + filings + news (cache only).")
@@ -2435,7 +3325,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
             for b in list(bullets)[:3]:
                 st.write(f"- {b}")
         else:
-            st.caption("No cached intel hits for main ticker yet.")
+            st.caption(_empty_state_text("intel"))
 
         st.markdown("### Notes")
         st.session_state.setdefault("headlines", "")
@@ -2464,6 +3354,28 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
 with tab_scanner:
     st.subheader("Scanner")
+
+    # Budget meter (batch7/12)
+    if bool(st.session_state.get("scanner_budget_meter", True)) or bool(st.session_state.get("scanner_scan_budget_ui", True)):
+        calls = _budget_calls_last_minute()
+        cap = _budget_cap_per_minute()
+        left, mid, right = st.columns([0.25, 0.55, 0.20], vertical_alignment="center")
+        left.metric("Calls/min", f"{calls}/{cap}")
+        mid.progress(min(1.0, float(calls) / float(max(1, cap))))
+        until = st.session_state.get("api_cooldown_until")
+        cd = 0
+        try:
+            cd = max(0, int(float(until) - time.time())) if until is not None else 0
+        except Exception:
+            cd = 0
+        if cd and bool(st.session_state.get("scanner_guardrails_cooldown", True)):
+            right.metric("Cooldown", f"{cd}s")
+        else:
+            right.metric("Budget", "OK" if (calls < cap) else "CAPPED")
+
+    if _budget_blocked() and bool(st.session_state.get("scanner_guardrails_banner", True)):
+        st.warning("Guardrails: API budget/cooldown active. Scanner calls are paused until budget clears.")
+
     em = st.session_state.get("event_mode", "Normal")
     st.caption(
         f"Broad scan scaffold. Quotes/candles come from Schwab. News/halts feeds are placeholders for now.  |  Event mode: {em}"
@@ -2473,7 +3385,7 @@ with tab_scanner:
     scan_on = st.toggle("Enable scanning", value=bool(st.session_state.get("scan_on", False)), key="scan_on")
     if not scan_on:
         st.info("Scanner is off. Toggle 'Enable scanning' when you want to run it.")
-        st.stop()
+        _early_stop()
 
     # Persistent hot list (saved under data/)
     st.session_state.setdefault("scanner_hotlist", _load_hotlist())
@@ -2487,6 +3399,35 @@ with tab_scanner:
             "Start fast. Add symbols here. Later we can auto-source 'most active' and themed universes. "
             "Keep it under ~200 symbols if you want it to stay snappy."
         )
+
+        # Saved views (presets) — local-only JSON under data/scanners/
+        if bool(st.session_state.get("scanner_presets_enabled", True)):
+            with st.expander("Saved views", expanded=False):
+                views = _list_scanner_views()
+                left, right = st.columns([0.55, 0.45], vertical_alignment="center")
+                with left:
+                    pick = st.selectbox("Load view", ["(none)"] + views, index=0, key="scanner_view_pick")
+                    if pick and pick != "(none)" and st.button("Load", key="scanner_view_load"):
+                        payload = _load_scanner_view(pick)
+                        if payload:
+                            for k, v in payload.items():
+                                st.session_state[k] = v
+                            st.toast(f"Loaded scanner view: {pick}")
+                            st.rerun()
+                with right:
+                    name = st.text_input("Save current as", value="", key="scanner_view_name")
+                    if st.button("Save", key="scanner_view_save"):
+                        snap = {
+                            "scanner_preset": st.session_state.get("scanner_preset"),
+                            "scanner_custom_symbols": st.session_state.get("scanner_custom_symbols"),
+                            "scanner_max_symbols": st.session_state.get("scanner_max_symbols"),
+                        }
+                        p = _save_scanner_view(name, snap)
+                        if p:
+                            st.toast(f"Saved view: {p.stem}")
+                        else:
+                            st.warning("Could not save (name required).")
+
         preset = st.selectbox(
             "Preset",
             [
@@ -2513,13 +3454,26 @@ with tab_scanner:
         semis = _parse_symbols("NVDA,AMD,INTC,TSM,AVGO,QCOM,AMAT,LRCX,SMH,SOXL,SOXS")
         energy = _parse_symbols("XLE,CVX,XOM,OXY,SLB,HAL,BKR,UNG,BOIL,KOLD")
 
-        custom = st.text_area(
-            "Custom symbols",
-            value=st.session_state.get("scanner_custom_symbols", ""),
-            height=120,
-            placeholder="TSLA, AAPL, /ES, ...",
-            key="scanner_custom_symbols",
+        # Polish: avoid rerun jitter while typing by using a small form + draft key.
+        st.session_state.setdefault(
+            "_scanner_custom_symbols_draft", str(st.session_state.get("scanner_custom_symbols") or "")
         )
+
+        with st.form("scanner_custom_symbols_form", border=False):
+            st.text_area(
+                "Custom symbols",
+                value=str(st.session_state.get("_scanner_custom_symbols_draft") or ""),
+                height=120,
+                placeholder="TSLA, AAPL, /ES, ...",
+                key="_scanner_custom_symbols_draft",
+                help="Applies on Update (prevents keystroke-by-keystroke reruns).",
+            )
+            apply_custom = st.form_submit_button("Update")
+
+        if apply_custom:
+            st.session_state["scanner_custom_symbols"] = str(st.session_state.get("_scanner_custom_symbols_draft") or "")
+
+        custom = str(st.session_state.get("scanner_custom_symbols") or "")
 
         if preset == "Watchlist":
             uni = base
@@ -2566,36 +3520,46 @@ with tab_scanner:
         sdf = pd.DataFrame()
 
     if st.session_state.get("scanner_ran") and (not _budget_blocked()):
-        with st.spinner(f"Scanning {len(uni)} symbols via Schwab quotes…"):
-            rows = []
-            for s in uni:
-                q = _schwab_quote(s)
-                rec = q.get("raw") if isinstance(q.get("raw"), dict) else {}
-                px = q.get("mark") or q.get("last")
-                vol = q.get("volume")
-                chg = q.get("netChange")
-                chgp = q.get("netPct")
+        # Optional scan-result caching (keeps the app snappy and reduces API churn)
+        cache_on = bool(st.session_state.get("scanner_cache_scan_results", True))
+        ttl_s = float(st.session_state.get("scanner_cache_ttl_s", 120) or 120)
+        last_ts = float(st.session_state.get("scanner_last_scan_ts", 0.0) or 0.0)
+        age_s = time.time() - last_ts if last_ts else 9e9
 
-                rows.append(
-                    {
-                        "symbol": s,
-                        "px": px,
-                        "volume": vol,
-                        "chg": chg,
-                        "chg_%": chgp,
-                        "assetType": rec.get("assetType"),
-                        "exchange": rec.get("exchangeName"),
-                    }
-                )
+        if cache_on and (not sdf.empty) and (age_s <= ttl_s):
+            st.caption(f"Using cached scan results ({int(age_s)}s old, TTL {int(ttl_s)}s).")
+        else:
+            with st.spinner(f"Scanning {len(uni)} symbols via Schwab quotes…"):
+                rows = []
+                for s in uni:
+                    q = _schwab_quote(s)
+                    rec = q.get("raw") if isinstance(q.get("raw"), dict) else {}
+                    px = q.get("mark") or q.get("last")
+                    vol = q.get("volume")
+                    chg = q.get("netChange")
+                    chgp = q.get("netPct")
 
-            sdf = pd.DataFrame(rows)
-            for c in ["px", "volume", "chg", "chg_%"]:
-                if c in sdf.columns:
-                    sdf[c] = pd.to_numeric(sdf[c], errors="coerce")
-            if "px" in sdf.columns and "volume" in sdf.columns:
-                sdf["dollar_vol"] = sdf["px"].fillna(0.0) * sdf["volume"].fillna(0.0)
+                    rows.append(
+                        {
+                            "symbol": s,
+                            "px": px,
+                            "volume": vol,
+                            "chg": chg,
+                            "chg_%": chgp,
+                            "assetType": rec.get("assetType"),
+                            "exchange": rec.get("exchangeName"),
+                        }
+                    )
 
-            st.session_state["scanner_last_sdf"] = sdf
+                sdf = pd.DataFrame(rows)
+                for c in ["px", "volume", "chg", "chg_%"]:
+                    if c in sdf.columns:
+                        sdf[c] = pd.to_numeric(sdf[c], errors="coerce")
+                if "px" in sdf.columns and "volume" in sdf.columns:
+                    sdf["dollar_vol"] = sdf["px"].fillna(0.0) * sdf["volume"].fillna(0.0)
+
+                st.session_state["scanner_last_sdf"] = sdf
+                st.session_state["scanner_last_scan_ts"] = time.time()
 
     if sdf.empty:
         st.info("Scanner is idle. Click 'Scan now' to run a scan.")
@@ -2742,7 +3706,7 @@ with tab_scanner:
         st.caption("Persistent (saved locally). Use it as your pinboard.")
 
         if not hl:
-            st.write("(empty)")
+            st.info("No pins yet for this mode. Pin symbols from the scan results above.")
         else:
             # Remove buttons (Scanner-only)
             for sym in hl[:50]:
@@ -2809,8 +3773,28 @@ with tab_scanner:
     else:
         st.caption("No scan results yet.")
 
-    topk = st.slider("Show top", 5, 50, 15, 5)
+    # Default Top-K (batch10)
+    topk_map = {"A": 20, "B": 40, "C": 60}
+    try:
+        topk_def = topk_map.get(str(st.session_state.get("scanner_topk_choice") or "B"), 40)
+    except Exception:
+        topk_def = 40
+    topk = st.slider("Show top", 5, 60, int(topk_def), 5)
+
     show_cols = [c for c in ["symbol", "px", "chg_%", "volume", "dollar_vol", "heat", "assetType", "exchange"] if c in sdf2.columns]
+
+    # Secondary sort tie-break (batch7)
+    sec = str(st.session_state.get("scanner_sort_secondary") or "B").upper().strip()
+    try:
+        if sec == "C" and "dollar_vol" in sdf2.columns:
+            sdf2 = sdf2.sort_values([metric, "dollar_vol"], ascending=[False, False])
+        elif sec == "B" and "abs_chg_%" in sdf2.columns:
+            sdf2 = sdf2.sort_values([metric, "abs_chg_%"], ascending=[False, False])
+        else:
+            sdf2 = sdf2.sort_values([metric, "symbol"], ascending=[False, True])
+    except Exception:
+        pass
+
     st.dataframe(sdf2[show_cols].head(int(topk)), use_container_width=True, hide_index=True, height=360)
 
     # --- Focus selection: auto-rotate unless pinned ---
@@ -2819,13 +3803,45 @@ with tab_scanner:
     st.session_state.setdefault("scanner_rot_i", 0)
     st.session_state.setdefault("scanner_rot_tick", 0)
 
+    # Pins + focus controls (batch8/11)
+    st.session_state.setdefault("scanner_pins", [])
+    pins = st.session_state.get("scanner_pins")
+    if not isinstance(pins, list):
+        pins = []
+        st.session_state["scanner_pins"] = pins
+
     cA, cB, cC = st.columns([0.34, 0.36, 0.30])
     pin = cA.toggle("Pin focus", value=bool(st.session_state.get("scanner_pin")), key="scanner_pin")
     rotate_every = cB.slider("Rotate every (refreshes)", 1, 10, 2, 1)
     auto_refresh = cC.toggle("Auto-refresh Scanner", value=False)
+
+    if bool(st.session_state.get("scanner_focus_multi_pin", True)):
+        with st.expander("Pins", expanded=False):
+            # pin limit
+            lim_map = {"A": 5, "B": 10, "C": 20}
+            lim = lim_map.get(str(st.session_state.get("scanner_focus_pin_limit") or "B"), 10)
+            st.caption(f"Up to {lim} pins")
+            if pins:
+                for ps in list(pins)[:lim]:
+                    l, r = st.columns([0.75, 0.25], vertical_alignment="center")
+                    l.write(ps)
+                    if r.button("Remove", key=f"pin_rm_{ps}"):
+                        st.session_state["scanner_pins"] = [x for x in pins if x != ps]
+                        st.rerun()
+            else:
+                st.caption("(no pins)")
+            if st.button("Pin current focus", key="pin_add_focus") and st.session_state.get("scanner_focus"):
+                ps = str(st.session_state.get("scanner_focus") or "").upper().strip()
+                if ps:
+                    cur = [x for x in pins if str(x).strip()]
+                    if ps not in cur:
+                        cur.insert(0, ps)
+                    st.session_state["scanner_pins"] = cur[:lim]
+                    st.toast(f"Pinned: {ps}")
+                    st.rerun()
     if auto_refresh:
         # keep it modest; Scanner does many quote calls
-        st_autorefresh(interval=15 * 1000, key="scanner_autorefresh")
+        _request_autorefresh(15 * 1000, reason="scanner")
 
     focus_pool_mode = st.selectbox(
         "Focus pool",
@@ -2840,7 +3856,13 @@ with tab_scanner:
     else:
         pool = strip_syms
 
-    if pin and st.session_state.get("scanner_focus"):
+    # If multi-pin autorotate is enabled, use pins as the pool.
+    pins_pool = [str(x).upper().strip() for x in (st.session_state.get("scanner_pins") or []) if str(x).strip()]
+    auto_pins = bool(st.session_state.get("scanner_focus_pin_autorotate", True))
+    if auto_pins and pins_pool:
+        pool = pins_pool
+
+    if pin and st.session_state.get("scanner_focus") and (not (auto_pins and pins_pool)):
         focus = str(st.session_state.get("scanner_focus"))
     else:
         # rotate through pool every N refreshes
@@ -2859,23 +3881,72 @@ with tab_scanner:
 
         st.session_state["scanner_focus"] = focus
 
+        # Focus -> News filter (batch9)
+        if bool(st.session_state.get("scanner_focus_news_filter", True)):
+            st.session_state["news_filter_symbol"] = str(focus).upper().strip()
+
     st.markdown("### Focus")
     fL, fR = st.columns([0.62, 0.38], gap="large")
     with fL:
-        st.caption(f"In-focus: {focus} (rotates across Top 5 unless pinned)")
-        a1, a2 = st.columns([0.5, 0.5])
-        if a1.button("Set as main ticker", key="scanner_set_main"):
-            st.session_state["selected_ticker"] = str(focus).upper().strip()
-            st.toast(f"Main ticker set: {focus}")
-            st.rerun()
-        if a2.button("Hot+", key="scanner_hot_focus"):
-            cur = _hotlist_for_mode(em)
-            if focus not in cur:
-                cur.insert(0, focus)
-            _set_hotlist_for_mode(em, cur[:50])
-            st.rerun()
+        st.caption(f"In-focus: {focus}")
 
-        tf = st.selectbox("Focus timeframe", ["1m (4H)", "1m (3D)"], index=0, key="scanner_tf")
+        # Prev/Next (batch8)
+        if bool(st.session_state.get("scanner_focus_prev_next", True)):
+            p1, p2, p3 = st.columns([0.2, 0.2, 0.6], vertical_alignment="center")
+            if p1.button("Prev", key="scanner_prev", use_container_width=True) and pool:
+                try:
+                    i = int(st.session_state.get("scanner_rot_i", 0))
+                    st.session_state["scanner_rot_i"] = (i - 1) % len(pool)
+                    st.session_state["scanner_focus"] = pool[(i - 1) % len(pool)]
+                    st.rerun()
+                except Exception:
+                    pass
+            if p2.button("Next", key="scanner_next", use_container_width=True) and pool:
+                try:
+                    i = int(st.session_state.get("scanner_rot_i", 0))
+                    st.session_state["scanner_rot_i"] = (i + 1) % len(pool)
+                    st.session_state["scanner_focus"] = pool[(i + 1) % len(pool)]
+                    st.rerun()
+                except Exception:
+                    pass
+            p3.caption("Navigation uses current focus pool (Top5 or pins).")
+
+        # Quick actions row
+        if bool(st.session_state.get("scanner_focus_actions_row", True)):
+            a1, a2, a3 = st.columns([0.34, 0.33, 0.33])
+            if a1.button("Set as main", key="scanner_set_main", use_container_width=True):
+                st.session_state["selected_ticker"] = str(focus).upper().strip()
+                st.toast(f"Main ticker set: {focus}")
+                st.rerun()
+            if a2.button("Hotlist +", key="scanner_hot_focus", use_container_width=True):
+                cur = _hotlist_for_mode(em)
+                if focus not in cur:
+                    cur.insert(0, focus)
+                _set_hotlist_for_mode(em, cur[:50])
+                st.rerun()
+            if a3.button("Pin", key="scanner_pin_focus_btn", use_container_width=True):
+                ps = str(focus).upper().strip()
+                if ps:
+                    pins = st.session_state.get("scanner_pins") or []
+                    if ps not in pins:
+                        st.session_state["scanner_pins"] = [ps] + list(pins)
+                    st.toast(f"Pinned: {ps}")
+
+        # Focus: show reason (batch8)
+        if bool(st.session_state.get("scanner_focus_show_reason", True)):
+            try:
+                row = sdf2[sdf2["symbol"] == focus].head(1)
+                if not row.empty:
+                    r0 = row.iloc[0].to_dict()
+                    st.caption(f"Why hot: abs% {r0.get('abs_chg_%')} • $vol {r0.get('dollar_vol')} • heat {r0.get('heat')}")
+            except Exception:
+                pass
+
+        # Focus timeframe default (batch10)
+        tf_opts = ["1m (4H)", "1m (3D)"]
+        tf_choice = str(st.session_state.get("scanner_focus_tf_choice") or "A").upper().strip()
+        tf_def = 0 if tf_choice == "A" else 1
+        tf = st.selectbox("Focus timeframe", tf_opts, index=int(tf_def), key="scanner_tf")
         dfp = _fetch_history(focus, tf)
         if dfp.empty:
             st.warning("No 1m candles for focus symbol.")
@@ -3163,18 +4234,37 @@ with tab_wall:
     c5.write(f"Top N: {int(st.session_state.get('wall_top_n', 32))}")
 
     if bool(st.session_state.get("wall_autorefresh", True)):
-        st_autorefresh(interval=int(st.session_state.get("wall_refresh_s", 60)) * 1000, key="wall_autorefresh_tick")
+        _request_autorefresh(int(st.session_state.get("wall_refresh_s", 60)) * 1000, reason="wall")
 
-    # Build symbol universe
+    # Build symbol universe (+ filters)
     watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
     hot = _hotlist_combined()
+
+    st.session_state.setdefault("wall_filter_mode", str(st.session_state.get("wall_filter_mode") or "A"))
+    st.session_state.setdefault("wall_movers_only", bool(st.session_state.get("wall_movers_only", False)))
+
+    mode = str(st.session_state.get("wall_filter_mode") or "A").upper().strip()  # A=All/Hot/Watchlist
+    filt = "All"
+    if mode == "A":
+        filt = st.radio("Filter", ["All", "Hot", "Watchlist"], horizontal=True, index=0, key="wall_filter")
+    else:
+        filt = st.radio("Filter", ["All", "Movers"], horizontal=True, index=0, key="wall_filter")
+
+    base = watch if filt == "Watchlist" else (hot if filt == "Hot" else (watch + hot))
     universe = []
-    for s in (watch + hot):
+    for s in base:
         s = str(s).upper().strip()
         if not s:
             continue
         if s not in universe:
             universe.append(s)
+
+    if not universe:
+        st.info(
+            "No symbols to show yet. Add tickers to your Watchlist (sidebar) or switch the filter to All.\n\n"
+            "Tip: Use comma-separated symbols like: QQQ, SPY, AAPL, NVDA"
+        )
+        _early_stop()
 
     # Candidate pool cap
     try:
@@ -3198,9 +4288,12 @@ with tab_wall:
         if isinstance(rec, dict):
             ts = float(rec.get("ts", 0.0) or 0.0)
             if (now - ts) <= float(ttl_s):
+                _metric_inc("wall_quote_cache_hit")
                 q = rec.get("q")
                 return q if isinstance(q, dict) else {}
-        q = _schwab_quote(sym)
+        _metric_inc("wall_quote_cache_miss")
+        with _metric_time("wall_quote_fetch"):
+            q = _schwab_quote(sym)
         qc[sym] = {"ts": now, "q": q}
         return q
 
@@ -3243,8 +4336,18 @@ with tab_wall:
         chg = q.get("netChange")
         chgp = q.get("netPct")
         vol = q.get("totalVolume") or q.get("volume")
-        stale = bool(not q) or (px is None and chgp is None)
-        rows.append({"symbol": s, "px": px, "chg_%": chgp, "chg": chg, "vol": vol, "stale": stale})
+        # Stale definition (batch7/9): based on quote age_s when available
+        age_s = q.get("age_s")
+        try:
+            age_s = float(age_s) if age_s is not None else None
+        except Exception:
+            age_s = None
+
+        st_def = str(st.session_state.get("wall_stale_definition") or "B").upper().strip()  # A=2m,B=5m,C=15m
+        thr_s = 120.0 if st_def == "A" else (300.0 if st_def == "B" else 900.0)
+        stale = bool(not q) or (px is None and chgp is None) or (age_s is not None and age_s >= thr_s)
+
+        rows.append({"symbol": s, "px": px, "chg_%": chgp, "chg": chg, "vol": vol, "stale": stale, "age_s": age_s})
 
     df = pd.DataFrame(rows)
     for c in ["px", "chg_%", "chg", "vol"]:
@@ -3254,6 +4357,18 @@ with tab_wall:
     # Movers-only filter: take top N by abs % change
     df["abs_chg_%"] = df["chg_%"].abs()
     df = df.sort_values("abs_chg_%", ascending=False)
+
+    # Optional movers-only
+    movers_on = bool(st.session_state.get("wall_movers_only", False))
+    if str(st.session_state.get("wall_filter") or "All") == "Movers":
+        movers_on = True
+    if movers_on:
+        df = df.head(80).copy()
+
+    # Optional hide-stale (batch9 + batch6)
+    hide_stale = bool(st.session_state.get("wall_stale_hide", False)) or bool(st.session_state.get("wall_hide_stale", False))
+    if hide_stale and "stale" in df.columns:
+        df = df[df["stale"] == False].copy()  # noqa: E712
 
     # Grid 4x8 => Top N
     try:
@@ -3274,57 +4389,101 @@ with tab_wall:
     except Exception:
         df["heat"] = None
 
-    # Exports
-    csv_bytes = df[[c for c in ["symbol", "px", "chg_%", "vol", "heat"] if c in df.columns]].to_csv(index=False).encode("utf-8")
-    st.download_button("Download CSV", data=csv_bytes, file_name="wall_snapshot.csv", mime="text/csv")
+    # Exports (batch9/12)
+    # Precompute simple badges column for export
+    try:
+        def _badges_for_sym(sym: str, stale: bool) -> str:
+            bs = []
+            if sym in halts_active:
+                bs.append("HALT")
+            if sym in filings_syms:
+                bs.append("FIL")
+            if stale:
+                bs.append("STALE")
+            return " ".join(bs)
+
+        df["badges"] = [
+            _badges_for_sym(str(r.get("symbol") or "").upper().strip(), bool(r.get("stale")))
+            for r in df.to_dict(orient="records")
+        ]
+    except Exception:
+        df["badges"] = ""
+
+    exp_mode = str(st.session_state.get("wall_export") or "C").upper().strip()  # A=CSV,B=PDF,C=Both
+    inc_badges = bool(st.session_state.get("wall_export_include_badges2", True)) or bool(st.session_state.get("wall_export_include_badges", True))
+    inc_heat = bool(st.session_state.get("wall_export_include_heat2", True))
+    inc_stale = bool(st.session_state.get("wall_export_include_stale2", True))
+
+    cols = ["symbol", "px", "chg_%", "vol"]
+    if inc_heat and "heat" in df.columns:
+        cols.append("heat")
+    if inc_badges:
+        cols.append("badges")
+    if inc_stale:
+        cols.append("stale")
+
+    cols = [c for c in cols if c in df.columns]
+    csv_bytes = df[cols].to_csv(index=False).encode("utf-8")
+
+    if exp_mode in ("A", "C"):
+        st.download_button("Download CSV", data=csv_bytes, file_name="wall_snapshot.csv", mime="text/csv")
 
     # PDF export (simple)
-    try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
+    if exp_mode in ("B", "C"):
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
 
-        import io
+            import io
 
-        buf = io.BytesIO()
-        c = canvas.Canvas(buf, pagesize=letter)
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(40, 760, "Market Hub — Wall snapshot")
-        c.setFont("Helvetica", 10)
-        c.drawString(40, 744, time.strftime("%Y-%m-%d %H:%M:%S"))
-        c.drawString(250, 744, f"mode: {st.session_state.get('event_mode','Normal')}")
+            buf = io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=letter)
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(40, 760, "Market Hub — Wall snapshot")
+            c.setFont("Helvetica", 10)
+            c.drawString(40, 744, time.strftime("%Y-%m-%d %H:%M:%S"))
+            c.drawString(250, 744, f"mode: {st.session_state.get('event_mode','Normal')}")
 
-        y = 720
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(40, y, "SYM")
-        c.drawString(90, y, "PX")
-        c.drawString(140, y, "%")
-        c.drawString(190, y, "VOL")
-        c.drawString(260, y, "HEAT")
-        y -= 12
-        c.setFont("Helvetica", 9)
+            y = 720
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(40, y, "SYM")
+            c.drawString(90, y, "PX")
+            c.drawString(140, y, "%")
+            c.drawString(190, y, "VOL")
+            if inc_heat:
+                c.drawString(260, y, "HEAT")
+            if inc_badges:
+                c.drawString(320, y, "BADGES")
+            y -= 12
+            c.setFont("Helvetica", 9)
 
-        for _, r in df.iterrows():
-            if y < 50:
-                c.showPage()
-                y = 760
-                c.setFont("Helvetica", 9)
-            sym = str(r.get("symbol") or "")
-            px = r.get("px")
-            chgp = r.get("chg_%")
-            vol = r.get("vol")
-            heat = r.get("heat")
-            c.drawString(40, y, sym)
-            c.drawString(90, y, (f"{px:,.2f}" if px == px else "—"))
-            c.drawString(140, y, (f"{chgp:+.2f}%" if chgp == chgp else "—"))
-            c.drawString(190, y, (f"{int(vol):,}" if vol == vol else "—"))
-            c.drawString(260, y, (f"{heat:,.1f}" if heat == heat else "—"))
-            y -= 11
+            for _, r in df.iterrows():
+                if y < 50:
+                    c.showPage()
+                    y = 760
+                    c.setFont("Helvetica", 9)
+                sym = str(r.get("symbol") or "")
+                px = r.get("px")
+                chgp = r.get("chg_%")
+                vol = r.get("vol")
+                heat = r.get("heat")
+                badges = str(r.get("badges") or "")
 
-        c.save()
-        pdf_bytes = buf.getvalue()
-        st.download_button("Download PDF", data=pdf_bytes, file_name="wall_snapshot.pdf", mime="application/pdf")
-    except Exception:
-        st.caption("PDF export unavailable (reportlab missing).")
+                c.drawString(40, y, sym)
+                c.drawString(90, y, (f"{px:,.2f}" if px == px else "—"))
+                c.drawString(140, y, (f"{chgp:+.2f}%" if chgp == chgp else "—"))
+                c.drawString(190, y, (f"{int(vol):,}" if vol == vol else "—"))
+                if inc_heat:
+                    c.drawString(260, y, (f"{heat:,.1f}" if heat == heat else "—"))
+                if inc_badges:
+                    c.drawString(320, y, badges[:18])
+                y -= 11
+
+            c.save()
+            pdf_bytes = buf.getvalue()
+            st.download_button("Download PDF", data=pdf_bytes, file_name="wall_snapshot.pdf", mime="application/pdf")
+        except Exception:
+            st.caption("PDF export unavailable (reportlab missing).")
 
     # Render grid
     tile_syms = df["symbol"].tolist() if "symbol" in df.columns else []
@@ -3340,7 +4499,9 @@ with tab_wall:
             return "rgba(255,99,132,0.10)"
         return "rgba(255,255,255,0.04)"
 
-    cols_per_row = 8
+    dens = str(st.session_state.get("wall_tile_density", "B") or "B").upper().strip()
+    # A=comfortable, B=dense (default)
+    cols_per_row = 6 if dens == "A" else 8
     for i in range(0, len(tile_syms), cols_per_row):
         cols = st.columns(cols_per_row)
         for j in range(cols_per_row):
@@ -3355,13 +4516,21 @@ with tab_wall:
 
             stale = bool(r.get("stale"))
 
-            badge = ""
+            # Badges (style varies by decision)
+            badge_style = str(st.session_state.get("wall_badge_style", "B") or "B").upper().strip()
+            badges = []
             if sym in halts_active:
-                badge += " HALT"
+                badges.append("HALT")
             if sym in filings_syms:
-                badge += " FIL"
+                badges.append("FIL")
             if stale:
-                badge += " STALE"
+                badges.append("STALE")
+
+            if badge_style == "A":
+                # minimal
+                badges = [b for b in badges if b in ("HALT", "STALE")]
+
+            badge = (" " + " ".join(badges)) if badges else ""
 
             bg = _tile_color(chgp)
             cols[j].markdown(
@@ -3373,24 +4542,66 @@ with tab_wall:
                 unsafe_allow_html=True,
             )
 
+            # Tile buttons (primary action is decision-driven)
+            click = str(st.session_state.get("wall_click_action", "B") or "B").upper().strip()  # A=Main, B=Focus
             b1, b2 = cols[j].columns([0.5, 0.5])
-            if b1.button("Main", key=f"wall_main_{sym}"):
-                st.session_state["selected_ticker"] = sym
-                st.toast(f"Main ticker set: {sym}")
+
+            if click == "A":
+                primary, secondary = ("Main", "Focus")
+            else:
+                primary, secondary = ("Focus", "Main")
+
+            if b1.button(primary, key=f"wall_primary_{sym}"):
+                if primary == "Main":
+                    st.session_state["selected_ticker"] = sym
+                    st.toast(f"Main ticker set: {sym}")
+                else:
+                    st.session_state["scanner_focus"] = sym
+                    st.session_state["scanner_pin"] = True
+                    if bool(st.session_state.get("wall_focus_sync", True)):
+                        st.session_state["news_filter_symbol"] = sym
+                    st.toast(f"Scanner focus pinned: {sym}")
                 st.rerun()
-            if b2.button("Focus", key=f"wall_focus_{sym}"):
-                st.session_state["scanner_focus"] = sym
-                st.session_state["scanner_pin"] = True
-                st.toast(f"Scanner focus pinned: {sym}")
+
+            if b2.button(secondary, key=f"wall_secondary_{sym}"):
+                if secondary == "Main":
+                    st.session_state["selected_ticker"] = sym
+                    st.toast(f"Main ticker set: {sym}")
+                else:
+                    st.session_state["scanner_focus"] = sym
+                    st.session_state["scanner_pin"] = True
+                    if bool(st.session_state.get("wall_focus_sync", True)):
+                        st.session_state["news_filter_symbol"] = sym
+                    st.toast(f"Scanner focus pinned: {sym}")
                 st.rerun()
 
             # Micro-sparkline (1h)
-            try:
-                sp = _sparkline_history(sym, window="1h")
-                if isinstance(sp, pd.DataFrame) and not sp.empty and "close" in sp.columns:
-                    cols[j].line_chart(sp["close"].tail(60), height=60)
-            except Exception:
-                pass
+            if bool(st.session_state.get("wall_sparkline_show", True)):
+                try:
+                    ttl = float(st.session_state.get("wall_sparkline_ttl_s", 30) or 30)
+                    st.session_state.setdefault("wall_spark_cache", {})
+                    scache = st.session_state.get("wall_spark_cache")
+                    if not isinstance(scache, dict):
+                        scache = {}
+                        st.session_state["wall_spark_cache"] = scache
+
+                    now = time.time()
+                    rec = scache.get(sym)
+                    sp = None
+                    if isinstance(rec, dict) and (now - float(rec.get("ts", 0.0) or 0.0)) <= ttl:
+                        sp = rec.get("df")
+                        if isinstance(sp, pd.DataFrame):
+                            _metric_inc("wall_spark_cache_hit")
+                    if not isinstance(sp, pd.DataFrame):
+                        _metric_inc("wall_spark_cache_miss")
+                        with _metric_time("wall_spark_fetch"):
+                            sp = _sparkline_history(sym, window="1h")
+                        scache[sym] = {"ts": now, "df": sp}
+
+                    if isinstance(sp, pd.DataFrame) and not sp.empty and "close" in sp.columns:
+                        cols[j].line_chart(sp["close"].tail(60), height=60)
+                except Exception:
+                    pass
 
 
 with tab_halts:
@@ -3521,6 +4732,66 @@ with tab_halts:
 with tab_signals:
     st.subheader("Signals")
 
+    # Signals decisions defaults (applied from decisions.json during app boot)
+    st.session_state.setdefault("signals_layout_density", "A")
+    st.session_state.setdefault("signals_hide_blocked_sections", True)
+    st.session_state.setdefault("signals_refresh_buttons", True)
+    st.session_state.setdefault("signals_show_cache_age_everywhere", True)
+    st.session_state.setdefault("signals_show_status_table", True)
+    st.session_state.setdefault("signals_onepager_export", True)
+    st.session_state.setdefault("signals_focus_buttons", True)
+    st.session_state.setdefault("signals_perf_cap", True)
+    st.session_state.setdefault("signals_macro_default_open", False)
+    st.session_state.setdefault("signals_macro_max_items", 12)
+    st.session_state.setdefault("signals_news_match_mode", "A")
+    st.session_state.setdefault("signals_news_show_snippet", True)
+    st.session_state.setdefault("signals_halts_highlight_rules", True)
+    st.session_state.setdefault("signals_filings_badge_threshold", "A")
+
+    # Batch7–12 defaults
+    st.session_state.setdefault("signals_section_order", "A")
+    st.session_state.setdefault("signals_halts_timewindow", "B")
+    st.session_state.setdefault("signals_cache_badges_style", "A")
+    st.session_state.setdefault("signals_1click_copy_md", True)
+    st.session_state.setdefault("signals_copy_md", True)
+    st.session_state.setdefault("signals_hide_empty_sections", True)
+    st.session_state.setdefault("signals_news_inline", True)
+
+    # Perf-cap choices (batch10)
+    st.session_state.setdefault("signals_rows_choice", "B")
+    st.session_state.setdefault("signals_halts_rows_choice", "A")
+    st.session_state.setdefault("signals_news_rows_choice", "A")
+
+    def _rows(choice: str, *, a: int, b: int, c: int) -> int:
+        m = {"A": a, "B": b, "C": c}
+        return int(m.get(str(choice or "B").upper().strip(), b))
+
+    rows_default = _rows(str(st.session_state.get("signals_rows_choice") or "B"), a=5, b=10, c=20)
+    rows_halts = _rows(str(st.session_state.get("signals_halts_rows_choice") or "A"), a=12, b=25, c=50)
+    rows_news = _rows(str(st.session_state.get("signals_news_rows_choice") or "A"), a=5, b=10, c=20)
+
+    # Refresh cadence
+    refresh_s = 120.0
+    now = time.time()
+    st.session_state.setdefault("signals_last_refresh", 0.0)
+
+    # Manual refresh buttons (optional)
+    force_refresh = False
+    if bool(st.session_state.get("signals_refresh_buttons", True)):
+        b1, b2, b3 = st.columns([0.18, 0.18, 0.64], vertical_alignment="center")
+        if b1.button("Refresh now", key="signals_refresh_now"):
+            force_refresh = True
+        if b2.button("Clear caches", key="signals_clear_caches"):
+            st.session_state["signals_halts_df"] = pd.DataFrame()
+            st.session_state["signals_earnings_df"] = pd.DataFrame()
+            st.toast("Signals caches cleared")
+            force_refresh = True
+        b3.caption("Signals refresh is throttled (default 120s).")
+
+    do_refresh = force_refresh or ((now - float(st.session_state.get("signals_last_refresh", 0.0))) >= refresh_s)
+    if do_refresh:
+        st.session_state["signals_last_refresh"] = now
+
     # Background filings watcher (daily) — best-effort while app is running
     try:
         from etf_mapper.jobs.filings_watcher import maybe_run, WatcherConfig
@@ -3569,15 +4840,7 @@ with tab_signals:
         return f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.15);color:{col};font-size:12px;'>" \
                f"{label}: {detail}</span>"
 
-    # --- Auto-refresh throttle (tab-visible only; this code runs only when Signals tab is active) ---
-    refresh_s = 120.0  # decisions: 120s
-    now = time.time()
-
-    st.session_state.setdefault("signals_last_refresh", 0.0)
-    do_refresh = (now - float(st.session_state.get("signals_last_refresh", 0.0))) >= refresh_s
-
-    if do_refresh:
-        st.session_state["signals_last_refresh"] = now
+    # --- Auto-refresh throttle is handled at top (do_refresh) ---
 
     # --- Fetch halts into session (reuse same feed wiring as Halts tab) ---
     st.session_state.setdefault("signals_halts_df", pd.DataFrame())
@@ -3632,56 +4895,198 @@ with tab_signals:
     # --- Macro placeholder ---
     st.session_state.setdefault("macro_events", "")
 
+    # Signals focus symbol (batch11) — used to filter sections
+    st.session_state.setdefault("signals_focus", "")
+    if bool(st.session_state.get("signals_focus_symbol", True)):
+        default_focus = ""
+        if str(st.session_state.get("signals_focus_default") or "A").upper().strip() == "A":
+            default_focus = str(st.session_state.get("selected_ticker") or "").upper().strip()
+        else:
+            default_focus = str(st.session_state.get("scanner_focus") or "").upper().strip()
+        if not str(st.session_state.get("signals_focus") or "").strip():
+            st.session_state["signals_focus"] = default_focus
+
+        f = str(st.session_state.get("signals_focus") or "").upper().strip()
+        c1, c2, c3 = st.columns([0.35, 0.45, 0.20], vertical_alignment="center")
+        c1.text_input("Focus symbol", value=f, key="signals_focus")
+        c2.caption("Filters Halts/Filings/News lists when enabled.")
+        if bool(st.session_state.get("signals_focus_clear", True)):
+            if c3.button("Clear", key="signals_focus_clear_btn"):
+                st.session_state["signals_focus"] = ""
+                st.rerun()
+
     # --- Top row status badges ---
     # Filings badge: show count of alerts (diff score >= threshold)
     falerts = st.session_state.get("signals_filings_alerts", [])
     fcount = len(falerts) if isinstance(falerts, list) else 0
     fdetail = f"{fcount} new" if fcount else "none"
 
+    # Cache age badge
+    age_s = now - float(st.session_state.get("signals_last_refresh", 0.0) or 0.0)
+    age_txt = f"{int(age_s)}s ago" if age_s < 3600 else f"{age_s/3600.0:.1f}h ago"
+
     badges = [
         _badge(ok=True, label="Halts", detail=str(st.session_state.get("signals_halts_detail"))),
-        _badge(ok=False, label="Earnings", detail=str(st.session_state.get("signals_earnings_detail"))),
+        _badge(ok=("blocked" not in str(st.session_state.get("signals_earnings_detail") or "").lower()), label="Earnings", detail=str(st.session_state.get("signals_earnings_detail"))),
         _badge(ok=(fcount > 0), label="Filings", detail=fdetail),
-        _badge(ok=False, label="Macro", detail="placeholder"),
+        _badge(ok=True, label="Age", detail=age_txt),
     ]
-    st.markdown(" ".join(badges), unsafe_allow_html=True)
+
+    if bool(st.session_state.get("signals_show_cache_age_everywhere", True)):
+        st.markdown(" ".join(badges), unsafe_allow_html=True)
+    else:
+        st.markdown(" ".join(badges[:3]), unsafe_allow_html=True)
+
+    # Optional status table
+    if bool(st.session_state.get("signals_show_status_table", True)):
+        st.markdown("#### Status")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"section": "Halts", "status": str(st.session_state.get("signals_halts_detail")), "last_refresh": st.session_state.get("signals_last_refresh")},
+                    {"section": "Earnings", "status": str(st.session_state.get("signals_earnings_detail")), "last_refresh": st.session_state.get("signals_last_refresh")},
+                    {"section": "Filings", "status": fdetail, "last_refresh": st.session_state.get("signals_filings_last")},
+                    {"section": "Macro", "status": "ok (RSS cached)", "last_refresh": st.session_state.get("macro_last_fetch")},
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+            height=170,
+        )
 
     # --- Layout: three panels ---
     cH, cE, cM = st.columns([0.36, 0.32, 0.32], gap="large")
 
-    with cH:
+    def _render_halts():
         st.markdown("### Halts")
         st.caption("Top active halts + resume countdown")
         hdf = st.session_state.get("signals_halts_df")
         if not isinstance(hdf, pd.DataFrame) or hdf.empty:
             st.info("No halts cached yet. Open Halts tab and click Refresh now.")
-        else:
-            show = hdf.copy()
-            if "resumed" in show.columns:
-                show = show[show["resumed"] == False]  # noqa: E712
+            return
 
-            def _mins_until_resume(s: str) -> float:
-                try:
-                    stxt = str(s or "").strip()
-                    if not stxt:
-                        return 1e9
-                    if "/" in stxt:
-                        dt = pd.to_datetime(stxt, errors="coerce")
-                    else:
-                        dt = pd.to_datetime(pd.Timestamp.now().strftime("%Y-%m-%d") + " " + stxt, errors="coerce")
-                    if pd.isna(dt):
-                        return 1e9
-                    return float((dt - pd.Timestamp.now()).total_seconds() / 60.0)
-                except Exception:
+        show = hdf.copy()
+        focus_sym = str(st.session_state.get("signals_focus") or "").upper().strip()
+
+        # Time window for resumed halts (batch7)
+        win = str(st.session_state.get("signals_halts_timewindow") or "B").upper().strip()  # A=30m,B=2h,C=today
+        max_m = 120 if win == "B" else (30 if win == "A" else (24 * 60))
+
+        def _mins_ago(halt_time: str) -> float:
+            try:
+                stxt = str(halt_time or "").strip()
+                if not stxt:
                     return 1e9
+                dt = pd.to_datetime(stxt, errors="coerce")
+                if pd.isna(dt):
+                    return 1e9
+                return float((pd.Timestamp.now() - dt).total_seconds() / 60.0)
+            except Exception:
+                return 1e9
 
-            if "resume_time_et" in show.columns:
-                show["mins_to_resume"] = show["resume_time_et"].astype(str).map(_mins_until_resume)
-                show = show.sort_values("mins_to_resume", ascending=True)
+        include_resumed = str(st.session_state.get("signals_halts_resumed") or "B").upper().strip() == "B"
+        if "resumed" in show.columns and not include_resumed:
+            show = show[show["resumed"] == False]  # noqa: E712
 
-            cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et", "mins_to_resume"] if c in show.columns]
-            show2 = show[cols].head(12).copy()
-            st.dataframe(show2, use_container_width=True, height=420, hide_index=True)
+        # Filter resumed to recent window if we are including them
+        if include_resumed and "halt_time_et" in show.columns:
+            try:
+                show["mins_ago"] = show["halt_time_et"].astype(str).map(_mins_ago)
+                show = show[show["mins_ago"] <= float(max_m)].copy()
+            except Exception:
+                pass
+
+        # Focus filter (batch9)
+        if focus_sym and bool(st.session_state.get("signals_halts_focus_filter", True)) and "symbol" in show.columns:
+            show = show[show["symbol"].astype(str).str.upper().str.strip() == focus_sym].copy()
+
+        def _mins_until_resume(s: str) -> float:
+            try:
+                stxt = str(s or "").strip()
+                if not stxt:
+                    return 1e9
+                if "/" in stxt:
+                    dt = pd.to_datetime(stxt, errors="coerce")
+                else:
+                    dt = pd.to_datetime(pd.Timestamp.now().strftime("%Y-%m-%d") + " " + stxt, errors="coerce")
+                if pd.isna(dt):
+                    return 1e9
+                return float((dt - pd.Timestamp.now()).total_seconds() / 60.0)
+            except Exception:
+                return 1e9
+
+        if "resume_time_et" in show.columns:
+            show["mins_to_resume"] = show["resume_time_et"].astype(str).map(_mins_until_resume)
+            show = show.sort_values("mins_to_resume", ascending=True)
+
+        cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et", "mins_to_resume"] if c in show.columns]
+        show2 = show[cols].head(int(rows_halts)).copy()
+        st.dataframe(show2, use_container_width=True, height=420, hide_index=True)
+
+    def _render_news_inline():
+        st.markdown("### News")
+        st.caption("Cached RSS headlines (no fetch here)")
+        if not bool(st.session_state.get("signals_news_inline", True)):
+            st.caption("(disabled)")
+            return
+        try:
+            p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
+            obj = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            rows = obj.get("rows") if isinstance(obj, dict) else None
+            dfn = pd.DataFrame(rows) if isinstance(rows, list) else pd.DataFrame()
+        except Exception:
+            dfn = pd.DataFrame()
+
+        if dfn.empty or "title" not in dfn.columns:
+            st.caption(_news_cache_empty_text())
+            return
+
+        show = dfn.copy()
+        if "published_ts" in show.columns:
+            show["published_ts"] = pd.to_datetime(show["published_ts"], errors="coerce", utc=True)
+            show = show.sort_values("published_ts", ascending=False)
+
+        focus_sym = str(st.session_state.get("signals_focus") or "").upper().strip()
+        if focus_sym and bool(st.session_state.get("signals_macro_focus_filter", True)):
+            try:
+                pat = rf"(\${focus_sym}\b|\b{focus_sym}\b)"
+                m = show["title"].astype(str).str.upper().str.contains(pat, regex=True, na=False)
+                show = show[m].copy()
+            except Exception:
+                pass
+
+        show = show.head(int(rows_news))
+        for _, r in show.iterrows():
+            pub = str(r.get("published") or "").strip()
+            title = str(r.get("title") or "").strip()
+            link = str(r.get("link") or "").strip()
+            if link:
+                st.markdown(f"- {pub} — [{title}]({link})")
+            else:
+                st.write(f"- {pub} — {title}")
+
+    def _render_filings():
+        # (existing filings section lives in the Earnings column expander; leave as-is)
+        pass
+
+    # Section order preference (batch7)
+    order = str(st.session_state.get("signals_section_order") or "A").upper().strip()
+
+    with cH:
+        if order == "B":
+            _render_halts()
+        else:
+            _render_news_inline()
+
+    with cE:
+        # keep existing earnings/filings block (below)
+        pass
+
+    with cM:
+        if order == "B":
+            _render_news_inline()
+        else:
+            _render_halts()
 
             # Quick actions (buttons)
             try:
@@ -3703,14 +5108,22 @@ with tab_signals:
                 pass
 
     with cE:
-        with st.expander("Earnings", expanded=False):
-            st.caption("Status + last attempted fetch (provider still blocked)")
-            st.write({"status": st.session_state.get("signals_earnings_detail"), "last_refresh": st.session_state.get("signals_last_refresh")})
-            edf = st.session_state.get("signals_earnings_df")
-            if isinstance(edf, pd.DataFrame) and not edf.empty:
-                st.dataframe(edf, use_container_width=True, height=240, hide_index=True)
-            else:
-                st.info("Earnings calendar is scaffolded. Next step is selecting/wiring a provider.")
+        # Earnings block is often provider-blocked; hide if requested
+        show_earn = True
+        if bool(st.session_state.get("signals_hide_blocked_sections", True)):
+            det = str(st.session_state.get("signals_earnings_detail") or "")
+            if "not wired" in det.lower() or "blocked" in det.lower() or "provider" in det.lower():
+                show_earn = False
+
+        if show_earn:
+            with st.expander("Earnings", expanded=False):
+                st.caption("Status + last attempted fetch (provider still blocked)")
+                st.write({"status": st.session_state.get("signals_earnings_detail"), "last_refresh": st.session_state.get("signals_last_refresh")})
+                edf = st.session_state.get("signals_earnings_df")
+                if isinstance(edf, pd.DataFrame) and not edf.empty:
+                    st.dataframe(edf, use_container_width=True, height=240, hide_index=True)
+                else:
+                    st.info("Earnings calendar is scaffolded. Next step is selecting/wiring a provider.")
 
             st.markdown("---")
             st.markdown("#### Filings (watcher alerts)")
@@ -3773,7 +5186,7 @@ with tab_signals:
                     pass
 
     with cM:
-        with st.expander("Macro", expanded=False):
+        with st.expander("Macro", expanded=bool(st.session_state.get("signals_macro_default_open", False))):
             # Auto-feed: Fed RSS (all urls from data/rss_feeds.json -> fed.urls)
             try:
                 cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
@@ -3811,7 +5224,7 @@ with tab_signals:
                 except Exception:
                     pass
             else:
-                st.caption("No Fed RSS items cached yet.")
+                st.caption(_empty_state_text("fed"))
 
             st.markdown("---")
             st.markdown("#### News (small)")
@@ -3847,7 +5260,7 @@ with tab_signals:
                     else:
                         st.write(f"- {pub} — {title}")
             else:
-                st.caption("No news cache yet.")
+                st.caption(_news_cache_empty_text())
 
         st.markdown("---")
         st.caption("Manual note + next-event override")
@@ -3895,7 +5308,74 @@ with tab_signals:
                 show = show.sort_values("published_ts", ascending=False)
             st.dataframe(show[[c for c in ["published", "title"] if c in show.columns]].head(10), use_container_width=True, height=220, hide_index=True)
         else:
-            st.caption("No news items cached yet.")
+            st.caption(_news_cache_empty_text())
+
+    # --- Exports (batch7/12) ---
+    def _signals_snapshot_md() -> str:
+        lines = []
+        lines.append("# Signals snapshot")
+        lines.append("")
+        lines.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        f = str(st.session_state.get("signals_focus") or "").upper().strip()
+        if f:
+            lines.append(f"Focus: {f}")
+        lines.append("")
+
+        # Halts
+        hdf = st.session_state.get("signals_halts_df")
+        if isinstance(hdf, pd.DataFrame) and not hdf.empty:
+            cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et"] if c in hdf.columns]
+            sub = hdf[cols].head(int(rows_halts)).copy()
+            lines.append("## Halts")
+            for _, r in sub.iterrows():
+                sym = str(r.get("symbol") or "").strip()
+                reason = str(r.get("reason") or "").strip()
+                resume = str(r.get("resume_time_et") or "").strip()
+                lines.append(f"- {sym} — {reason} — resume {resume}".strip(" —"))
+            lines.append("")
+
+        # Filings
+        alerts = st.session_state.get("signals_filings_alerts", [])
+        if isinstance(alerts, list) and alerts:
+            lines.append("## Filings")
+            for a in alerts[: int(rows_default)]:
+                if not isinstance(a, dict):
+                    continue
+                sym = str(a.get("symbol") or "").strip()
+                sc = a.get("score")
+                lines.append(f"- {sym} — score {sc}")
+            lines.append("")
+
+        # Macro
+        nm = str(st.session_state.get("next_macro_event") or "").strip()
+        if nm:
+            lines.append("## Macro")
+            lines.append(f"- {nm}")
+            lines.append("")
+
+        return "\n".join(lines).strip() + "\n"
+
+    if bool(st.session_state.get("signals_export_onepager", True)) or bool(st.session_state.get("signals_onepager_export", True)):
+        md = _signals_snapshot_md()
+        with st.expander("Export", expanded=False):
+            st.download_button("Download signals_onepager.md", data=md.encode("utf-8"), file_name="signals_onepager.md", mime="text/markdown")
+
+            if bool(st.session_state.get("signals_1click_copy_md", True)) or bool(st.session_state.get("signals_copy_md", True)):
+                try:
+                    import streamlit.components.v1 as components
+
+                    safe = md.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+                    components.html(
+                        f"""
+                        <button style='padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:#111a2e;color:#e5e7eb;font-weight:800;cursor:pointer'
+                          onclick=\"navigator.clipboard.writeText(`{safe}`).then(()=>{{this.innerText='Copied'; setTimeout(()=>this.innerText='Copy markdown',1200);}});\">Copy markdown</button>
+                        """,
+                        height=60,
+                    )
+                except Exception:
+                    st.caption("Copy button unavailable in this environment; use download.")
+
+            st.text_area("Preview", value=md, height=220)
 
     # Dashboard highlights driven by cached feeds (best-effort)
     st.session_state.setdefault("signals_drive_dashboard", True)
@@ -3906,6 +5386,21 @@ with tab_signals:
 with tab_news:
     st.subheader("News")
     st.caption("RSS board (cached). Ticker detection is best-effort; quotes are Schwab-only.")
+
+    # Batch7–12 news defaults
+    st.session_state.setdefault("news_reader_mode", True)
+    st.session_state.setdefault("news_symbol_highlight", True)
+    st.session_state.setdefault("news_tag_earnings_filings", True)
+    st.session_state.setdefault("news_failures_threshold", "C")  # A=0,B=1,C=3
+    st.session_state.setdefault("news_open_mode", "B")  # A=External, B=Reader panel
+    st.session_state.setdefault("news_table_vs_list", "A")
+    st.session_state.setdefault("news_snippet_lines", "B")
+    st.session_state.setdefault("news_dedupe_strict", True)
+    st.session_state.setdefault("news_limit_choice", "A")
+    st.session_state.setdefault("news_export_md", True)
+    st.session_state.setdefault("news_export_limit_choice", "B")
+    st.session_state.setdefault("news_export_include_snippets", True)
+    st.session_state.setdefault("news_export_include_sources", True)
 
     try:
         cfg = json.loads((_data_dir() / "rss_feeds.json").read_text(encoding="utf-8"))
@@ -3930,49 +5425,318 @@ with tab_news:
             pass
         st.session_state["news_last_fetch"] = time.time()
 
+    # News decisions (batch 6) — defaults are loaded from decisions.json
+    st.session_state.setdefault("news_default_filter", "A")  # A=All, B=Focus
+    st.session_state.setdefault("news_group_by_symbol", True)
+    st.session_state.setdefault("news_show_snippet", True)
+    st.session_state.setdefault("news_open_in_browser", True)
+    st.session_state.setdefault("news_hide_low_quality", True)
+    st.session_state.setdefault("news_show_failures", True)
+    st.session_state.setdefault("news_dedupe_window_h", 6)
+    st.session_state.setdefault("news_max_rows", 50)
+    st.session_state.setdefault("news_perf_mode", "B")
+
+    perf = str(st.session_state.get("news_perf_mode") or "B").upper().strip()
+
     pf = nf.per_feed_status() or {}
-    if pf:
+
+    # Failures threshold (batch7)
+    thr_choice = str(st.session_state.get("news_failures_threshold") or "C").upper().strip()
+    thr = 0 if thr_choice == "A" else (1 if thr_choice == "B" else 3)
+
+    # Perf: in "fast" mode we skip rendering the full feed status table.
+    if pf and bool(st.session_state.get("news_show_failures", True)) and perf != "A":
         rows = []
+        n_bad = 0
         for url, v in pf.items():
             if not isinstance(v, dict):
                 continue
-            rows.append({"feed": url, "ok": bool(v.get("ok")), "fail_count": int(v.get("fail_count", 0)), "detail": str(v.get("detail"))[:180]})
-        sdf = pd.DataFrame(rows)
-        st.markdown("### Feed status")
-        st.dataframe(sdf, use_container_width=True, height=220, hide_index=True)
+            ok = bool(v.get("ok"))
+            if not ok:
+                n_bad += 1
+            fc = int(v.get("fail_count", 0))
+            rows.append({"feed": url, "ok": ok, "fail_count": fc, "detail": str(v.get("detail"))[:180]})
+
+        if n_bad > int(thr):
+            sdf = pd.DataFrame(rows)
+            st.markdown("### Feed status")
+            st.dataframe(sdf, use_container_width=True, height=220, hide_index=True)
+        else:
+            st.caption(f"Feed failures below threshold (>{thr} in last 10m).")
 
     nd = nf.read_cache()
     if not isinstance(nd, pd.DataFrame) or nd.empty:
-        st.info("No news cached yet.")
+        st.info(_news_cache_empty_text())
     else:
         show = nd.copy()
         if "published_ts" in show.columns:
             show = show.sort_values("published_ts", ascending=False)
 
-        # Optional focus filter (set from Scanner Focus intel)
+        # Default filter (per your instruction): B = Focus symbol
         st.session_state.setdefault("news_filter_symbol", "")
+        mode = str(st.session_state.get("news_default_filter") or "A").upper().strip()
+        if mode == "B" and not str(st.session_state.get("news_filter_symbol") or "").strip():
+            st.session_state["news_filter_symbol"] = str(st.session_state.get("selected_ticker") or "").upper().strip()
+
         fs = str(st.session_state.get("news_filter_symbol") or "").upper().strip()
         if fs:
             try:
                 pat = rf"(\${fs}\b|\b{fs}\b)"
-                m = show["title"].astype(str).str.upper().str.contains(pat, regex=True, na=False)
-                show = show[m].copy()
-                st.caption(f"Filter: {fs} (set from Scanner Focus intel)")
+                titles = show.get("title")
+                if isinstance(titles, pd.Series):
+                    m = titles.astype(str).str.upper().str.contains(pat, regex=True, na=False)
+                    show = show[m].copy()
+                st.caption(f"Filter: {fs}")
                 if st.button("Clear filter", key="news_clear_filter"):
                     st.session_state["news_filter_symbol"] = ""
                     st.rerun()
             except Exception:
                 pass
 
-        # Dedupe by title
+        # Dedupe window (hours)
+        try:
+            wh = float(st.session_state.get("news_dedupe_window_h", 6) or 6)
+        except Exception:
+            wh = 6.0
+        if "published_ts" in show.columns:
+            try:
+                show["published_ts"] = pd.to_datetime(show["published_ts"], errors="coerce", utc=True)
+                cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=float(wh))
+                show = show[show["published_ts"] >= cutoff].copy()
+            except Exception:
+                pass
+
+        # Hide low quality (simple heuristic)
+        if bool(st.session_state.get("news_hide_low_quality", True)):
+            try:
+                bad = ["reddit", "stocktwits", "seekingalpha", "benzinga"]
+                src = show.get("source")
+                if isinstance(src, pd.Series):
+                    m = ~src.astype(str).str.lower().str.contains("|".join(bad), regex=True, na=False)
+                    show = show[m].copy()
+            except Exception:
+                pass
+
+        # Dedupe by title (+ optional strict domain)
         try:
             show["title_norm"] = show["title"].astype(str).str.strip().str.lower()
-            show = show.drop_duplicates(subset=["title_norm"], keep="first")
+            if bool(st.session_state.get("news_dedupe_strict", True)) and "link" in show.columns:
+                show["domain"] = show["link"].astype(str).str.extract(r"https?://([^/]+)", expand=False).fillna("")
+                show = show.drop_duplicates(subset=["title_norm", "domain"], keep="first")
+            else:
+                show = show.drop_duplicates(subset=["title_norm"], keep="first")
         except Exception:
             pass
 
-        show = show.head(50)
-        st.dataframe(show[[c for c in ["published", "title", "source"] if c in show.columns]], use_container_width=True, height=520, hide_index=True)
+        # Limit rows (batch9)
+        lim_map = {"A": 50, "B": 100, "C": 200}
+        max_rows = lim_map.get(str(st.session_state.get("news_limit_choice") or "A").upper().strip(), 50)
+        show = show.head(max(10, min(300, int(max_rows)))).copy()
+
+        # Render
+        cols = [c for c in ["published", "title", "snippet", "source", "link"] if c in show.columns]
+        if (not bool(st.session_state.get("news_show_snippet", True))) and "snippet" in cols:
+            cols = [c for c in cols if c != "snippet"]
+
+        open_mode = str(st.session_state.get("news_open_mode") or "B").upper().strip()  # A=external, B=reader panel
+        render_style = str(st.session_state.get("news_table_vs_list") or "A").upper().strip()  # A=list, B=table
+
+        # Selectable reader panel
+        st.session_state.setdefault("news_selected_i", 0)
+
+        def _hl_title(title: str, *, focus_sym: str = "") -> str:
+            t = str(title or "")
+            if bool(st.session_state.get("news_symbol_highlight", True)) and focus_sym:
+                try:
+                    import re
+
+                    pat = re.compile(rf"(\${focus_sym}\b|\b{focus_sym}\b)", re.I)
+                    t = pat.sub(r"**\\1**", t)
+                except Exception:
+                    pass
+            return t
+
+        def _tag(title: str) -> str:
+            if not bool(st.session_state.get("news_tag_earnings_filings", True)):
+                return ""
+            t = str(title or "").lower()
+            tags = []
+            if any(x in t for x in ["earnings", "eps", "guidance"]):
+                tags.append("EARN")
+            if any(x in t for x in ["10-q", "10k", "10-k", "8-k", "sec", "filing"]):
+                tags.append("FIL")
+            if any(x in t for x in ["cpi", "ppi", "fomc", "powell", "fed", "nfp", "jobs"]):
+                tags.append("MACRO")
+            return (" [" + ",".join(tags) + "]") if tags else ""
+
+        # List view is preferred for speed
+        if render_style == "A":
+            st.markdown("### Headlines")
+            focus_sym = str(st.session_state.get("news_filter_symbol") or "").upper().strip()
+            items = show.reset_index(drop=True)
+            max_pick = max(0, len(items) - 1)
+            pick = st.slider("Select", 0, max_pick, int(min(max_pick, st.session_state.get("news_selected_i", 0))), 1, key="news_selected_i")
+
+            for i, r in items.head(int(max_rows)).iterrows():
+                pub = str(r.get("published") or "").strip()
+                title = _hl_title(str(r.get("title") or "").strip(), focus_sym=focus_sym)
+                link = str(r.get("link") or "").strip()
+                src = str(r.get("source") or "").strip()
+                dom = str(r.get("domain") or "").strip()
+                snip = str(r.get("snippet") or "").strip()
+
+                prefix = "→ " if i == pick else "- "
+                suffix = ""
+                if bool(st.session_state.get("news_show_source_domain", True)) and (dom or src):
+                    suffix = f" ({dom or src})"
+
+                tag = _tag(str(r.get("title") or ""))
+                if link:
+                    st.markdown(f"{prefix}[{pub} — {title}]({link}){suffix}{tag}")
+                else:
+                    st.write(f"{prefix}{pub} — {title}{suffix}{tag}")
+
+                # Snippet lines (batch9)
+                sl = str(st.session_state.get("news_snippet_lines") or "B").upper().strip()
+                if bool(st.session_state.get("news_show_snippet", True)) and snip and sl != "A":
+                    st.caption(snip[:240] if sl == "B" else snip[:480])
+
+            # Grouped compact view (batch8)
+            if bool(st.session_state.get("news_group_compact", True)):
+                try:
+                    import re
+
+                    st.markdown("### Groups (quick)")
+                    bucket: dict[str, list[dict]] = {}
+                    for _, rr in items.head(120).iterrows():
+                        ttl = str(rr.get("title") or "").upper()
+                        toks = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", ttl)
+                        sym = ""
+                        for a, b in toks:
+                            sym = (a or b or "").strip()
+                            if sym and sym not in ("THE", "AND", "WITH"):
+                                break
+                        if not sym:
+                            sym = "(misc)"
+                        bucket.setdefault(sym, []).append(rr.to_dict())
+
+                    # show top groups
+                    top_groups = sorted(bucket.items(), key=lambda kv: len(kv[1]), reverse=True)[:8]
+                    for sym, rs in top_groups:
+                        st.caption(f"{sym} ({len(rs)})")
+                        for rr in rs[:3]:
+                            pub = str(rr.get("published") or "").strip()
+                            t0 = str(rr.get("title") or "").strip()
+                            link = str(rr.get("link") or "").strip()
+                            if link:
+                                st.markdown(f"- {pub} — [{t0}]({link})")
+                            else:
+                                st.write(f"- {pub} — {t0}")
+                except Exception:
+                    pass
+
+            # Reader panel
+            if open_mode == "B" and bool(st.session_state.get("news_reader_mode", True)):
+                st.markdown("### Reader")
+                try:
+                    row = items.iloc[int(pick)].to_dict()
+                except Exception:
+                    row = {}
+
+                link = str(row.get("link") or "").strip()
+                if not link:
+                    st.caption("No link for selected item.")
+                else:
+                    # Best-effort extract + cache
+                    st.session_state.setdefault("news_reader_cache_mem", {})
+                    mem = st.session_state.get("news_reader_cache_mem")
+                    if not isinstance(mem, dict):
+                        mem = {}
+                        st.session_state["news_reader_cache_mem"] = mem
+
+                    key = link
+                    txt = mem.get(key)
+
+                    if not txt and bool(st.session_state.get("news_reader_extract", True)):
+                        try:
+                            import requests
+
+                            tmo_choice = str(st.session_state.get("news_reader_timeout") or "B").upper().strip()
+                            tmo = 1 if tmo_choice == "A" else (3 if tmo_choice == "B" else 8)
+                            r = requests.get(link, timeout=float(tmo), headers={"User-Agent": "Market Hub/0.1"})
+                            html = r.text if r.ok else ""
+                            # crude extract: strip tags
+                            import re
+
+                            text = re.sub(r"<script[\s\S]*?</script>", " ", html, flags=re.I)
+                            text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+                            text = re.sub(r"<[^>]+>", " ", text)
+                            text = re.sub(r"\s+", " ", text).strip()
+                            txt = text[:6000]
+                            if bool(st.session_state.get("news_reader_cache", True)):
+                                mem[key] = txt
+                                st.session_state["news_reader_cache_mem"] = mem
+                        except Exception:
+                            fb = str(st.session_state.get("news_reader_fallback") or "A").upper().strip()
+                            if fb == "B":
+                                txt = "(reader failed; raw HTML not available in this mode)"
+                            else:
+                                txt = str(row.get("snippet") or "")
+
+                    st.text_area("Extract", value=txt or "(empty)", height=260)
+        else:
+            st.dataframe(show[cols], use_container_width=True, height=520, hide_index=True)
+
+        # Optional grouping by detected symbol tokens (best-effort)
+        if bool(st.session_state.get("news_group_by_symbol", True)):
+            try:
+                import re
+
+                titles = "\n".join([str(x) for x in (show.get("title") or []).tolist()[:200]])
+                found = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", titles.upper())
+                flat = []
+                for a, b in found:
+                    t = a or b
+                    if t and t not in flat:
+                        flat.append(t)
+                tickers = flat[:25]
+
+                if tickers:
+                    st.markdown("### Detected tickers")
+                    st.write(tickers)
+            except Exception:
+                pass
+
+        # Export snapshot (batch12)
+        if bool(st.session_state.get("news_export_md", True)):
+            with st.expander("Export", expanded=False):
+                lim_map = {"A": 25, "B": 50, "C": 100}
+                lim = lim_map.get(str(st.session_state.get("news_export_limit_choice") or "B").upper().strip(), 50)
+
+                md_lines = []
+                if bool(st.session_state.get("news_export_include_sources", True)):
+                    md_lines.append(f"Filter symbol: {fs or '(none)'}")
+                    md_lines.append(f"Dedupe window: {wh}h")
+                    md_lines.append("")
+
+                for _, r in show.head(int(lim)).iterrows():
+                    pub = str(r.get("published") or "").strip()
+                    title = str(r.get("title") or "").strip()
+                    link = str(r.get("link") or "").strip()
+                    src = str(r.get("source") or "").strip()
+                    snip = str(r.get("snippet") or "").strip()
+                    tail = f" ({src})" if (src and bool(st.session_state.get("news_export_include_sources", True))) else ""
+
+                    if link:
+                        md_lines.append(f"- {pub} — [{title}]({link}){tail}".strip())
+                    else:
+                        md_lines.append(f"- {pub} — {title}{tail}".strip())
+
+                    if snip and bool(st.session_state.get("news_export_include_snippets", True)):
+                        md_lines.append(f"  - {snip[:240]}")
+
+                md = "\n".join(md_lines).strip()
+                st.download_button("Download news_snapshot.md", data=md.encode("utf-8"), file_name="news_snapshot.md", mime="text/markdown")
 
         # Ticker detection (simple regex)
         import re
@@ -4097,7 +5861,7 @@ with tab_earnings:
                             download_filing_primary,
                         )
 
-                        headers = {"User-Agent": "MarketHub/0.1 (local research; contact: user)", "Accept-Encoding": "gzip, deflate"}
+                        headers = {"User-Agent": "Market Hub/0.1 (local research; contact: user)", "Accept-Encoding": "gzip, deflate"}
                         cik = lookup_cik(sym, headers=headers) or ""
 
                         acc_cur = str(cur.get("accessionNumber") or "")
@@ -4155,7 +5919,8 @@ with tab_earnings:
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
 
-    # Spade checks summary (updates with live fetches)
+    # Diagnostics summary (updates with live fetches)
+    # Back-compat: keep using the internal key name "spade" for now.
     st.session_state.setdefault("spade", {})
 
     with colA:
@@ -4198,7 +5963,7 @@ with tab_overview:
         with st.spinner("Fetching 1m candles from Schwab…"):
             dfp = _fetch_history(selected, tos_tf)
 
-        # Spade checks: price history
+        # Diagnostics checks: price history
         try:
             checks = check_price_history(dfp)
             st.session_state["spade"]["history"] = summarize(checks)
@@ -4260,17 +6025,17 @@ with tab_overview:
         if not dfp.empty:
             st.plotly_chart(_plot_candles(dfp, title=f"{selected} — 1m"), use_container_width=True)
 
-        # Spade status (history)
+        # Diagnostics status (history)
         sp = st.session_state.get("spade", {}).get("history")
         if sp and isinstance(sp, dict):
-            msg = f"Spade checks: {sp.get('status')} (warn={sp.get('warn')}, fail={sp.get('fail')})"
+            msg = f"Diagnostics: {sp.get('status')} (warn={sp.get('warn')}, fail={sp.get('fail')})"
             if sp.get("status") == "FAIL":
                 st.error(msg)
             elif sp.get("status") == "WARN":
                 st.warning(msg)
             else:
                 st.caption(msg)
-            with st.expander("Spade details (price history)", expanded=False):
+            with st.expander("Diagnostics details (price history)", expanded=False):
                 st.json(sp)
 
         # Timeframe selector *below* the chart.
@@ -4440,7 +6205,7 @@ with tab_rel:
         rel_db = _ensure_relations(data_dir)
     except Exception as e:
         st.error(str(e))
-        st.stop()
+        _early_stop()
 
     edges = _read_sql(str(rel_db), "select * from edges")
 
@@ -4511,10 +6276,10 @@ with tab_rel:
                 edges=synth_edges,
             )
             st.components.v1.html(html, height=420, scrolling=True)
-            st.stop()
+            _early_stop()
 
         st.info("No relations found for this ticker in the current graph seed.")
-        st.stop()
+        _early_stop()
 
     # Allow "click-expand" style exploration via a focus dropdown.
     # We'll default focus to the sidebar ticker, but you can pivot to any neighbor.
@@ -4644,19 +6409,19 @@ with tab_opts:
                 # IMPORTANT: don't stop entire app.
                 calls, puts = pd.DataFrame(), pd.DataFrame()
 
-    # Spade checks: option chain
+    # Diagnostics checks: option chain
     try:
         sp_checks = check_option_chain(calls, puts)
         sp_sum = summarize(sp_checks)
         st.session_state["spade"]["chain"] = sp_sum
         if sp_sum.get("status") == "FAIL":
-            st.error(f"Spade checks: FAIL (options chain) — see details below")
+            st.error(f"Diagnostics: FAIL (options chain) — see details below")
         elif sp_sum.get("status") == "WARN":
-            st.warning(f"Spade checks: WARN (options chain) — see details below")
+            st.warning(f"Diagnostics: WARN (options chain) — see details below")
         else:
-            st.caption("Spade checks: OK (options chain)")
+            st.caption("Diagnostics: OK (options chain)")
 
-        with st.expander("Spade details (options chain)", expanded=False):
+        with st.expander("Diagnostics details (options chain)", expanded=False):
             st.json(sp_sum)
     except Exception:
         st.session_state["spade"]["chain"] = None
@@ -5325,6 +7090,50 @@ with tab_exports:
         st.write("(could not list exports)")
 
 
+with tab_scaffolds:
+    st.subheader("Scaffolds")
+    st.caption("Auto-scaffold surfaces for the full TODO list. This tab is intentionally dense and mostly collapsed.")
+
+    from pathlib import Path
+    import re
+
+    mega = Path(_data_dir()).resolve().parents[0] / "TODO_MEGA_SPRINT.md"
+    # fallback: repo root
+    if not mega.exists():
+        mega = Path(__file__).resolve().parents[1] / "TODO_MEGA_SPRINT.md"
+
+    txt = mega.read_text(encoding="utf-8", errors="ignore") if mega.exists() else ""
+    items = []
+    for ln in txt.splitlines():
+        m = re.match(r"^\s*- \[( |x)\] (.+)$", ln)
+        if not m:
+            continue
+        done = (m.group(1) == "x")
+        title = m.group(2).strip()
+        items.append({"done": done, "title": title})
+
+    if not items:
+        st.info("No mega sprint file found yet.")
+    else:
+        done_n = sum(1 for it in items if it["done"])
+        st.metric("Mega sprint", f"{done_n}/{len(items)}")
+        q = st.text_input("Filter", value="", placeholder="type to filter…")
+        show = items
+        if q.strip():
+            qq = q.strip().lower()
+            show = [it for it in items if qq in it["title"].lower()]
+
+        st.caption("Scaffold = there is at least a placeholder UI + safe defaults. Real endpoints/QA happen later.")
+        for it in show[:200]:
+            t = it["title"]
+            with st.expander(("✅ " if it["done"] else "⬜ ") + t, expanded=False):
+                st.write("Scaffold status:", "DONE" if it["done"] else "OPEN")
+                st.caption("Placeholder panel. If this needs a provider/endpoint, it will be validated during debug/QA.")
+                # Generic knobs to prove the surface exists
+                st.toggle("Enable", value=True, key=f"scaf_enable_{hash(t)}")
+                st.text_input("Notes", value="", key=f"scaf_notes_{hash(t)}")
+
+
 with tab_decisions:
     st.subheader("Decisions")
     st.caption("Use this page as a lightweight multiple-choice form. Decisions are saved locally to data/decisions.json")
@@ -5535,7 +7344,13 @@ with tab_admin:
                     if not isinstance(settings_obj, dict):
                         raise ValueError("settings file must be a JSON object")
 
-                    merged = _settings_defaults() | settings_obj
+                    defaults = _settings_defaults()
+                    # Hardening: only accept known, non-secret keys.
+                    # This prevents accidentally persisting unrelated keys if a user uploads
+                    # a larger JSON (or a future version adds fields we don't support).
+                    filtered = {k: settings_obj.get(k) for k in defaults.keys() if k in settings_obj}
+
+                    merged = defaults | filtered
                     _save_settings(merged)
                     for k, v in merged.items():
                         st.session_state[k] = v
@@ -5554,9 +7369,10 @@ with tab_admin:
         session_path = logs_dir / "spade_session.jsonl"
         err_path = logs_dir / "spade_errors.jsonl"
 
-        c1, c2 = st.columns([0.35, 0.65])
-        with c1:
-            if st.button("Create debug bundle"):
+        # --- Actions ---
+        a1, a2 = st.columns([0.35, 0.65])
+        with a1:
+            if st.button("Create debug bundle", key="debug_bundle_create"):
                 try:
                     bundle = create_debug_bundle(_data_dir())
                     st.session_state["_last_debug_bundle"] = str(bundle)
@@ -5564,7 +7380,7 @@ with tab_admin:
                 except Exception as e:
                     st.error(str(e))
 
-        with c2:
+        with a2:
             bp = st.session_state.get("_last_debug_bundle")
             if bp and Path(str(bp)).exists():
                 try:
@@ -5574,10 +7390,91 @@ with tab_admin:
                         data=b,
                         file_name=Path(str(bp)).name,
                         mime="application/zip",
+                        key="debug_bundle_dl",
                     )
                 except Exception:
                     st.caption("(Bundle exists but couldn't be read for download)")
 
+        # --- Instrumentation ---
+        mcol1, mcol2 = st.columns([0.55, 0.45])
+        with mcol1:
+            st.markdown("**Local instrumentation (this session)**")
+
+            st.session_state.setdefault("debug_show_metrics", False)
+            st.checkbox("Show raw metrics JSON", key="debug_show_metrics")
+
+            m = _metrics()
+            counters = m.get("counters") if isinstance(m.get("counters"), dict) else {}
+            timings = m.get("timings_ms") if isinstance(m.get("timings_ms"), dict) else {}
+
+            c_rows = [{"metric": k, "count": int(v or 0)} for k, v in counters.items()]
+            c_rows = sorted(c_rows, key=lambda r: (-r["count"], r["metric"]))
+
+            t_rows = []
+            for k, rec in timings.items():
+                if not isinstance(rec, dict):
+                    continue
+                t_rows.append(
+                    {
+                        "timer": k,
+                        "last_ms": int(rec.get("last_ms", 0) or 0),
+                        "avg_ms": int(rec.get("avg_ms", 0) or 0),
+                        "n": int(rec.get("n", 0) or 0),
+                        "total_ms": int(rec.get("total_ms", 0) or 0),
+                    }
+                )
+            t_rows = sorted(t_rows, key=lambda r: (-r["total_ms"], r["timer"]))
+
+            ccol, tcol = st.columns([0.42, 0.58], vertical_alignment="top")
+            with ccol:
+                st.caption("Counters")
+                st.table(c_rows) if c_rows else st.info("No counters recorded yet.")
+
+            with tcol:
+                st.caption("Timers")
+                st.table(t_rows) if t_rows else st.info("No timers recorded yet.")
+
+            st.caption("Cache stats")
+            cache_rows = []
+            for label, fn in [
+                ("schwab.quote (15s)", _schwab_quote),
+                ("sparkline_history (90s)", _sparkline_history),
+                ("read_sql", _read_sql),
+            ]:
+                info = _cache_info_safe(fn)
+                if not info:
+                    continue
+                cache_rows.append(
+                    {
+                        "cache": label,
+                        "hits": info.get("hits", 0),
+                        "misses": info.get("misses", 0),
+                        "entries": info.get("currsize", 0),
+                    }
+                )
+            st.table(cache_rows) if cache_rows else st.info(
+                "Cache stats unavailable (Streamlit version may not expose cache_info)."
+            )
+
+            if st.session_state.get("debug_show_metrics"):
+                st.markdown("**Raw**")
+                st.json(m)
+
+        with mcol2:
+            if st.button("Reset instrumentation counters", key="metrics_reset"):
+                st.session_state["_metrics"] = {"counters": {}, "timings_ms": {}}
+                st.toast("Instrumentation reset")
+                st.rerun()
+
+            st.download_button(
+                "Download instrumentation (JSON)",
+                data=json.dumps(_metrics(), indent=2, sort_keys=True).encode("utf-8"),
+                file_name=f"market_hub_metrics_{_local_timestamp_compact()}.json",
+                mime="application/json",
+                key="metrics_dl",
+            )
+
+        # --- Recent tails (local logs) ---
         st.markdown("##### Recent errors (tail)")
         try:
             if err_path.exists():
@@ -5602,7 +7499,12 @@ with tab_admin:
         st.markdown("##### Session events (tail)")
         try:
             if session_path.exists():
-                st.code("\n".join(session_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-120:]), language="json")
+                st.code(
+                    "\n".join(
+                        session_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-120:]
+                    ),
+                    language="json",
+                )
             else:
                 st.caption("(No session log yet)")
         except Exception as e:
@@ -5899,16 +7801,20 @@ with tab_admin:
     st.caption("Universe fetch has been removed. This UI is Schwab-only; use manual symbols.")
 
     st.markdown("#### 2) Prices")
-    st.code(
-        "python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider schwab --limit 200 --start 2024-01-01",
-        language="bash",
-    )
+    with st.expander("Advanced: CLI commands (internal)"):
+        st.caption("These are developer commands. The module name is internal; the app UI is the supported interface.")
+        st.code(
+            "market-hub prices --out data --universe data/etf_universe.parquet --provider schwab --limit 200 --start 2024-01-01",
+            language="bash",
+        )
     if st.button("Reset prices DB"):
         (data_dir / "prices.sqlite").unlink(missing_ok=True)
         st.success("Deleted prices.sqlite.")
 
     st.markdown("#### 3) Relations graph seed")
-    st.code("python -m etf_mapper.cli refresh --out data", language="bash")
+    with st.expander("Advanced: CLI commands (internal)"):
+        st.caption("These are developer commands. The module name is internal; the app UI is the supported interface.")
+        st.code("market-hub refresh --out data", language="bash")
     if st.button("Rebuild relations now"):
         (data_dir / "universe.sqlite").unlink(missing_ok=True)
         (data_dir / "equities.parquet").unlink(missing_ok=True)
@@ -5923,3 +7829,28 @@ with tab_admin:
 
     st.markdown("#### Orders (optional)")
     st.caption("Order placement endpoints exist in the client, but the UI does not submit live orders yet.")
+
+
+# ---------- Auto-refresh ----------
+# Apply at most one refresh widget per run (smallest requested interval).
+# Must never break the app.
+try:
+    _apply_autorefresh_requests()
+except Exception:
+    pass
+
+
+# ---------- Persistence hook ----------
+# Auto-save non-secret UI settings at the end of each run.
+# Must never break the app.
+#
+# UX: don't force-flush on every rerun; it can add disk jitter during rapid UI
+# interactions. The debounced saver will flush on the next rerun once things
+# settle.
+try:
+    # If we have a pending debounced snapshot, flush it now so the last user
+    # interaction is guaranteed to persist across refreshes/restarts.
+    force_flush = bool(st.session_state.get("_settings_pending_blob"))
+    _autosave_settings(force=force_flush)
+except Exception:
+    pass

@@ -63,8 +63,24 @@ class FlightRecorder:
     def __post_init__(self):
         self.log_dir = (self.data_dir / "logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.session_path = self.log_dir / "spade_session.jsonl"
-        self.error_path = self.log_dir / "spade_errors.jsonl"
+        # User-visible log filenames should reflect the product name.
+        # Migrate legacy spade_*.jsonl if present.
+        legacy_session = self.log_dir / "spade_session.jsonl"
+        legacy_errors = self.log_dir / "spade_errors.jsonl"
+
+        self.session_path = self.log_dir / "market_hub_session.jsonl"
+        self.error_path = self.log_dir / "market_hub_errors.jsonl"
+
+        try:
+            if legacy_session.exists() and (not self.session_path.exists()):
+                legacy_session.replace(self.session_path)
+        except Exception:
+            pass
+        try:
+            if legacy_errors.exists() and (not self.error_path.exists()):
+                legacy_errors.replace(self.error_path)
+        except Exception:
+            pass
 
     def _rotate_if_needed(self, path: Path):
         try:
@@ -84,30 +100,46 @@ class FlightRecorder:
             pass
 
     def event(self, kind: str, payload: dict[str, Any]):
-        self._rotate_if_needed(self.session_path)
-        rec = {
-            "ts": _now_iso(),
-            "session": self.session_id,
-            "kind": kind,
-            **redact_obj(payload),
-        }
-        self.session_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.session_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        """Record a session event (best-effort; must never crash the app)."""
+        try:
+            self._rotate_if_needed(self.session_path)
+            rec = {
+                "ts": _now_iso(),
+                "session": self.session_id,
+                "kind": kind,
+                **redact_obj(payload),
+            }
+            try:
+                self.session_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            with self.session_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            # Logging should be a side-effect only.
+            return
 
     def error(self, where: str, err: Exception, extra: Optional[dict[str, Any]] = None):
-        self._rotate_if_needed(self.error_path)
-        rec = {
-            "ts": _now_iso(),
-            "session": self.session_id,
-            "where": where,
-            "type": type(err).__name__,
-            "message": str(err),
-            "fingerprint": _sha(type(err).__name__ + ":" + str(err)),
-            "extra": redact_obj(extra or {}),
-        }
-        with self.error_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        """Record a non-fatal error (best-effort; must never crash the app)."""
+        try:
+            self._rotate_if_needed(self.error_path)
+            rec = {
+                "ts": _now_iso(),
+                "session": self.session_id,
+                "where": where,
+                "type": type(err).__name__,
+                "message": str(err),
+                "fingerprint": _sha(type(err).__name__ + ":" + str(err)),
+                "extra": redact_obj(extra or {}),
+            }
+            try:
+                self.error_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            with self.error_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            return
 
 
 def make_session_id() -> str:

@@ -39,7 +39,7 @@ class HttpFetcher:
         self,
         *,
         allowed_domains: set[str],
-        user_agent: str = "MarketHub/0.1 (+local-first)",
+        user_agent: str = "Market Hub/0.1 (+local-first)",
         retries: int = 2,
         timeout: float = 12.0,
     ) -> None:
@@ -263,7 +263,7 @@ class WebHaltsFeed(HaltsFeed):
             "www.cboe.com",
             "cboe.com",
         }
-        self.fetcher = HttpFetcher(allowed_domains=allowed, user_agent="MarketHub/halts")
+        self.fetcher = HttpFetcher(allowed_domains=allowed, user_agent="Market Hub/halts")
 
         self._last_ok = False
         self._last_detail = "not fetched"

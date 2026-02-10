@@ -114,7 +114,7 @@ def maybe_run(
     feed = EdgarFilingsFeed(data_dir=data_dir)
 
     phrases = load_risk_phrases(Path(__file__).resolve().parents[1] / "analysis" / "risk_phrases.txt")
-    headers = {"User-Agent": "MarketHub/0.1 (local research; contact: user)", "Accept-Encoding": "gzip, deflate"}
+    headers = {"User-Agent": "Market Hub/0.1 (local research; contact: user)", "Accept-Encoding": "gzip, deflate"}
 
     alerts: list[dict] = []
 

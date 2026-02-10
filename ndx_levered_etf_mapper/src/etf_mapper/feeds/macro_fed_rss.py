@@ -102,7 +102,7 @@ class FedRssFeed:
             return pd.DataFrame(columns=["title", "published", "link", "source"])
 
         headers = {
-            "User-Agent": "MarketHub/0.1 (macro rss)",
+            "User-Agent": "Market Hub/0.1 (macro rss)",
             "Accept": "application/rss+xml, application/atom+xml, text/xml, application/xml;q=0.9, */*;q=0.8",
         }
 
