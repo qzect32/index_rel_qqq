@@ -2302,7 +2302,9 @@ with st.sidebar:
         pass
 
     # Event mode (affects scanner/dashboard defaults)
-    st.session_state["event_mode"] = st.selectbox(
+    # IMPORTANT: don't assign into st.session_state["event_mode"] here.
+    # Streamlit manages that key for the widget; assigning after instantiation raises.
+    st.selectbox(
         "Event mode",
         ["Normal", "Fed day", "CPI/NFP day", "Earnings week"],
         index=["Normal", "Fed day", "CPI/NFP day", "Earnings week"].index(st.session_state.get("event_mode", "Normal")),
