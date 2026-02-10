@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dotenv import load_dotenv
 
 # This file is intentionally defensive: if you don't have the agents SDK installed,
@@ -12,7 +11,7 @@ def main() -> int:
     try:
         from openai_agents import Agent, tool  # type: ignore
         from openai import OpenAI  # type: ignore
-    except Exception as e:
+    except Exception:
         print("Agents SDK not installed. Install with: pip install -e '.[dev]'")
         return 2
 

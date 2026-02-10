@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import sqlite3
-from typing import Iterable, Optional, Literal
+from typing import Optional, Literal
 
 import pandas as pd
-
-import os
 
 from .marketdata import SchwabPriceProvider
 from .schwab import SchwabConfig

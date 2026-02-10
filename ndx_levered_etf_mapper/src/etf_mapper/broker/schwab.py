@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Schwab/TOS integration scaffold.
 
 This is intentionally non-functional until Schwab Developer Portal credentials are available.

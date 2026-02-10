@@ -458,8 +458,6 @@ def _create_debug_bundle(repo: str | None) -> bytes:
     session = logs / "spade_session.jsonl"
     errors = logs / "spade_errors.jsonl"
 
-    out = Path("debug_bundle_tmp.zip")
-
     # We build in-memory (BytesIO would be ideal, but keep it simple/robust here).
     # Use a temp file then read bytes.
     try:

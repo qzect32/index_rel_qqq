@@ -5,9 +5,6 @@ from pathlib import Path
 import json
 import re
 import time
-from typing import Optional
-
-import pandas as pd
 
 
 def _now_iso() -> str:
