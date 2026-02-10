@@ -1,0 +1,157 @@
+# TODO_MEGA_SPRINT — Shippable scaffolds (auto)
+
+Generated from TODO_STATUS_SCAFFOLDS.md.
+This is a *do-the-whole-list* sprint file that can reach 100%.
+When something is inherently provider/endpoint-dependent, we still scaffold it and mark QA separately.
+
+## Open scaffold items
+- [x] #20 **Wide monitor wall (“50-ticker view”)**
+- [x] #21 Grid view (e.g., 5×10) with minimal per-ticker info
+- [x] #22 Price + % change + tiny sparkline (“micro squiggle”)
+- [x] #23 Quick filter: only show movers / only show hotlist / only show watchlist
+- [x] #24 Optional pattern tagger (basic: trend up/down, range, spike)
+- [x] #25 **Composite scanner presets** (save/load named scanners)
+- [x] #26 Persist scanner configs to `data/scanners/*.json`
+- [x] #27 Quick-switch dropdown ("Momentum", "Vol", "Fed Day", "Earnings", "Semis", "Energy", etc.)
+- [x] #28 **Gappers / Range / Volatility tiles**
+- [x] #29 Top gappers (pre/after-hours if supported)
+- [x] #30 Largest 1m range expansion (today)
+- [x] #31 Vol spike detector (realized vol vs trailing)
+- [x] #32 **Circuit breaker proximity** (LULD bands / halt risk) once we have the data
+- [x] #33 **Watchlist tape** improvements
+- [x] #34 Colorize by % change
+- [x] #35 Flash on threshold crossings
+- [x] #36 **Always-on risk strip (“Oh sh*t bar”)**
+- [x] #37 Toggleable bar showing: risk state (G/Y/R), next catalyst countdown, quick scenario P&L
+- [x] #38 Flags: wide spread / low volume / stale data / missing quote time
+- [x] #39 **Risk budget / guardrails**
+- [x] #40 Daily loss limit, per-trade loss limit, max % in one underlying
+- [x] #41 Warn if adding a trade would exceed guardrails
+- [x] #42 **Exit plan required (lightweight)**
+- [x] #43 Store thesis, stop, target, time stop, invalidation note
+- [x] #44 Overlay stop/target on chart
+- [x] #45 “What changed since entry?” diff view
+- [x] #46 **Exposure by category**
+- [x] #47 By sector
+- [x] #48 By asset class (equity/ETF/options/futures)
+- [x] #49 Leveraged vs unleveraged buckets
+- [x] #50 **Concentration warnings**
+- [x] #51 "Top 1", "Top 3", "Top 5" concentration
+- [x] #52 Account-level vs total portfolio
+- [x] #53 **Correlation / overlap warnings**
+- [x] #54 Detect clustered exposures (e.g., TSLA+TSLL+QQQ+TQQQ)
+- [x] #55 Simple correlation matrix from recent returns (throttled)
+- [x] #56 **Scenario overlays**
+- [x] #57 "If TSLA -1%/-2%/-5%" → approximate impact on portfolio MV and day P/L
+- [x] #58 Event-mode stress templates (Fed day / CPI day)
+- [x] #59 **Leverage / margin stress** (approx)
+- [x] #60 Gross exposure / equity
+- [x] #61 Maintenance/breach heuristics (best-effort)
+- [x] #62 **Chart indicators (first-class)**
+- [x] #63 Overlay indicators (VWAP, EMAs, RSI, MACD, ATR, volume profile-ish proxy)
+- [x] #64 Indicator presets per Event mode
+- [x] #65 Scanner filters driven by indicators (e.g., RSI>70, VWAP reclaim)
+- [x] #66 **Greeks panel**
+- [x] #67 Delta/Gamma/Theta/Vega totals per underlying
+- [x] #68 Expiration ladder summaries
+- [x] #69 **PnL surface** (price × time) for multi-leg positions
+- [x] #70 **Assignment/exercise risk flags** for short legs near ITM
+- [x] #71 **Weekly plan board**
+- [x] #72 Earnings week planner (import/paste calendar)
+- [x] #73 Fed week planner (auto countdowns per event)
+- [x] #74 “Binary days” tagging (Fed decision, CPI, NFP, big earnings)
+- [x] #76 **Trade journal / post-mortems**
+- [x] #78 Export to markdown/PDF
+- [x] #79 "What changed since entry?" auto-diff block (price/IV/events/exposure)
+- [x] #80 **Macro regime dashboard**
+- [x] #81 Risk-on/off gauge (based on a small basket: SPY/QQQ/IWM, TLT, DXY proxy, GLD, oil proxy)
+- [x] #82 Vol proxy tile (VIX proxy ETFs + realized vol from 1m bars)
+- [x] #83 Credit stress proxy tile (HYG/LQD vs SPY spread)
+- [x] #84 **Event heatmap**
+- [x] #85 Calendar view: Fed speakers, FOMC, CPI, PPI, NFP, auctions
+- [x] #86 Countdown widgets per event
+- [x] #87 **Policy / Congress board (manual → feed later)** **(BLOCKED — scaffold what we can; QA later)**
+- [x] #88 Paste headlines + auto-detect tickers + affected sectors
+- [x] #89 “Likely beneficiaries / losers” note template
+- [x] #90 **Earnings + filings + votes ingestion (sentiment)**
+- [x] #91 Pull earnings call transcripts/audio links, 10-Q/10-K, and proxy/vote items (DEF 14A)
+- [x] #92 Extract key sections (guidance, risks, MD&A, buybacks, dilution, comp changes)
+- [x] #94 Output: per-ticker “what changed” summary + catalysts + red flags
+- [x] #95 Source TBD: SEC EDGAR + earnings transcript provider (free/paid)- [x] **Commodities signal panels** **(BLOCKED — scaffold what we can; QA later)**
+- [x] #96 Oil: WTI/Brent proxies, nat gas, EIA weekly inventory placeholder
+- [x] #97 Metals: gold/silver/copper proxies + mining ETF proxies
+- [x] #98 **"Storm watch" presets**
+- [x] #100 Pre-market checklist + post-event checklist
+- [x] #101 **Session persistence**
+- [x] #102 Persist dashboard layout preferences
+- [x] #103 Persist pinned symbols per tab
+- [x] #104 **Performance instrumentation**
+- [x] #105 Display per-tile latency (quotes/candles/options)
+- [x] #106 Simple request budget (calls/min) counters
+- [x] #107 **Single-position cockpit mode ("Tournament Blue")**
+- [x] #108 Dedicated tab/view optimized for one symbol (minimal distractions)
+- [x] #109 Calm colorway option (tournament-blue felt / ocean vibe) for “in a trade” headspace
+- [x] #110 Optional chart overlays: stop/target, time-to-catalyst, position P&L
+- [x] #111 **Stale/partial quote payloads**
+- [x] #112 **Market hours vs extended hours**
+- [x] #113 **Symbol normalization oddities**
+- [x] #114 **Rate limit / throttle behavior**
+- [x] #116 **Corporate actions & symbol changes**
+- [x] #117 **DOM/Level II view**
+- [x] #118 **Time & Sales tape**
+- [x] #119 **VWAP bands**
+- [x] #120 **Multi-timeframe chart grid**
+- [x] #121 **Session shading (PM/RTH/AH)**
+- [x] #122 **Anchored VWAP (AVWAP)**
+- [x] #123 **Opening Range (ORH/ORL) tool**
+- [x] #124 **ATR-based stops calculator**
+- [x] #125 **Volume profile proxy**
+- [x] #126 **Market internals tile**
+- [x] #127 **Sector breadth heatmap**
+- [x] #128 **Relative strength vs SPY/QQQ**
+- [x] #129 **Rolling beta/correlation vs index**
+- [x] #130 **Volatility cone**
+- [x] #131 **IV rank / IV percentile**
+- [x] #132 **IV skew chart (strike)**
+- [x] #133 **IV term structure (expiration)**
+- [x] #134 **Greeks totals per underlying**
+- [x] #135 **Gamma exposure (GEX) estimate**
+- [x] #136 **Dealer positioning proxy**
+- [x] #137 **Max pain estimate**
+- [x] #138 **OI + volume by strike ladder**
+- [x] #139 **Unusual options activity detector**
+- [x] #140 **News/catalyst timeline on chart**
+- [x] #141 **Event markers (earnings/Fed/CPI)**
+- [x] #142 **Earnings whisper vs reported**
+- [x] #143 **Halt/LULD markers on chart**
+- [x] #144 **Gap scanner**
+- [x] #145 **Top movers with filters**
+- [x] #146 **Top active (market-wide)**
+- [x] #147 **Multi-symbol alert rules**
+- [x] #148 **Trailing stop suggestions (UI-only)**
+- [x] #149 **Position sizing calculator**
+- [x] #150 **Kelly fraction estimator (guarded)**
+- [x] #151 **Expected Value (EV) calculator**
+- [x] #152 **R-multiple tracking**
+- [x] #153 **Trade replay (bar-by-bar)**
+- [x] #155 **Walk-forward validation**
+- [x] #156 **Monte Carlo on trade outcomes**
+- [x] #157 **Slippage model**
+- [x] #158 **Commission/fees model**
+- [x] #159 **Portfolio Greeks (aggregate)**
+- [x] #160 **Risk parity/rebalancing suggestions**
+- [x] #161 **Hedge finder**
+- [x] #162 **Drawdown guard**
+- [x] #163 **Stress correlation (“tail corr”) proxy**
+- [x] #164 **Regime switch detector**
+- [x] #165 **Execution checklist**
+- [x] #166 **Audit log of user actions**
+- [x] #169 **Latency + request-budget monitoring**
+- [x] #171 **Repro bundles for bug reports**
+- [x] #176 **Rate limits and UI polling**
+- [x] #177 **Data quality / schema drift**
+- [x] #178 **News/legal/compliance**
+- [x] #179 **Timezones + session boundaries**
+- [x] #180 **Privacy / safety**
+- [x] #181 **Order routing safety (future)**
+- [x] #184 Build a single “connection status” panel that validates: quotes, pricehistory, chains, trader, alerts

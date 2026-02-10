@@ -35,7 +35,7 @@ This repo is intentionally practical: fast symbol lookup, live 1‑minute candle
 - **News**: RSS auto-feed cached locally + Signals section + News tab + per-feed status + failure counts
 
 ### 2026-02-04
-- Renamed project to **Market Hub** (from ETF Hub)
+- Renamed project to **Market Hub** (from a prior internal name)
 - Enforced **Schwab-only** outbound (Polygon removed)
 - Live quote + **1m candles** with visible data-age indicators
 - New **Dashboard** tab (watchlist + selected chart tiles)
@@ -191,13 +191,13 @@ Then open `decisions_form.html` and click **Reload schema** / **Submit**.
 Build the relationships graph and export datasets to `data/`:
 
 ```bash
-python -m etf_mapper.cli refresh --out data
+market-hub refresh --out data
 ```
 
 Fetch daily bars via Schwab for a provided universe file:
 
 ```bash
-python -m etf_mapper.cli prices --out data --universe data/etf_universe.parquet --provider schwab --start 2024-01-01 --limit 200
+market-hub prices --out data --universe data/etf_universe.parquet --provider schwab --start 2024-01-01 --limit 200
 ```
 
 ---
