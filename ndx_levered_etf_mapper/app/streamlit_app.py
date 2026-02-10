@@ -741,6 +741,17 @@ def _apply_inbox_decisions_defaults() -> None:
         st.session_state.setdefault("wall_export_include_stale2", w12.get("wall_export_include_stale") == "A")
 
 
+def _default_heat_weights() -> dict:
+    # Used by _settings_defaults() during early boot.
+    # Keep lightweight and deterministic.
+    return {
+        "Normal": {"w_move": 0.55, "w_dollar_vol": 0.45},
+        "Fed day": {"w_move": 0.70, "w_dollar_vol": 0.30},
+        "CPI/NFP day": {"w_move": 0.65, "w_dollar_vol": 0.35},
+        "Earnings week": {"w_move": 0.60, "w_dollar_vol": 0.40},
+    }
+
+
 def _settings_defaults() -> dict:
     # Keep this small and non-secret.
     # NOTE: Keys listed here are the *only* ones persisted by _autosave_settings().
