@@ -7,13 +7,14 @@ from .build_prices import refresh_prices
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="etf-mapper")
+    # User-facing name normalization: keep internal package name but present the product name.
+    p = argparse.ArgumentParser(prog="market-hub")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("refresh", help="Refresh relationship graph (issuer leveraged/inverse seed)")
+    r = sub.add_parser("refresh", help="Refresh Market Hub relationship graph (issuer leveraged/inverse seed)")
     r.add_argument("--out", default="data", help="Output directory")
 
-    pr = sub.add_parser("prices", help="Fetch daily price history via Schwab for a provided universe file")
+    pr = sub.add_parser("prices", help="Fetch daily price history via Schwab for a provided universe file (Market Hub)")
     pr.add_argument("--out", default="data", help="Output directory")
     pr.add_argument(
         "--universe",

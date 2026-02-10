@@ -40,6 +40,8 @@ dev = [
 ]
 
 [project.scripts]
+# User-facing script name normalization (keep legacy entrypoint for back-compat).
+market-hub = "etf_mapper.cli:main"
 etf-mapper = "etf_mapper.cli:main"
 
 [tool.ruff]
