@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import re
 import sqlite3
 import json
@@ -14,13 +13,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from etf_mapper.feeds import (
-    StubHaltsFeed,
-    StubNewsFeed,
-    StubCalendarFeed,
-    StubEarningsFeed,
     StubFilingsFeed,
     StubActivesFeed,
-    StubInternalsFeed,
     WebHaltsFeed,
     WebEarningsCalendarFeed,
     EdgarFilingsFeed,
@@ -2304,12 +2298,7 @@ with st.sidebar:
         key="event_mode",
     )
 
-    # Keep hot list view synced to current event mode.
-    try:
-        st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
-        st.session_state["scanner_hotlist"] = _hotlist_for_mode(st.session_state.get("event_mode", "Normal"))
-    except Exception:
-        pass
+    # Hot list sync happens later (after helpers are defined).
 
     with st.expander("Calculator", expanded=False):
         a = st.number_input("A", value=0.0, step=1.0, format="%.6f")
@@ -3292,7 +3281,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
                 if isinstance(best, dict):
                     sc = best.get("score")
-                    bullets.append(f"FILINGS: recent report" + (f" (score {sc})" if sc is not None else ""))
+                    bullets.append("FILINGS: recent report" + (f" (score {sc})" if sc is not None else ""))
             except Exception:
                 pass
 
@@ -3338,7 +3327,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
         # Decision: export bundle (markdown)
         if st.button("Download Dashboard snapshot (md)", key="dash_export_md"):
             snap = []
-            snap.append(f"# Dashboard snapshot")
+            snap.append("# Dashboard snapshot")
             snap.append("")
             snap.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             snap.append(f"Main ticker: {st.session_state.get('selected_ticker','')}")
@@ -3388,7 +3377,8 @@ with tab_scanner:
         _early_stop()
 
     # Persistent hot list (saved under data/)
-    st.session_state.setdefault("scanner_hotlist", _load_hotlist())
+    st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
+    st.session_state.setdefault("scanner_hotlist", _hotlist_for_mode(st.session_state.get("event_mode", "Normal")))
 
     # Universe selection
     base = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
@@ -3648,6 +3638,7 @@ with tab_scanner:
         try:
             focus_sym = str(st.session_state.get("scanner_focus") or "").upper().strip()
             hot_syms = [str(x).upper().strip() for x in st.session_state.get("scanner_hotlist", []) if str(x).strip()]
+            strip_syms = sdf2["symbol"].head(5).tolist() if "symbol" in sdf2.columns else []
             top5_syms = [str(x).upper().strip() for x in strip_syms if str(x).strip()]
 
             eligible = []
@@ -3823,9 +3814,9 @@ with tab_scanner:
             st.caption(f"Up to {lim} pins")
             if pins:
                 for ps in list(pins)[:lim]:
-                    l, r = st.columns([0.75, 0.25], vertical_alignment="center")
-                    l.write(ps)
-                    if r.button("Remove", key=f"pin_rm_{ps}"):
+                    colL, colR = st.columns([0.75, 0.25], vertical_alignment="center")
+                    colL.write(ps)
+                    if colR.button("Remove", key=f"pin_rm_{ps}"):
                         st.session_state["scanner_pins"] = [x for x in pins if x != ps]
                         st.rerun()
             else:
@@ -5021,6 +5012,7 @@ with tab_signals:
 
         cols = [c for c in ["symbol", "market", "reason", "halt_time_et", "resume_time_et", "mins_to_resume"] if c in show.columns]
         show2 = show[cols].head(int(rows_halts)).copy()
+        st.session_state["signals_halts_table"] = show2
         st.dataframe(show2, use_container_width=True, height=420, hide_index=True)
 
     def _render_news_inline():
@@ -5090,7 +5082,10 @@ with tab_signals:
 
             # Quick actions (buttons)
             try:
-                hs = show2["symbol"].astype(str).tolist() if "symbol" in show2.columns else []
+                tbl = st.session_state.get("signals_halts_table")
+                hs = []
+                if isinstance(tbl, pd.DataFrame) and ("symbol" in tbl.columns):
+                    hs = tbl["symbol"].astype(str).tolist()
                 hs = [str(x).upper().strip() for x in hs if str(x).strip()]
                 if hs:
                     pick = st.selectbox("Action symbol", hs, index=0, key="signals_halt_action_sym")
@@ -6415,9 +6410,9 @@ with tab_opts:
         sp_sum = summarize(sp_checks)
         st.session_state["spade"]["chain"] = sp_sum
         if sp_sum.get("status") == "FAIL":
-            st.error(f"Diagnostics: FAIL (options chain) — see details below")
+            st.error("Diagnostics: FAIL (options chain) — see details below")
         elif sp_sum.get("status") == "WARN":
-            st.warning(f"Diagnostics: WARN (options chain) — see details below")
+            st.warning("Diagnostics: WARN (options chain) — see details below")
         else:
             st.caption("Diagnostics: OK (options chain)")
 

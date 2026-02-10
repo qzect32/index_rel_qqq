@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 def safe_snip(x: Any, max_chars: int = 1200) -> str:
