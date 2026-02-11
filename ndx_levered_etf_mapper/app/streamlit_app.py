@@ -562,7 +562,7 @@ def _apply_inbox_decisions_defaults() -> None:
         st.session_state.setdefault("signals_halts_highlight_rules", sg.get("signals_halts_highlight_rules") == "A")
         st.session_state.setdefault("signals_filings_badge_threshold", sg.get("signals_filings_badge_threshold") or "A")
 
-    # --- Batch 7–12 (auto-generated) defaults ---
+    # --- Batch 7-12 (auto-generated) defaults ---
     # Scanner 7
     sc7 = cats.get("scanner7") if isinstance(cats.get("scanner7"), dict) else {}
     if sc7:
@@ -571,7 +571,7 @@ def _apply_inbox_decisions_defaults() -> None:
         st.session_state.setdefault("scanner_focus_keyboard", sc7.get("scanner_focus_keyboard") == "A")
         st.session_state.setdefault("scanner_focus_pin_symbol", sc7.get("scanner_focus_pin_symbol") == "A")
 
-    # Scanner 8–12
+    # Scanner 8-12
     sc8 = cats.get("scanner8") if isinstance(cats.get("scanner8"), dict) else {}
     if sc8:
         st.session_state.setdefault("scanner_focus_prev_next", sc8.get("scanner_focus_prev_next") == "A")
@@ -610,7 +610,7 @@ def _apply_inbox_decisions_defaults() -> None:
         if sc12.get("scanner_budget_cap") in cap_map:
             st.session_state.setdefault("api_budget_cap", cap_map[sc12.get("scanner_budget_cap")])
 
-    # Signals 7–12
+    # Signals 7-12
     sg7 = cats.get("signals7") if isinstance(cats.get("signals7"), dict) else {}
     if sg7:
         st.session_state.setdefault("signals_status_table_default", sg7.get("signals_status_table_default") or "A")
@@ -654,7 +654,7 @@ def _apply_inbox_decisions_defaults() -> None:
         st.session_state.setdefault("signals_export_include_status", sg12.get("signals_export_include_status") == "A")
         st.session_state.setdefault("signals_export_include_links", sg12.get("signals_export_include_links") == "A")
 
-    # News 7–12
+    # News 7-12
     n7 = cats.get("news7") if isinstance(cats.get("news7"), dict) else {}
     if n7:
         st.session_state.setdefault("news_reader_mode", n7.get("news_reader_mode") == "A")
@@ -697,7 +697,7 @@ def _apply_inbox_decisions_defaults() -> None:
         st.session_state.setdefault("news_export_include_snippets", n12.get("news_export_include_snippets") == "A")
         st.session_state.setdefault("news_export_include_sources", n12.get("news_export_include_sources") == "A")
 
-    # Wall 7–12
+    # Wall 7-12
     w7 = cats.get("wall7") if isinstance(cats.get("wall7"), dict) else {}
     if w7:
         st.session_state.setdefault("wall_layout_mode", w7.get("wall_layout_mode") or "A")
@@ -962,7 +962,7 @@ def _empty_state_text(kind: str) -> str:
 
     if k in {"news", "rss", "news_rss"}:
         return (
-            "No RSS headlines cached yet. Use Dashboard → “Refresh RSS cache” "
+            "No RSS headlines cached yet. Use Dashboard -> 'Refresh RSS cache' "
             "(or wait up to ~15m for auto-refresh)."
         )
 
@@ -1025,7 +1025,7 @@ def _sparkline_history(ticker: str, *, window: str = "1h") -> pd.DataFrame:
       - "1h": last 60 x 1m bars
       - "4h": last 240 x 1m bars
 
-    Cached to reduce Schwab call volume (user preference: 60–120s).
+    Cached to reduce Schwab call volume (user preference: 60-120s).
     """
     if _budget_blocked():
         return pd.DataFrame()
@@ -1355,7 +1355,21 @@ def _infer_intended_usage(name: str) -> str:
 
 @st.cache_data(show_spinner=False, ttl=30)
 def _schwab_profile(ticker: str) -> dict:
-    """Lightweight symbol/quote metadata via Schwab quotes endpoint."""
+    """Lightweight symbol/quote metadata via Schwab quotes endpoint.
+
+    Schwab's quote payload is *nested* (quote/reference/fundamental/etc.).
+    This function flattens the common fields we use throughout the UI so we
+    don't end up with blank dashes for common symbols.
+    """
+
+    def _dig(d: dict, *path, default=None):
+        cur = d
+        for k in path:
+            if not isinstance(cur, dict):
+                return default
+            cur = cur.get(k)
+        return cur if cur not in (None, "") else default
+
     tkr = _normalize_ticker(ticker)
     if not tkr:
         return {}
@@ -1378,26 +1392,34 @@ def _schwab_profile(ticker: str) -> dict:
     if not isinstance(rec, dict):
         return {}
 
-    # Try a few common fields; keep as JSON-ish so UI can render it.
-    keys = [
-        "symbol",
-        "description",
-        "assetType",
-        "exchangeName",
-        "quoteType",
-        "cusip",
-        "lastPrice",
-        "mark",
-        "openPrice",
-        "highPrice",
-        "lowPrice",
-        "closePrice",
-        "netChange",
-        "netPercentChangeInDouble",
-        "totalVolume",
-    ]
-    out = {k: rec.get(k) for k in keys if rec.get(k) not in (None, "")}
-    return out
+    q = rec.get("quote") if isinstance(rec.get("quote"), dict) else {}
+    ref = rec.get("reference") if isinstance(rec.get("reference"), dict) else {}
+
+    # Flattened fields
+    out = {
+        "symbol": tkr,
+        "description": _dig(ref, "description") or _dig(rec, "description"),
+        # Normalize asset type naming used by the UI
+        "assetType": _dig(rec, "assetSubType") or _dig(rec, "assetMainType") or _dig(rec, "assetType"),
+        "exchange": _dig(ref, "exchange") or _dig(q, "askMICId") or _dig(q, "bidMICId"),
+        "exchangeName": _dig(ref, "exchangeName") or _dig(rec, "exchangeName"),
+        "quoteType": _dig(rec, "quoteType"),
+        "cusip": _dig(ref, "cusip") or _dig(rec, "cusip"),
+        # Prices/vol
+        "lastPrice": _dig(q, "lastPrice") or _dig(rec, "lastPrice") or _dig(rec, "extended", "lastPrice"),
+        "mark": _dig(q, "mark") or _dig(rec, "mark") or _dig(rec, "extended", "mark"),
+        "openPrice": _dig(q, "openPrice"),
+        "highPrice": _dig(q, "highPrice"),
+        "lowPrice": _dig(q, "lowPrice"),
+        "closePrice": _dig(q, "closePrice"),
+        "netChange": _dig(q, "netChange"),
+        # Schwab uses netPercentChange in quote (not netPercentChangeInDouble)
+        "netPercentChange": _dig(q, "netPercentChange") or _dig(rec, "netPercentChangeInDouble"),
+        "totalVolume": _dig(q, "totalVolume") or _dig(rec, "extended", "totalVolume"),
+    }
+
+    # Drop empties
+    return {k: v for k, v in out.items() if v not in (None, "")}
 
 
 def _local_quote_from_prices(ticker: str) -> dict:
@@ -1463,6 +1485,50 @@ def _local_quote_from_prices(ticker: str) -> dict:
         return out
     except Exception:
         return {}
+
+
+@st.cache_data(show_spinner=False, ttl=10)
+def _schwab_quotes_batch(symbols: list[str]) -> dict[str, dict]:
+    """Batch quote fetch (one Schwab request) for UI elements like the rolling tape."""
+    syms = []
+    for s in (symbols or []):
+        t = _normalize_ticker(s)
+        if t and t not in syms:
+            syms.append(t)
+
+    if not syms:
+        return {}
+
+    if _budget_blocked():
+        return {s: {"symbol": s, "_blocked": True} for s in syms}
+
+    api = _schwab_api()
+    if api is None:
+        # Offline fallback: best-effort local close per symbol
+        out = {}
+        for s in syms:
+            q = _local_quote_from_prices(s) or {}
+            out[s] = q
+        return out
+
+    _budget_note_call(1)
+    try:
+        js = api.quotes(syms)
+    except Exception as e:
+        if _looks_rate_limited(str(e)):
+            over = max(0, _budget_calls_last_minute() - _budget_cap_per_minute())
+            _budget_set_cooldown(min(90.0, 10.0 + 5.0 * over))
+        return {}
+
+    if not isinstance(js, dict):
+        return {}
+
+    out: dict[str, dict] = {}
+    for s in syms:
+        rec = js.get(s) or js.get(s.upper()) or js.get("quotes", {}).get(s)
+        if isinstance(rec, dict):
+            out[s] = rec
+    return out
 
 
 @st.cache_data(show_spinner=False, ttl=15)
@@ -2252,7 +2318,7 @@ def _pdf_scanner_snapshot(
         dv = getattr(r, "dollar_vol", None)
         heat = getattr(r, "heat", None)
 
-        def _f(x, fmt, default="—"):
+        def _f(x, fmt, default="-"):
             try:
                 if x is None or (isinstance(x, float) and x != x):
                     return default
@@ -2287,17 +2353,30 @@ with st.sidebar:
     st.markdown("### Explore")
 
     # Connection status (quiet but clear).
+    # Default: do NOT nag about OAuth; the app should run clean in offline/demo mode.
+    st.session_state.setdefault("require_schwab", False)
     # Keep this lightweight: no network calls, just local files.
     try:
         _dd = _data_dir()
         _secrets = load_schwab_secrets(_dd)
         _tokens_present = (_dd / "schwab_tokens.json").exists()
-        if not _secrets:
-            st.warning("Schwab OAuth is not configured. Open Admin → Schwab OAuth to set it up.")
-        elif not _tokens_present:
-            st.warning("Schwab is not connected (tokens missing/expired). Open Admin → Schwab OAuth to connect.")
-        else:
+
+        with st.expander("Connection", expanded=False):
+            st.toggle(
+                "Require Schwab connection (show warnings)",
+                value=bool(st.session_state.get("require_schwab", False)),
+                key="require_schwab",
+            )
+            st.caption("If disabled, Schwab-backed panels run in offline/demo mode.")
+        if _secrets and _tokens_present:
             st.caption("Schwab: connected")
+        elif st.session_state.get("require_schwab", False):
+            if not _secrets:
+                st.warning("Schwab OAuth is not configured. Open Admin → Schwab OAuth to set it up.")
+            else:
+                st.warning("Schwab is not connected (tokens missing/expired). Open Admin → Schwab OAuth to connect.")
+        else:
+            st.caption("Schwab: offline (demo mode)")
     except Exception:
         pass
 
@@ -2331,7 +2410,7 @@ with st.sidebar:
                 out = None if b == 0 else a % b
         except Exception:
             out = None
-        st.markdown(f"**Result:** `{out if out is not None else '—'}`")
+        st.markdown(f"**Result:** `{out if out is not None else '-'}`")
 
     # Advanced settings (collapsed by default)
     with st.expander("Advanced", expanded=False):
@@ -2417,19 +2496,26 @@ else:
 # Single source of truth: one ticker box.
 # Polish: put the ticker input in a form so we don't rerun on every keystroke.
 with st.sidebar:
+    # Canonical selected symbol (used everywhere).
     st.session_state.setdefault("selected_ticker", "QQQ")
+
+    # Separate widget key so we can safely normalize into selected_ticker on submit.
+    st.session_state.setdefault("selected_ticker_input", st.session_state.get("selected_ticker", "QQQ"))
 
     with st.form("ticker_form", border=False):
         raw_selected = st.text_input(
             "Ticker",
-            value=st.session_state.get("selected_ticker", "QQQ"),
-            key="selected_ticker",
+            value=st.session_state.get("selected_ticker_input", st.session_state.get("selected_ticker", "QQQ")),
+            key="selected_ticker_input",
         )
         submitted = st.form_submit_button("Go")
 
     # Normalize on submit (and avoid jitter while typing).
     if submitted:
-        st.session_state["selected_ticker"] = (raw_selected or "").upper().strip()
+        norm = (raw_selected or "").upper().strip()
+        st.session_state["selected_ticker"] = norm
+        # Don't assign to selected_ticker_input here: Streamlit forbids mutating a widget key
+        # after instantiation. The widget already holds the submitted value.
 
     selected = (st.session_state.get("selected_ticker") or "").upper().strip()
 
@@ -2460,7 +2546,7 @@ with headerR:
     title_bits.append(selected)
 
     st.markdown(
-        f"<div style='text-align:right; font-size: 1.15rem; font-weight: 600;'>{' — '.join(title_bits)}</div>",
+        f"<div style='text-align:right; font-size: 1.15rem; font-weight: 600;'>{' - '.join(title_bits)}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2484,22 +2570,33 @@ nm = selected
 
 c1, c2, c3, c4, c5, c6 = st.columns([0.14, 0.22, 0.18, 0.18, 0.14, 0.14], vertical_alignment="top")
 c1.metric("Symbol", selected)
-c2.metric("Asset type", str(prof_hdr.get("assetType") or "—"))
-c3.metric("Exchange", str(prof_hdr.get("exchangeName") or prof_hdr.get("exchange") or "—"))
-c4.metric("Last", str(prof_hdr.get("lastPrice") or prof_hdr.get("mark") or "—"))
+c2.metric("Asset type", str(prof_hdr.get("assetType") or "-"))
+c3.metric("Exchange", str(prof_hdr.get("exchangeName") or prof_hdr.get("exchange") or "-"))
+c4.metric("Last", str(prof_hdr.get("lastPrice") or prof_hdr.get("mark") or "-"))
 
 iv = _estimate_atm_iv(selected)
-iv_txt = "—" if iv is None else f"{iv * 100.0:,.1f}%"
+iv_txt = "-" if iv is None else f"{iv * 100.0:,.1f}%"
 
 c5.metric("ATM IV (est)", iv_txt)
-c6.metric("Volume", str(prof_hdr.get("totalVolume") or "—"))
+def _fmt_millions(x) -> str:
+    try:
+        if x is None:
+            return "-"
+        v = float(x)
+        if v != v:
+            return "-"
+        return f"{v/1_000_000.0:,.1f}M"
+    except Exception:
+        return "-"
+
+c6.metric("Volume", _fmt_millions(prof_hdr.get("totalVolume")))
 
 with st.expander("More stats", expanded=False):
     st.json(dict(prof_hdr) if prof_hdr else {})
 
 st.caption(f"Heuristic usage: {_infer_intended_usage(nm)}")
 
-# Top-of-page rolling tape (watchlist) — Schwab-only
+# Top-of-page rolling tape (watchlist) - Schwab-only
 # Polish: avoid rerun jitter while typing by using a small form + draft key.
 st.session_state.setdefault("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
 st.session_state.setdefault("_watchlist_draft", str(st.session_state.get("watchlist") or ""))
@@ -2519,42 +2616,64 @@ if apply:
 watch = st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA,/ES")
 watch_syms = [s.strip().upper() for s in str(watch).split(",") if s.strip()]
 watch_syms = watch_syms[:12]
+
+# Tape speed: slow it down so it's readable. You can override from session state.
+st.session_state.setdefault("tape_speed_s", 28)
+# Auto-scale a bit with list length (more items => longer loop)
+auto_speed = max(18, int(4 * max(1, len(watch_syms))))
+tape_speed_s = max(int(st.session_state.get("tape_speed_s") or 28), auto_speed)
+
 if watch_syms:
     bits = []
     thr = 2.0  # decisions: flash threshold 2%
+    qmap = _schwab_quotes_batch(watch_syms)
     for s in watch_syms:
-        q = _schwab_quote(s)
-        px = q.get("mark") or q.get("last")
-        netp = q.get("netPct")
+        # Prefer batch quote payload (nested), fallback to normalized quote.
+        rec = qmap.get(s) if isinstance(qmap, dict) else None
+        if isinstance(rec, dict) and rec:
+            q = rec.get("quote") if isinstance(rec.get("quote"), dict) else {}
+            px = q.get("mark")
+            if px in (None, "", 0.0):
+                px = q.get("lastPrice")
+            netp = q.get("netPercentChange")
+        else:
+            qn = _schwab_quote(s) or {}
+            px = qn.get("mark")
+            if px in (None, "", 0.0):
+                px = qn.get("last")
+            netp = qn.get("netPct")
 
         try:
-            pxs = f"{float(px):,.2f}" if px not in (None, "") else "—"
+            pxs = f"{float(px):,.2f}" if px not in (None, "") else "-"
         except Exception:
-            pxs = str(px) if px is not None else "—"
+            pxs = str(px) if px is not None else "-"
 
         try:
-            cps = f"{float(netp):+.2f}%" if netp == netp else "—"
+            cps = f"{float(netp):+.2f}%" if netp == netp else "-"
             v = float(netp)
         except Exception:
-            cps = "—"
+            cps = "-"
             v = 0.0
 
         col = "neon-green" if v > 0 else ("neon-red" if v < 0 else "muted")
         flash = "tape-flash" if abs(v) >= thr else ""
 
+        # Only show a $ price when we actually have a numeric value.
+        price_part = f"${pxs}" if pxs not in ("-", "", None) else "—"
+
         bits.append(
-            f"<span class='tape-item {flash} {col}'><b>{s}</b> ${pxs} ({cps})</span>"
+            f"<span class='tape-item {flash} {col}'><b>{s}</b> {price_part} ({cps})</span>"
         )
 
     st.markdown(
         """
 <div class='ticker-tape'>
-  <span class='marquee'>
+  <span class='marquee' style='animation-duration: %ss;'>
     <span class='neon-gold'>TAPE</span> • %s
   </span>
 </div>
 """
-        % ("  •  ".join(bits)),
+        % (tape_speed_s, "  •  ".join(bits)),
         unsafe_allow_html=True,
     )
 
@@ -2687,16 +2806,34 @@ def _backtest_1m(prices_1m: pd.DataFrame, strategy: str, *, fee_bps: float = 0.0
     return df
 
 # Context menus
-(tab_dash, tab_scanner, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_dexter, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_scaffolds, tab_decisions, tab_admin) = st.tabs(
+# Hide the Options tab entirely when the selected symbol has no listed options.
+# (Users prefer "no options" to be explicit elsewhere, not a dead tab.)
+try:
+    _tkr0 = str(selected or "").upper().strip()
+    _has_opts0 = False
+    if _tkr0 and (not _tkr0.startswith("/")):
+        _has_opts0 = bool(_schwab_expirations(_tkr0))
+    # If futures or empty symbol, keep the Options tab visible (user may know the right root).
+except Exception:
+    _has_opts0 = True
+
+if not _has_opts0:
+    # Options is the 12th tab in our fixed layout.
+    st.markdown(
+        "<style>.stTabs [data-baseweb='tab']:nth-child(12){display:none !important;}</style>",
+        unsafe_allow_html=True,
+    )
+
+(tab_dash, tab_scanner, tab_meters, tab_wall, tab_halts, tab_signals, tab_news, tab_earnings, tab_overview, tab_rel, tab_opts, tab_cart, tab_casino, tab_exposure, tab_exports, tab_scaffolds, tab_decisions, tab_admin) = st.tabs(
     [
         "Dashboard",
         "Scanner",
+        "Meters",
         "Wall",
         "Halts",
         "Signals",
         "News",
         "Earnings",
-        "Dexter",
         "Overview",
         "Relations",
         "Options",
@@ -2768,7 +2905,7 @@ with tab_dash:
                 top = dff.iloc[0].to_dict()
                 title = str(top.get("title") or "").strip()
                 pub = str(top.get("published") or "").strip()
-                auto = f"{pub} — {title}".strip(" —")
+                auto = f"{pub} - {title}".strip(" -")
                 # populate if empty
                 if not str(st.session_state.get("next_macro_event") or "").strip():
                     st.session_state["next_macro_event"] = auto
@@ -2778,7 +2915,7 @@ with tab_dash:
         else:
             st.caption("Macro auto-feed uses Fed RSS cache; no items cached yet.")
 
-        st.text_area("Next", key="next_macro_event", height=210, placeholder="e.g., CPI 08:30 ET — estimate/notes…")
+        st.text_area("Next", key="next_macro_event", height=210, placeholder="e.g., CPI 08:30 ET - estimate/notes…")
 
 
 def _parse_symbols(s: str) -> list[str]:
@@ -2990,14 +3127,14 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
                 netp = q.get("netPct")
 
                 try:
-                    pxs = f"${float(px):,.2f}" if px not in (None, "") else "—"
+                    pxs = f"${float(px):,.2f}" if px not in (None, "") else "-"
                 except Exception:
-                    pxs = "—"
+                    pxs = "-"
 
                 try:
-                    cps = f"{float(netp):+.2f}%" if netp == netp else "—"
+                    cps = f"{float(netp):+.2f}%" if netp == netp else "-"
                 except Exception:
-                    cps = "—"
+                    cps = "-"
 
                 rowL, rowR = st.columns([0.28, 0.72], vertical_alignment="center")
                 rowL.markdown(f"**{sym}**  \\n{pxs}  \\n{cps}")
@@ -3017,9 +3154,9 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
         q = _schwab_quote(selected)
         px = q.get("mark") or q.get("last")
         try:
-            pxs = f"${float(px):,.2f}" if px not in (None, "") else "—"
+            pxs = f"${float(px):,.2f}" if px not in (None, "") else "-"
         except Exception:
-            pxs = str(px) if px is not None else "—"
+            pxs = str(px) if px is not None else "-"
 
         st.markdown(f"<div class='price-card'><div class='muted'>{selected}</div><div class='price-big neon-green'>{pxs}</div></div>", unsafe_allow_html=True)
 
@@ -3028,7 +3165,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
         if dfp.empty:
             st.warning("No 1m candles.")
         else:
-            st.plotly_chart(_plot_candles(dfp, title=f"{selected} — {tf}"), use_container_width=True)
+            st.plotly_chart(_plot_candles(dfp, title=f"{selected} - {tf}"), use_container_width=True)
 
     # ---- Countdown + alerts + headlines tile ----
     with dR:
@@ -3048,7 +3185,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
             _request_autorefresh(1000, reason="countdown")
 
         if delta.total_seconds() <= 0:
-            st.success("It’s Mar 14 @ 9:30 — margin discipline timer is done.")
+            st.success("It's Mar 14 @ 9:30 - margin discipline timer is done.")
         else:
             s = int(delta.total_seconds())
             days = s // 86400
@@ -3229,9 +3366,9 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
 
                 suffix = f" ({dom})" if dom else ""
                 if link:
-                    st.markdown(f"- {pub} — [{title}]({link}){suffix}")
+                    st.markdown(f"- {pub} - [{title}]({link}){suffix}")
                 else:
-                    st.write(f"- {pub} — {title}{suffix}")
+                    st.write(f"- {pub} - {title}{suffix}")
         else:
             st.caption(_news_cache_empty_text())
 
@@ -3267,7 +3404,7 @@ def _set_hotlist_for_mode(event_mode: str, syms: list[str]) -> None:
                         dfm = dfh[dfh["symbol"].astype(str).str.upper().str.strip() == sym0]
                         if not dfm.empty:
                             h = dfm.iloc[0].to_dict()
-                            bullets.append(f"HALT: {h.get('reason','')} — resume {h.get('resume_time_et','')}")
+                            bullets.append(f"HALT: {h.get('reason','')} - resume {h.get('resume_time_et','')}")
             except Exception:
                 pass
 
@@ -3388,11 +3525,10 @@ with tab_scanner:
     scan_on = st.toggle("Enable scanning", value=bool(st.session_state.get("scan_on", False)), key="scan_on")
     if not scan_on:
         st.info("Scanner is off. Toggle 'Enable scanning' when you want to run it.")
-        _early_stop()
-
-    # Persistent hot list (saved under data/)
-    st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
-    st.session_state.setdefault("scanner_hotlist", _hotlist_for_mode(st.session_state.get("event_mode", "Normal")))
+    else:
+        # Persistent hot list (saved under data/)
+        st.session_state.setdefault("scanner_hotlist_by_mode", _load_hotlist_by_mode())
+        st.session_state.setdefault("scanner_hotlist", _hotlist_for_mode(st.session_state.get("event_mode", "Normal")))
 
     # Universe selection
     base = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
@@ -3404,7 +3540,7 @@ with tab_scanner:
             "Keep it under ~200 symbols if you want it to stay snappy."
         )
 
-        # Saved views (presets) — local-only JSON under data/scanners/
+        # Saved views (presets) - local-only JSON under data/scanners/
         if bool(st.session_state.get("scanner_presets_enabled", True)):
             with st.expander("Saved views", expanded=False):
                 views = _list_scanner_views()
@@ -3744,19 +3880,19 @@ with tab_scanner:
             dv = r.get("dollar_vol")
 
             try:
-                pxs = f"${float(px):,.2f}" if px == px else "—"
+                pxs = f"${float(px):,.2f}" if px == px else "-"
             except Exception:
-                pxs = "—"
+                pxs = "-"
 
             try:
-                cps = f"{float(chgp):+.2f}%" if chgp == chgp else "—"
+                cps = f"{float(chgp):+.2f}%" if chgp == chgp else "-"
             except Exception:
-                cps = "—"
+                cps = "-"
 
             try:
-                dvs = f"${float(dv)/1e9:,.2f}B" if dv == dv else "—"
+                dvs = f"${float(dv)/1e9:,.2f}B" if dv == dv else "-"
             except Exception:
-                dvs = "—"
+                dvs = "-"
 
             cols[i].markdown(
                 f"<div class='casino-wrap'><div class='neon-blue'><b>{sym}</b></div>"
@@ -3956,7 +4092,7 @@ with tab_scanner:
         if dfp.empty:
             st.warning("No 1m candles for focus symbol.")
         else:
-            st.plotly_chart(_plot_candles(dfp, title=f"{focus} — {tf}"), use_container_width=True)
+            st.plotly_chart(_plot_candles(dfp, title=f"{focus} - {tf}"), use_container_width=True)
 
     with fR:
         # --- Focus intel (halts + filings + news) ---
@@ -4030,7 +4166,7 @@ with tab_scanner:
                 except Exception:
                     pass
 
-                # News (cached RSS) — match $SYM or word boundary; dedupe by title
+                # News (cached RSS) - match $SYM or word boundary; dedupe by title
                 try:
                     p = _data_dir() / "feeds_cache" / "latest_news_rss.json"
                     if p.exists():
@@ -4070,7 +4206,7 @@ with tab_scanner:
                         st.caption("Badges: " + " / ".join(badges))
 
                     md_lines = []
-                    md_lines.append(f"# Focus intel — {focus_sym}")
+                    md_lines.append(f"# Focus intel - {focus_sym}")
                     md_lines.append("")
 
                     # Order: Halts > Filings > News
@@ -4109,13 +4245,13 @@ with tab_scanner:
                             link = str(r.get("link", ""))
                             pub = str(r.get("published", ""))
                             if link:
-                                st.markdown(f"- {pub} — [{title}]({link})")
+                                st.markdown(f"- {pub} - [{title}]({link})")
                             else:
-                                st.write(f"- {pub} — {title}")
+                                st.write(f"- {pub} - {title}")
                         md_lines.append("## NEWS")
                         for r in news[:3]:
                             if isinstance(r, dict):
-                                md_lines.append(f"- {r.get('published','')} — {r.get('title','')} ({r.get('link','')})")
+                                md_lines.append(f"- {r.get('published','')} - {r.get('title','')} ({r.get('link','')})")
                         md_lines.append("")
 
                     md_blob = "\n".join(md_lines)
@@ -4162,7 +4298,7 @@ with tab_scanner:
             st.caption("No detected overlap (or positions unavailable).")
 
         st.markdown("#### Why is it moving? (placeholder)")
-        st.caption("Paste a headline or catalyst here for now. Later we’ll wire a news source.")
+        st.caption("Paste a headline or catalyst here for now. Later we'll wire a news source.")
         note = st.text_area("Catalyst", value="", height=160, key="scanner_catalyst")
         st.markdown("#### Related headlines")
         st.caption("Auto-filled from cached RSS when available (still editable).")
@@ -4206,9 +4342,9 @@ with tab_scanner:
                     title = str(r.get("title") or "").strip()
                     link = str(r.get("link") or "").strip()
                     if link:
-                        auto_lines.append(f"- {pub} — {title} ({link})")
+                        auto_lines.append(f"- {pub} - {title} ({link})")
                     else:
-                        auto_lines.append(f"- {pub} — {title}")
+                        auto_lines.append(f"- {pub} - {title}")
         except Exception:
             auto_lines = []
 
@@ -4219,6 +4355,142 @@ with tab_scanner:
                 st.session_state["scanner_headlines"] = "\n".join(auto_lines)
 
         st.text_area("Headlines", key="scanner_headlines", height=220, placeholder="Auto headlines appear here…")
+
+with tab_meters:
+    st.subheader("Meters")
+    st.caption("Symbol-less scanner that auto-focuses ONE ticker. If a new ticker ranks #1, the focus chart swaps to it.")
+
+    # Controls
+    cA, cB, cC, cD = st.columns([0.33, 0.22, 0.22, 0.23], vertical_alignment="center")
+    with cA:
+        meters_on = st.toggle("Enable Meters", value=bool(st.session_state.get("meters_on", True)), key="meters_on")
+    with cB:
+        auto_swap = st.toggle("Auto-swap focus", value=bool(st.session_state.get("meters_auto_swap", True)), key="meters_auto_swap")
+    with cC:
+        limit = st.slider("Universe limit", min_value=10, max_value=80, value=int(st.session_state.get("meters_universe_limit", 35)), step=5, key="meters_universe_limit")
+    with cD:
+        refresh_s = st.slider("Refresh (s)", min_value=5, max_value=60, value=int(st.session_state.get("meters_refresh_s", 15)), step=5, key="meters_refresh_s")
+
+    if meters_on:
+        _request_autorefresh(int(refresh_s) * 1000, reason="meters")
+
+    # Build a lightweight universe. Keep it snappy to respect guardrails.
+    watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
+    hot = _hotlist_combined()
+    universe = []
+    for s in (watch + hot):
+        s = str(s).upper().strip()
+        if s and s not in universe:
+            universe.append(s)
+    universe = universe[: int(limit)]
+
+    @st.cache_data(show_spinner=False, ttl=10)
+    def _meters_rank(symbols: list[str]) -> pd.DataFrame:
+        rows = []
+        for sym in symbols:
+            q = _schwab_quote(sym) or {}
+            last = q.get("last") or q.get("mark")
+            net_pct = q.get("netPct")
+
+            # Short-horizon momentum from cached 1m history (90s TTL)
+            h = _sparkline_history(sym, window="4h")
+            mom2 = None
+            vol1h = None
+            if isinstance(h, pd.DataFrame) and (not h.empty) and "close" in h.columns:
+                try:
+                    # 2-minute momentum (approx): last close vs close 2 bars back
+                    if len(h) >= 3:
+                        c0 = float(h.iloc[-1]["close"])
+                        c2 = float(h.iloc[-3]["close"])
+                        mom2 = ((c0 / c2) - 1.0) * 100.0 if c2 else None
+                    # last 60 bars volume (roughly 1h during RTH)
+                    if "volume" in h.columns:
+                        vol1h = float(pd.to_numeric(h.tail(60)["volume"], errors="coerce").fillna(0.0).sum())
+                except Exception:
+                    mom2 = None
+                    vol1h = None
+
+            # Simple composite score: prioritize real daily move, add short-term kick
+            score = 0.0
+            try:
+                score += abs(float(net_pct)) * 0.7 if net_pct is not None else 0.0
+            except Exception:
+                pass
+            try:
+                score += abs(float(mom2)) * 0.3 if mom2 is not None else 0.0
+            except Exception:
+                pass
+
+            rows.append(
+                {
+                    "symbol": sym,
+                    "last": (float(last) if last is not None else None),
+                    "net%": (float(net_pct) if net_pct is not None else None),
+                    "2m%": (float(mom2) if mom2 is not None else None),
+                    "vol_1h": vol1h,
+                    "score": score,
+                }
+            )
+
+        df = pd.DataFrame(rows)
+        if df.empty:
+            return df
+        df = df.sort_values(by=["score"], ascending=False, kind="mergesort")
+        return df
+
+    if not meters_on:
+        st.info("Meters is off.")
+    else:
+        dfm = _meters_rank(universe)
+        if dfm.empty:
+            st.warning("No scan data yet. If Schwab is offline, connect in Admin → Schwab OAuth.")
+        else:
+            top = str(dfm.iloc[0]["symbol"]) if len(dfm) else ""
+            st.session_state.setdefault("meters_focus", top)
+
+            if auto_swap and top:
+                st.session_state["meters_focus"] = top
+
+            focus = str(st.session_state.get("meters_focus") or top)
+
+            left, right = st.columns([0.42, 0.58], vertical_alignment="top")
+            with left:
+                st.markdown("#### Rank (Meters)")
+                st.dataframe(
+                    dfm[["symbol", "last", "net%", "2m%", "vol_1h", "score"]].head(25),
+                    use_container_width=True,
+                    height=420,
+                )
+
+                opts = dfm["symbol"].astype(str).tolist()
+                pick = st.selectbox("Focus symbol", opts, index=(opts.index(focus) if focus in opts else 0), key="meters_focus_pick")
+                if st.button("Set focus", key="meters_set_focus"):
+                    st.session_state["meters_focus"] = str(pick)
+                    st.rerun()
+
+            with right:
+                st.markdown(f"#### Focus chart: {focus} (15m)")
+                h = _sparkline_history(focus, window="4h")
+                if h is None or (isinstance(h, pd.DataFrame) and h.empty):
+                    st.info("No intraday candles yet.")
+                else:
+                    try:
+                        df1m = h.copy()
+                        df1m = df1m.dropna(subset=["date", "open", "high", "low", "close"]).copy()
+                        df1m["date"] = pd.to_datetime(df1m["date"], errors="coerce")
+                        df1m = df1m.dropna(subset=["date"]).sort_values("date")
+                        df1m = df1m.set_index("date")
+
+                        # Resample to 15m
+                        df15 = (
+                            df1m.resample("15min")
+                            .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+                            .dropna(subset=["open", "high", "low", "close"])
+                            .reset_index()
+                        )
+                        st.plotly_chart(_plot_candles(df15, title=f"{focus} - 15m"), use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Failed to render focus chart: {e}")
 
 with tab_wall:
     st.subheader("Wall")
@@ -4231,15 +4503,26 @@ with tab_wall:
     st.session_state.setdefault("wall_max_universe", 120)
     st.session_state.setdefault("wall_top_n", 32)
 
+    def _safe_int(x, default: int) -> int:
+        try:
+            return int(x)
+        except Exception:
+            return int(default)
+
+    refresh_s = _safe_int(st.session_state.get("wall_refresh_s", 60), 60)
+    ttl_s = _safe_int(st.session_state.get("wall_quote_ttl_s", 30), 30)
+    max_pool = _safe_int(st.session_state.get("wall_max_universe", 120), 120)
+    top_n = _safe_int(st.session_state.get("wall_top_n", 32), 32)
+
     c1, c2, c3, c4, c5 = st.columns([0.18, 0.22, 0.20, 0.20, 0.20])
     c1.toggle("Auto-refresh", key="wall_autorefresh")
-    c2.write(f"Every: {int(st.session_state.get('wall_refresh_s', 60))}s")
-    c3.write(f"TTL: {int(st.session_state.get('wall_quote_ttl_s', 30))}s")
-    c4.write(f"Max pool: {int(st.session_state.get('wall_max_universe', 120))}")
-    c5.write(f"Top N: {int(st.session_state.get('wall_top_n', 32))}")
+    c2.write(f"Every: {refresh_s}s")
+    c3.write(f"TTL: {ttl_s}s")
+    c4.write(f"Max pool: {max_pool}")
+    c5.write(f"Top N: {top_n}")
 
     if bool(st.session_state.get("wall_autorefresh", True)):
-        _request_autorefresh(int(st.session_state.get("wall_refresh_s", 60)) * 1000, reason="wall")
+        _request_autorefresh(refresh_s * 1000, reason="wall")
 
     # Build symbol universe (+ filters)
     watch = _parse_symbols(st.session_state.get("watchlist", "QQQ,SPY,TSLA,AAPL,NVDA"))
@@ -4444,7 +4727,7 @@ with tab_wall:
             buf = io.BytesIO()
             c = canvas.Canvas(buf, pagesize=letter)
             c.setFont("Helvetica-Bold", 14)
-            c.drawString(40, 760, "Market Hub — Wall snapshot")
+            c.drawString(40, 760, "Market Hub - Wall snapshot")
             c.setFont("Helvetica", 10)
             c.drawString(40, 744, time.strftime("%Y-%m-%d %H:%M:%S"))
             c.drawString(250, 744, f"mode: {st.session_state.get('event_mode','Normal')}")
@@ -4475,11 +4758,11 @@ with tab_wall:
                 badges = str(r.get("badges") or "")
 
                 c.drawString(40, y, sym)
-                c.drawString(90, y, (f"{px:,.2f}" if px == px else "—"))
-                c.drawString(140, y, (f"{chgp:+.2f}%" if chgp == chgp else "—"))
-                c.drawString(190, y, (f"{int(vol):,}" if vol == vol else "—"))
+                c.drawString(90, y, (f"{px:,.2f}" if px == px else "-"))
+                c.drawString(140, y, (f"{chgp:+.2f}%" if chgp == chgp else "-"))
+                c.drawString(190, y, (f"{int(vol):,}" if vol == vol else "-"))
                 if inc_heat:
-                    c.drawString(260, y, (f"{heat:,.1f}" if heat == heat else "—"))
+                    c.drawString(260, y, (f"{heat:,.1f}" if heat == heat else "-"))
                 if inc_badges:
                     c.drawString(320, y, badges[:18])
                 y -= 11
@@ -4541,8 +4824,8 @@ with tab_wall:
             cols[j].markdown(
                 f"<div style='padding:10px;border-radius:12px;background:{bg};border:1px solid rgba(255,255,255,0.10)'>"
                 f"<div style='font-weight:700'>{sym} <span style='font-size:11px;color:#9ca3af'>{badge}</span></div>"
-                f"<div style='font-size:16px'>{(f'${float(px):,.2f}' if px==px else '—')}</div>"
-                f"<div style='color:#9ca3af;font-size:12px'>{(f'{float(chgp):+.2f}%' if chgp==chgp else '—')} • heat {(f'{float(heat):.0f}' if heat==heat else '—')}</div>"
+                f"<div style='font-size:16px'>{(f'${float(px):,.2f}' if px==px else '-')}</div>"
+                f"<div style='color:#9ca3af;font-size:12px'>{(f'{float(chgp):+.2f}%' if chgp==chgp else '-')} • heat {(f'{float(heat):.0f}' if heat==heat else '-')}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -4727,7 +5010,7 @@ with tab_halts:
             except Exception as e:
                 st.error(f"Could not parse CSV: {e}")
 
-    st.markdown("### What’s needed next")
+    st.markdown("### What's needed next")
     st.write(
         "- Choose a halts source (Nasdaq Trader + NYSE).\n"
         "- Implement fetch + parse + reason-code mapping.\n"
@@ -4753,7 +5036,7 @@ with tab_signals:
     st.session_state.setdefault("signals_halts_highlight_rules", True)
     st.session_state.setdefault("signals_filings_badge_threshold", "A")
 
-    # Batch7–12 defaults
+    # Batch7-12 defaults
     st.session_state.setdefault("signals_section_order", "A")
     st.session_state.setdefault("signals_halts_timewindow", "B")
     st.session_state.setdefault("signals_cache_badges_style", "A")
@@ -4797,7 +5080,7 @@ with tab_signals:
     if do_refresh:
         st.session_state["signals_last_refresh"] = now
 
-    # Background filings watcher (daily) — best-effort while app is running
+    # Background filings watcher (daily) - best-effort while app is running
     try:
         from etf_mapper.jobs.filings_watcher import maybe_run, WatcherConfig
 
@@ -4900,7 +5183,7 @@ with tab_signals:
     # --- Macro placeholder ---
     st.session_state.setdefault("macro_events", "")
 
-    # Signals focus symbol (batch11) — used to filter sections
+    # Signals focus symbol (batch11) - used to filter sections
     st.session_state.setdefault("signals_focus", "")
     if bool(st.session_state.get("signals_focus_symbol", True)):
         default_focus = ""
@@ -5067,9 +5350,9 @@ with tab_signals:
             title = str(r.get("title") or "").strip()
             link = str(r.get("link") or "").strip()
             if link:
-                st.markdown(f"- {pub} — [{title}]({link})")
+                st.markdown(f"- {pub} - [{title}]({link})")
             else:
-                st.write(f"- {pub} — {title}")
+                st.write(f"- {pub} - {title}")
 
     def _render_filings():
         # (existing filings section lives in the Earnings column expander; leave as-is)
@@ -5168,7 +5451,7 @@ with tab_signals:
                 for _, r in adf.head(10).iterrows():
                     sym = str(r.get("symbol") or "")
                     sc = r.get("score")
-                    opts.append(f"{sym} — score {sc}")
+                    opts.append(f"{sym} - score {sc}")
 
                 sel_ix = st.selectbox("Open report", list(range(len(opts))), format_func=lambda i: opts[i], key="signals_filings_open")
                 try:
@@ -5215,7 +5498,7 @@ with tab_signals:
 
             dff = fr.read_cache()
             if isinstance(dff, pd.DataFrame) and not dff.empty:
-                st.caption("Auto (Fed RSS) — most recent items")
+                st.caption("Auto (Fed RSS) - most recent items")
                 show = dff.copy()
                 if "published_ts" in show.columns:
                     show = show.sort_values("published_ts", ascending=False)
@@ -5227,7 +5510,7 @@ with tab_signals:
                     title = str(top.get("title") or "").strip()
                     pub = str(top.get("published") or "").strip()
                     st.session_state.setdefault("next_macro_event", "")
-                    auto = f"{pub} — {title}".strip(" —")
+                    auto = f"{pub} - {title}".strip(" -")
                     if not str(st.session_state.get("next_macro_event") or "").strip():
                         st.session_state["next_macro_event"] = auto
                 except Exception:
@@ -5265,15 +5548,15 @@ with tab_signals:
                     title = str(r.get("title") or "").strip()
                     link = str(r.get("link") or "").strip()
                     if link:
-                        st.markdown(f"- {pub} — [{title}]({link})")
+                        st.markdown(f"- {pub} - [{title}]({link})")
                     else:
-                        st.write(f"- {pub} — {title}")
+                        st.write(f"- {pub} - {title}")
             else:
                 st.caption(_news_cache_empty_text())
 
         st.markdown("---")
         st.caption("Manual note + next-event override")
-        st.text_area("Notes", key="macro_events", height=160, placeholder="YYYY-MM-DD HH:MM — Event — Notes")
+        st.text_area("Notes", key="macro_events", height=160, placeholder="YYYY-MM-DD HH:MM - Event - Notes")
 
         # Avoid duplicate widget keys: Dashboard owns `next_macro_event`.
         st.session_state.setdefault("next_macro_event", "")
@@ -5285,7 +5568,7 @@ with tab_signals:
             "Next event",
             key="next_macro_event_signals",
             height=90,
-            placeholder="CPI 08:30 ET — notes…",
+            placeholder="CPI 08:30 ET - notes…",
         )
         # Sync back to the shared value (safe: different widget key).
         try:
@@ -5358,7 +5641,7 @@ with tab_signals:
                 sym = str(r.get("symbol") or "").strip()
                 reason = str(r.get("reason") or "").strip()
                 resume = str(r.get("resume_time_et") or "").strip()
-                lines.append(f"- {sym} — {reason} — resume {resume}".strip(" —"))
+                lines.append(f"- {sym} - {reason} - resume {resume}".strip(" -"))
             lines.append("")
 
         # Filings
@@ -5370,7 +5653,7 @@ with tab_signals:
                     continue
                 sym = str(a.get("symbol") or "").strip()
                 sc = a.get("score")
-                lines.append(f"- {sym} — score {sc}")
+                lines.append(f"- {sym} - score {sc}")
             lines.append("")
 
         # Macro
@@ -5414,7 +5697,7 @@ with tab_news:
     st.subheader("News")
     st.caption("RSS board (cached). Ticker detection is best-effort; quotes are Schwab-only.")
 
-    # Batch7–12 news defaults
+    # Batch7-12 news defaults
     st.session_state.setdefault("news_reader_mode", True)
     st.session_state.setdefault("news_symbol_highlight", True)
     st.session_state.setdefault("news_tag_earnings_filings", True)
@@ -5452,7 +5735,7 @@ with tab_news:
             pass
         st.session_state["news_last_fetch"] = time.time()
 
-    # News decisions (batch 6) — defaults are loaded from decisions.json
+    # News decisions (batch 6) - defaults are loaded from decisions.json
     st.session_state.setdefault("news_default_filter", "A")  # A=All, B=Focus
     st.session_state.setdefault("news_group_by_symbol", True)
     st.session_state.setdefault("news_show_snippet", True)
@@ -5602,7 +5885,20 @@ with tab_news:
             focus_sym = str(st.session_state.get("news_filter_symbol") or "").upper().strip()
             items = show.reset_index(drop=True)
             max_pick = max(0, len(items) - 1)
-            pick = st.slider("Select", 0, max_pick, int(min(max_pick, st.session_state.get("news_selected_i", 0))), 1, key="news_selected_i")
+
+            # Streamlit slider requires min < max.
+            if max_pick <= 0:
+                pick = 0
+                st.session_state["news_selected_i"] = 0
+            else:
+                pick = st.slider(
+                    "Select",
+                    0,
+                    max_pick,
+                    int(min(max_pick, st.session_state.get("news_selected_i", 0))),
+                    1,
+                    key="news_selected_i",
+                )
 
             for i, r in items.head(int(max_rows)).iterrows():
                 pub = str(r.get("published") or "").strip()
@@ -5619,9 +5915,9 @@ with tab_news:
 
                 tag = _tag(str(r.get("title") or ""))
                 if link:
-                    st.markdown(f"{prefix}[{pub} — {title}]({link}){suffix}{tag}")
+                    st.markdown(f"{prefix}[{pub} - {title}]({link}){suffix}{tag}")
                 else:
-                    st.write(f"{prefix}{pub} — {title}{suffix}{tag}")
+                    st.write(f"{prefix}{pub} - {title}{suffix}{tag}")
 
                 # Snippet lines (batch9)
                 sl = str(st.session_state.get("news_snippet_lines") or "B").upper().strip()
@@ -5656,9 +5952,9 @@ with tab_news:
                             t0 = str(rr.get("title") or "").strip()
                             link = str(rr.get("link") or "").strip()
                             if link:
-                                st.markdown(f"- {pub} — [{t0}]({link})")
+                                st.markdown(f"- {pub} - [{t0}]({link})")
                             else:
-                                st.write(f"- {pub} — {t0}")
+                                st.write(f"- {pub} - {t0}")
                 except Exception:
                     pass
 
@@ -5755,9 +6051,9 @@ with tab_news:
                     tail = f" ({src})" if (src and bool(st.session_state.get("news_export_include_sources", True))) else ""
 
                     if link:
-                        md_lines.append(f"- {pub} — [{title}]({link}){tail}".strip())
+                        md_lines.append(f"- {pub} - [{title}]({link}){tail}".strip())
                     else:
-                        md_lines.append(f"- {pub} — {title}{tail}".strip())
+                        md_lines.append(f"- {pub} - {title}{tail}".strip())
 
                     if snip and bool(st.session_state.get("news_export_include_snippets", True)):
                         md_lines.append(f"  - {snip[:240]}")
@@ -5768,7 +6064,12 @@ with tab_news:
         # Ticker detection (simple regex)
         import re
 
-        titles = "\n".join([str(x) for x in (show.get("title") or []).tolist()[:60]])
+        title_col = show.get("title")
+        if title_col is None:
+            titles = ""
+        else:
+            # NOTE: avoid using `or []` with a pandas Series (ambiguous truth value)
+            titles = "\n".join([str(x) for x in title_col.tolist()[:60]])
         found = re.findall(r"\$([A-Z]{1,6})\b|\b([A-Z]{2,5})\b", titles.upper())
         flat = []
         for a, b in found:
@@ -5943,82 +6244,10 @@ with tab_earnings:
         st.text_area("Notes", value="", height=240, placeholder="What changed? Any new risk language? Guidance tone shift?…")
 
 
-with tab_dexter:
-    st.subheader("Dexter (deep financial research)")
-    st.caption(
-        "Integrates the Dexter agent (virattt/dexter) as a research sidecar. "
-        "Requires Bun + API keys (OpenAI + FinancialDatasets)."
-    )
-
-    st.markdown("### Query")
-    q_default = "Analyze NVDA: key risks, catalysts, and what to watch next week."
-    query = st.text_area("Question", value=q_default, height=110, key="dexter_query")
-
-    st.session_state.setdefault("dexter_timeout_s", 600)
-    timeout_s = st.number_input(
-        "Timeout (seconds)",
-        min_value=60,
-        max_value=3600,
-        value=int(st.session_state.get("dexter_timeout_s", 600)),
-        step=30,
-    )
-
-    # Default expected location: sibling clone under ~/.openclaw/workspace/dexter
-    dexter_dir_hint = str((Path(__file__).resolve().parents[2] / "dexter").resolve())
-    st.text_input(
-        "Dexter repo directory (optional override)",
-        value=str(st.session_state.get("dexter_dir", "")),
-        key="dexter_dir",
-        help=f"Default expected location: {dexter_dir_hint}",
-    )
-
-    st.info(
-        "Paper trading safety: this integration is research-only. It does not submit live orders. "
-        "(Any order placement is gated separately in the Schwab client.)"
-    )
-
-    if st.button("Run Dexter", key="dexter_run"):
-        import sys
-        import subprocess
-
-        dd = _data_dir()
-        bridge = (Path(__file__).resolve().parents[1] / "scripts" / "dexter_bridge.py").resolve()
-        cmd = [
-            sys.executable,
-            str(bridge),
-            "--query",
-            str(query),
-            "--out-dir",
-            str(dd),
-            "--timeout-s",
-            str(int(timeout_s)),
-        ]
-        dexter_dir = str(st.session_state.get("dexter_dir") or "").strip()
-        if dexter_dir:
-            cmd += ["--dexter-dir", dexter_dir]
-
-        with st.spinner("Running Dexter…"):
-            p = subprocess.run(cmd, capture_output=True, text=True)
-
-        if p.returncode != 0:
-            st.error("Dexter run failed")
-            st.code((p.stdout or "") + "\n" + (p.stderr or ""))
-        else:
-            try:
-                obj = json.loads(p.stdout)
-            except Exception:
-                obj = {"raw": p.stdout}
-            st.success("Dexter completed")
-            out_path = (obj.get("out") if isinstance(obj, dict) else None)
-            if out_path:
-                st.caption(f"Saved: {out_path}")
-            res = obj.get("result") if isinstance(obj, dict) else None
-            if isinstance(res, dict) and res.get("answer"):
-                st.markdown("### Answer")
-                st.markdown(str(res.get("answer")))
-            st.markdown("### Raw output")
-            st.json(obj)
-
+# Dexter tab removed (not used).
+# (Dexter integration code kept below for later reuse; currently disabled.)
+if False:
+    pass
 
 with tab_overview:
     colA, colB = st.columns([0.42, 0.58], gap="large")
@@ -6094,7 +6323,7 @@ with tab_overview:
             except Exception:
                 cur_px = None
 
-        title_price = "Price" if cur_px is None else f"Price — ${cur_px:,.2f}"
+        title_price = "Price" if cur_px is None else f"Price - ${cur_px:,.2f}"
         st.subheader(title_price)
 
         # Data age indicators
@@ -6127,7 +6356,7 @@ with tab_overview:
         st.caption(" • ".join(age_bits))
 
         if not dfp.empty:
-            st.plotly_chart(_plot_candles(dfp, title=f"{selected} — 1m"), use_container_width=True)
+            st.plotly_chart(_plot_candles(dfp, title=f"{selected} - 1m"), use_container_width=True)
 
         # Diagnostics status (history)
         sp = st.session_state.get("spade", {}).get("history")
@@ -6161,7 +6390,7 @@ with tab_overview:
 
 with tab_casino:
     st.subheader("Casino Lab")
-    st.caption("Quant playground. Toy models for exploration only — not trading advice. Data source is Schwab.")
+    st.caption("Quant playground. Toy models for exploration only - not trading advice. Data source is Schwab.")
 
     casino_on = st.toggle("Casino visuals", value=True)
     q_tape = _schwab_quote(selected)
@@ -6175,20 +6404,20 @@ with tab_casino:
         def _fmt(x, nd=2):
             try:
                 if x is None or x == "":
-                    return "—"
+                    return "-"
                 return f"{float(x):,.{nd}f}"
             except Exception:
                 return str(x)
 
         px_txt = _fmt(mark) if mark not in (None, "") else _fmt(last)
-        net_txt = "—"
+        net_txt = "-"
         try:
             if net not in (None, ""):
                 net_txt = f"{float(net):+.2f}"
         except Exception:
             net_txt = str(net)
 
-        netp_txt = "—"
+        netp_txt = "-"
         try:
             if netp not in (None, ""):
                 netp_txt = f"{float(netp):+.2f}%"
@@ -6199,9 +6428,9 @@ with tab_casino:
             f"""
 <div class='ticker-tape'>
   <span class='marquee'>
-    <span class='neon-gold'>LIVE TAPE</span>  •  
-    <span class='neon-blue'>{selected}</span>  
-    <span class='neon-green'>${px_txt}</span>  
+    <span class='neon-gold'>LIVE TAPE</span>  •
+    <span class='neon-blue'>{selected}</span>
+    <span class='neon-green'>${px_txt}</span>
     <span class='muted'>({net_txt} / {netp_txt})</span>
     &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;
     <span class='muted'>Bayes + Backtests + Toys</span>
@@ -6285,7 +6514,7 @@ with tab_casino:
             st.markdown("#### What I need from you (to build your real backtester)")
             st.write(
                 "- Are we backtesting equities/ETFs only, or options too?\n"
-                "- What’s your typical entry trigger (breakout, VWAP reclaim, ORB, gamma levels, etc.)?\n"
+                "- What's your typical entry trigger (breakout, VWAP reclaim, ORB, gamma levels, etc.)?\n"
                 "- Risk model: fixed stop, ATR stop, time stop, max loss/day?\n"
                 "- Execution: market, limit at mid, bid/ask model?"
             )
@@ -6303,7 +6532,7 @@ with tab_rel:
         max_siblings = st.slider("Sibling ETFs", 0, 300, 120, 10)
         max_backfill = st.slider("Backfill underlyings", 0, 300, 140, 10)
     with colM:
-        st.caption("Use these sliders to keep the graph compact so you don’t have to pan/zoom as much.")
+        st.caption("Use these sliders to keep the graph compact so you don't have to pan/zoom as much.")
 
     try:
         rel_db = _ensure_relations(data_dir)
@@ -6467,11 +6696,21 @@ with tab_opts:
         with st.spinner("Checking options expirations…"):
             expirations, exp_err = _schwab_expirations_dbg(selected)
 
+    # Defaults so the tab never goes blank if there are no options.
+    calls, puts = pd.DataFrame(), pd.DataFrame()
+    exp = None
+    strike_window = "ALL"
+
     if not expirations:
         if exp_err and _looks_rate_limited(exp_err):
             st.warning("Schwab appears rate-limited right now (429 / throttling). Try again in a minute.")
         else:
-            st.warning("No options expirations returned. This can mean: no options, Schwab outage, tokens missing, or rate-limit.")
+            # Make the 'no options for this symbol' case explicit so the UI doesn't feel broken.
+            st.info(
+                "No options found for this symbol on Schwab. "
+                "Some equities/ETFs simply don't have listed options (or are not supported by the chain endpoint)."
+            )
+            st.caption("Try: SPY/QQQ/AAPL to confirm the pipeline is working.")
 
         with st.expander("Diagnostics", expanded=False):
             st.write({"ticker": selected, "error": exp_err, "note": "If this keeps happening for SPY/QQQ, confirm OAuth tokens in Admin."})
@@ -6486,53 +6725,59 @@ with tab_opts:
         # IMPORTANT: don't st.stop(); allow other tabs (Admin) to render.
         expirations = []
 
-    # TOS-like: pick expiration; strikes are shown around ATM by default.
-    if expirations:
-        exp = st.selectbox("Expiration", expirations, index=0)
+    # If there are no expirations, do not render empty controls/blank ladder.
+    if not expirations:
+        st.markdown("#### No options available")
+        st.info(
+            f"**{selected}** does not appear to have listed options available via Schwab right now. "
+            "(This is normal for many tickers.)"
+        )
+        st.caption("Nothing to trade here on the Options tab until options expirations exist for the symbol.")
     else:
-        exp = None
+        # TOS-like: pick expiration; strikes are shown around ATM by default.
+        exp = st.selectbox("Expiration", expirations, index=0)
 
-    # Strike window (around ATM)
-    strike_window = st.selectbox(
-        "Strike window (around ATM)",
-        options=["4", "8", "16", "32", "ALL"],
-        index=2,
-        help="Shows N strikes above and below ATM (approx).",
-    )
+        # Strike window (around ATM)
+        strike_window = st.selectbox(
+            "Strike window (around ATM)",
+            options=["4", "8", "16", "32", "ALL"],
+            index=2,
+            help="Shows N strikes above and below ATM (approx).",
+        )
 
-    calls, puts = pd.DataFrame(), pd.DataFrame()
-    if exp:
-        with st.spinner("Loading options chain…"):
-            try:
-                calls, puts = _schwab_option_chain(selected, exp)
-            except Exception as e:
-                st.error(f"Options chain load failed: {e}")
-                if st.button("Retry chain load", type="secondary"):
-                    st.cache_data.clear()
-                    st.rerun()
-                # IMPORTANT: don't stop entire app.
-                calls, puts = pd.DataFrame(), pd.DataFrame()
+        calls, puts = pd.DataFrame(), pd.DataFrame()
+        if exp:
+            with st.spinner("Loading options chain…"):
+                try:
+                    calls, puts = _schwab_option_chain(selected, exp)
+                except Exception as e:
+                    st.error(f"Options chain load failed: {e}")
+                    if st.button("Retry chain load", type="secondary"):
+                        st.cache_data.clear()
+                        st.rerun()
+                    # IMPORTANT: don't stop entire app.
+                    calls, puts = pd.DataFrame(), pd.DataFrame()
 
-    # Diagnostics checks: option chain
-    try:
-        sp_checks = check_option_chain(calls, puts)
-        sp_sum = summarize(sp_checks)
-        st.session_state["spade"]["chain"] = sp_sum
-        if sp_sum.get("status") == "FAIL":
-            st.error("Diagnostics: FAIL (options chain) — see details below")
-        elif sp_sum.get("status") == "WARN":
-            st.warning("Diagnostics: WARN (options chain) — see details below")
-        else:
-            st.caption("Diagnostics: OK (options chain)")
+        # Diagnostics checks: option chain
+        try:
+            sp_checks = check_option_chain(calls, puts)
+            sp_sum = summarize(sp_checks)
+            st.session_state["spade"]["chain"] = sp_sum
+            if sp_sum.get("status") == "FAIL":
+                st.error("Diagnostics: FAIL (options chain) - see details below")
+            elif sp_sum.get("status") == "WARN":
+                st.warning("Diagnostics: WARN (options chain) - see details below")
+            else:
+                st.caption("Diagnostics: OK (options chain)")
 
-        with st.expander("Diagnostics details (options chain)", expanded=False):
-            st.json(sp_sum)
-    except Exception:
-        st.session_state["spade"]["chain"] = None
+            with st.expander("Diagnostics details (options chain)", expanded=False):
+                st.json(sp_sum)
+        except Exception:
+            st.session_state["spade"]["chain"] = None
 
-    # Position Builder legs (backwards compatible with older key name)
-    if "builder_legs" not in st.session_state:
-        st.session_state["builder_legs"] = st.session_state.get("cart", [])
+        # Position Builder legs (backwards compatible with older key name)
+        if "builder_legs" not in st.session_state:
+            st.session_state["builder_legs"] = st.session_state.get("cart", [])
 
     ladder = _tos_options_ladder(calls, puts)
 
@@ -6577,105 +6822,111 @@ with tab_opts:
         hi = min(len(ladder), atm_pos + n + 1)
         ladder = ladder.iloc[lo:hi].copy().reset_index(drop=True)
 
-    st.markdown("#### Options ladder (calls left, puts right)")
+    if ladder is None or getattr(ladder, "empty", True):
+        st.markdown("#### No options ladder")
+        st.info(
+            f"Nothing to display: **{selected}** has no options chain/ladder available (or Schwab returned no chain)."
+        )
+    else:
+        st.markdown("#### Options ladder (calls left, puts right)")
 
-    # Make the ladder more readable
-    display_cols = [
-        "call_select",
-        "call_qty",
-        "call_bid",
-        "call_ask",
-        "call_last",
-        "call_iv",
-        "call_oi",
-        "call_vol",
-        "strike",
-        "put_bid",
-        "put_ask",
-        "put_last",
-        "put_iv",
-        "put_oi",
-        "put_vol",
-        "put_qty",
-        "put_select",
-    ]
-    display_cols = [c for c in display_cols if c in ladder.columns]
+        # Make the ladder more readable
+        display_cols = [
+            "call_select",
+            "call_qty",
+            "call_bid",
+            "call_ask",
+            "call_last",
+            "call_iv",
+            "call_oi",
+            "call_vol",
+            "strike",
+            "put_bid",
+            "put_ask",
+            "put_last",
+            "put_iv",
+            "put_oi",
+            "put_vol",
+            "put_qty",
+            "put_select",
+        ]
+        display_cols = [c for c in display_cols if c in ladder.columns]
 
-    # Keep previous ladder snapshot for change highlighting (live-ish)
-    prev_ladder = st.session_state.get("prev_ladder")
-    st.session_state["prev_ladder"] = ladder[[c for c in ladder.columns if c in display_cols]].copy()
+        # Keep previous ladder snapshot for change highlighting (live-ish)
+        prev_ladder = st.session_state.get("prev_ladder")
+        st.session_state["prev_ladder"] = ladder[[c for c in ladder.columns if c in display_cols]].copy()
 
-    edited_view = st.data_editor(
-        ladder[display_cols],
-        use_container_width=True,
-        height=520,
-        column_config={
-            "call_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
-            "put_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
-            "call_iv": st.column_config.NumberColumn(format="%.4f"),
-            "put_iv": st.column_config.NumberColumn(format="%.4f"),
-        },
-        disabled=[c for c in display_cols if c not in ("call_select", "call_qty", "put_select", "put_qty")],
-    )
-
-    # Read-only styled view (call/put shading + change intensity)
-    with st.expander("Ladder (styled / live changes)", expanded=False):
-        try:
-            st.dataframe(style_ladder_with_changes(ladder[display_cols], prev_ladder), use_container_width=True, height=520)
-            st.caption("Change highlighting is best-effort (compares current snapshot to previous refresh).")
-        except Exception as e:
-            st.caption(f"Styled ladder unavailable: {e}")
-
-    # Merge edited selection/qty back with the hidden contract symbols (call_sym/put_sym)
-    edited = pd.merge(
-        edited_view,
-        ladder[[c for c in ["strike", "call_sym", "put_sym"] if c in ladder.columns]],
-        on="strike",
-        how="left",
-    )
-
-    colA, colB = st.columns([0.35, 0.65])
-
-    def _add_contract(side: str, r: pd.Series):
-        sym = r.get(f"{side}_sym")
-        if not sym:
-            return
-        qty = int(r.get(f"{side}_qty") or 1)
-        bid = r.get(f"{side}_bid")
-        ask = r.get(f"{side}_ask")
-        last = r.get(f"{side}_last")
-        st.session_state["builder_legs"].append(
-            {
-                "contractSymbol": sym,
-                "ticker": selected,
-                "expiration": exp,
-                "strike": float(r.get("strike")),
-                "side": side,
-                "action": "BUY",
-                "qty": qty,
-                "lastPrice": float(last) if pd.notna(last) else None,
-                "bid": float(bid) if pd.notna(bid) else None,
-                "ask": float(ask) if pd.notna(ask) else None,
-            }
+        edited_view = st.data_editor(
+            ladder[display_cols],
+            use_container_width=True,
+            height=520,
+            column_config={
+                "call_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
+                "put_qty": st.column_config.NumberColumn(min_value=1, max_value=500, step=1),
+                "call_iv": st.column_config.NumberColumn(format="%.4f"),
+                "put_iv": st.column_config.NumberColumn(format="%.4f"),
+            },
+            disabled=[c for c in display_cols if c not in ("call_select", "call_qty", "put_select", "put_qty")],
         )
 
-    with colA:
-        if st.button("Add selected to position builder", type="primary"):
-            added = 0
-            for _, r in edited.iterrows():
-                if bool(r.get("call_select")):
-                    _add_contract("call", r)
-                    added += 1
-                if bool(r.get("put_select")):
-                    _add_contract("put", r)
-                    added += 1
-            if added:
-                st.success(f"Added {added} contract(s) to position builder.")
-            else:
-                st.warning("Select at least one call/put in the ladder.")
+        # Read-only styled view (call/put shading + change intensity)
+        with st.expander("Ladder (styled / live changes)", expanded=False):
+            try:
+                st.dataframe(style_ladder_with_changes(ladder[display_cols], prev_ladder), use_container_width=True, height=520)
+                st.caption("Change highlighting is best-effort (compares current snapshot to previous refresh).")
+            except Exception as e:
+                st.caption(f"Styled ladder unavailable: {e}")
 
-    with colB:
-        st.caption("Tip: pick strikes like TOS — calls on the left, puts on the right. Position Builder uses bid/ask for debit/credit estimates.")
+        # Merge edited selection/qty back with the hidden contract symbols (call_sym/put_sym)
+        edited = pd.merge(
+            edited_view,
+            ladder[[c for c in ["strike", "call_sym", "put_sym"] if c in ladder.columns]],
+            on="strike",
+            how="left",
+        )
+
+        colA, colB = st.columns([0.35, 0.65])
+
+        def _add_contract(side: str, r: pd.Series):
+            sym = r.get(f"{side}_sym")
+            if not sym:
+                return
+            qty = int(r.get(f"{side}_qty") or 1)
+            bid = r.get(f"{side}_bid")
+            ask = r.get(f"{side}_ask")
+            last = r.get(f"{side}_last")
+            st.session_state["builder_legs"].append(
+                {
+                    "contractSymbol": sym,
+                    "ticker": selected,
+                    "expiration": exp,
+                    "strike": float(r.get("strike")),
+                    "side": side,
+                    "action": "BUY",
+                    "qty": qty,
+                    "lastPrice": float(last) if pd.notna(last) else None,
+                    "bid": float(bid) if pd.notna(bid) else None,
+                    "ask": float(ask) if pd.notna(ask) else None,
+                }
+            )
+
+        with colA:
+            if st.button("Add selected to position builder", type="primary"):
+                added = 0
+                for _, r in edited.iterrows():
+                    if bool(r.get("call_select")):
+                        _add_contract("call", r)
+                        added += 1
+                    if bool(r.get("put_select")):
+                        _add_contract("put", r)
+                        added += 1
+                if added:
+                    st.success(f"Added {added} contract(s) to position builder.")
+                else:
+                    st.warning("Select at least one call/put in the ladder.")
+
+        with colB:
+            st.caption("Tip: pick strikes like TOS - calls on the left, puts on the right. Position Builder uses bid/ask for debit/credit estimates.")
 
 with tab_cart:
     st.subheader("Position Builder")
@@ -6726,9 +6977,9 @@ with tab_cart:
     c1, c2, c3 = st.columns(3)
     c1.metric("Net premium", net_txt)
     c2.metric("Legs", str(len(edited)))
-    c3.metric("Expiration", str(edited["expiration"].iloc[0]) if "expiration" in edited.columns and len(edited) else "—")
+    c3.metric("Expiration", str(edited["expiration"].iloc[0]) if "expiration" in edited.columns and len(edited) else "-")
 
-    # Payoff at expiration (intrinsic only) — a "good enough" first scaffold.
+    # Payoff at expiration (intrinsic only) - a "good enough" first scaffold.
     st.markdown("#### Payoff at expiration (scaffold)")
 
     prof = _schwab_profile(selected)
@@ -6860,7 +7111,10 @@ with tab_exposure:
 
     api = _schwab_api()
     if api is None:
-        st.warning("Schwab OAuth is not configured. Go to Admin → Schwab OAuth.")
+        if st.session_state.get("require_schwab", False):
+            st.warning("Schwab OAuth is not configured. Go to Admin → Schwab OAuth.")
+        else:
+            st.info("Schwab is offline (demo mode). Exposure is disabled until you connect in Admin → Schwab OAuth.")
     else:
         accts = _schwab_account_numbers()
         if not accts:
@@ -7082,9 +7336,9 @@ with tab_exposure:
 
                         def _fmt(x):
                             try:
-                                return f"${float(x):,.0f}" if x not in (None, "") else "—"
+                                return f"${float(x):,.0f}" if x not in (None, "") else "-"
                             except Exception:
-                                return "—"
+                                return "-"
 
                         hdr = f"{label} • NetLiq {_fmt(nl)} • Cash {_fmt(cash)} • BP {_fmt(bp)}"
                         with st.expander(hdr, expanded=False):
@@ -7536,7 +7790,10 @@ with tab_admin:
 
             with tcol:
                 st.caption("Timers")
-                st.table(t_rows) if t_rows else st.info("No timers recorded yet.")
+                if t_rows:
+                    st.table(t_rows)
+                else:
+                    st.info("No timers recorded yet.")
 
             st.caption("Cache stats")
             cache_rows = []
@@ -7556,9 +7813,10 @@ with tab_admin:
                         "entries": info.get("currsize", 0),
                     }
                 )
-            st.table(cache_rows) if cache_rows else st.info(
-                "Cache stats unavailable (Streamlit version may not expose cache_info)."
-            )
+            if cache_rows:
+                st.table(cache_rows)
+            else:
+                st.info("Cache stats unavailable (Streamlit version may not expose cache_info).")
 
             if st.session_state.get("debug_show_metrics"):
                 st.markdown("**Raw**")
